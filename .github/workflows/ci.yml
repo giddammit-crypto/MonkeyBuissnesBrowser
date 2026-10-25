@@ -33,6 +33,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run package
+        if: matrix.os != 'ubuntu-latest'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - run: npm run dist:linux
+        if: matrix.os == 'ubuntu-latest'
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - uses: actions/upload-artifact@v4
@@ -41,4 +46,6 @@ jobs:
           path: |
             release/*unpacked/**
             release/mac*/**
+            release/*.AppImage
+            release/*.deb
           if-no-files-found: warn
