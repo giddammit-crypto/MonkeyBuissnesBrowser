@@ -76,7 +76,7 @@ const CUSTOM_WALLPAPER_EVENT = "soul-m8te-wallpaper-changed";
 function readCustomWallpaper(): string | null {
   try {
     const value = localStorage.getItem(CUSTOM_WALLPAPER_KEY);
-    return value && /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(value) ? value : null;
+    return value && value.length <= 3_000_000 && /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(value) ? value : null;
   } catch { return null; }
 }
 function useCustomWallpaper(): [string | null, (data: string | null) => void] {
@@ -87,6 +87,7 @@ function useCustomWallpaper(): [string | null, (data: string | null) => void] {
     return () => window.removeEventListener(CUSTOM_WALLPAPER_EVENT, changed);
   }, []);
   const save = (value: string | null) => {
+    if (value !== null && (value.length > 3_000_000 || !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(value))) throw new Error("Недопустимые данные обоев.");
     if (value === null) localStorage.removeItem(CUSTOM_WALLPAPER_KEY);
     else localStorage.setItem(CUSTOM_WALLPAPER_KEY, value);
     window.dispatchEvent(new Event(CUSTOM_WALLPAPER_EVENT));
