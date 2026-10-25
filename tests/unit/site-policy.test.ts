@@ -66,10 +66,13 @@ describe('site-aware cookie policy', () => {
   });
 });
 describe('Google auth help and explicit external navigation', () => {
-  it('recognizes rejected login versions and OAuth but not unrelated hosts', () => {
+  it('recognizes actual rejection routes but leaves normal sign-in flows unobstructed', () => {
     expect(getGoogleAuthNotice('https://accounts.google.com/v3/signin/rejected?continue=x')?.title).toContain('ограничил');
-    expect(getGoogleAuthNotice('https://accounts.google.com/o/oauth2/v2/auth?client_id=x')).not.toBeNull();
-    expect(getGoogleAuthNotice('https://accounts.google.com/ServiceLogin?service=youtube')?.message).toContain('совместимости');
+    for (const path of ['/o/oauth2/v2/auth?client_id=x','/ServiceLogin?service=youtube','/AccountChooser?service=youtube','/v3/signin/identifier?service=youtube','/v3/signin/challenge/pwd']) {
+      expect(getGoogleAuthNotice(`https://accounts.google.com${path}`)).toBeNull();
+    }
+    expect(getGoogleAuthNotice('https://accounts.google.com/o/oauth2/error?error=disallowed_useragent')).not.toBeNull();
+    expect(getGoogleAuthNotice('https://accounts.google.com/ServiceLogin?error=not_disallowed_useragent')).toBeNull();
     expect(getGoogleAuthNotice('https://www.google.com/search?q=unsafe')).toBeNull();
     expect(getGoogleAuthNotice('https://accounts.google.com.evil.test/signin/rejected')).toBeNull();
   });

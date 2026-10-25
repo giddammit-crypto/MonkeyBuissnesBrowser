@@ -73,16 +73,39 @@ try {
   dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});
   shell.openExternal=async url=>{globalThis.__openedUrls.push(url);};
  });
+ const ordinary=await invoke('createTab',{url:'https://accounts.google.com/ServiceLogin?service=youtube',isPrivate:false});
+ await expect.poll(async()=>(await snapshot()).tabs.find(t=>t.id===ordinary.id)?.isLoading).toBe(false);
+ await expect(shell.getByRole('textbox',{name:'Адресная строка',exact:true})).toHaveValue('https://accounts.google.com/ServiceLogin?service=youtube');
+ await expect(shell.locator('.auth-help-banner')).toHaveCount(0);
+ assert.deepEqual(await app.evaluate(()=>globalThis.__openedUrls),[],'normal sign-in must stay inside the browser');
  const denied=await invoke('createTab',{url:'https://accounts.google.com/v3/signin/rejected?continue=https%3A%2F%2Fwww.youtube.com%2F',isPrivate:false});
  await expect(shell.locator('.auth-help-banner')).toBeVisible();
  await expect(shell.locator('.auth-help-banner')).toContainText('не переносит');
+ await app.evaluate(({BaseWindow})=>BaseWindow.getAllWindows()[0].setSize(920,640));
+ await expect.poll(()=>shell.locator('.app-shell').evaluate(element=>Math.round(element.getBoundingClientRect().width))).toBe(920);
+ assert(await shell.locator('.auth-help-banner').evaluate(element=>element.scrollWidth<=element.clientWidth),'rejection help controls must fit the compact window');
  await invoke('openCurrentPageExternally',denied.id);
  assert.deepEqual(await app.evaluate(()=>globalThis.__openedUrls),['https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.youtube.com%2F']);
+ const beforeDismiss=await shell.locator('.page-viewport').evaluate(element=>element.getBoundingClientRect().top);
+ await shell.getByRole('button',{name:'Скрыть помощь со входом Google',exact:true}).click();
+ await expect(shell.locator('.auth-help-banner')).toHaveCount(0);
+ await expect.poll(()=>shell.locator('.page-viewport').evaluate(element=>element.getBoundingClientRect().top)).toBeLessThan(beforeDismiss);
+ const pageTop=await shell.locator('.page-viewport').evaluate(element=>element.getBoundingClientRect().top);
+ await expect.poll(()=>app.evaluate(({BaseWindow})=>{
+  const view=BaseWindow.getAllWindows()[0].contentView.children.find(view=>view.webContents?.getURL().includes('/signin/rejected'));
+  return view?.getBounds().y;
+ })).toBe(Math.round(pageTop));
+ await invoke('navigate',denied.id,'https://accounts.google.com/v3/signin/identifier?service=youtube');
+ await expect.poll(async()=>(await snapshot()).tabs.find(t=>t.id===denied.id)?.isLoading).toBe(false);
+ await expect(shell.getByRole('textbox',{name:'Адресная строка',exact:true})).toHaveValue('https://accounts.google.com/v3/signin/identifier?service=youtube');
+ await expect(shell.locator('.auth-help-banner')).toHaveCount(0);
+ await invoke('navigate',denied.id,'https://accounts.google.com/v3/signin/rejected?continue=https%3A%2F%2Fwww.youtube.com%2F');
+ await expect(shell.locator('.auth-help-banner')).toBeVisible();
  await app.evaluate(({dialog,shell,session})=>{
   dialog.showMessageBox=globalThis.__originalMessageBox;shell.openExternal=globalThis.__originalExternal;
   session.fromPartition('persist:northstar-default').protocol.unhandle('https');
  });
- console.log('PASS Google rejection notice and confirmed system-browser route (local fixture)');
+ console.log('PASS normal Google sign-in has no premature warning; explicit rejection help can be dismissed and external navigation requires confirmation (local fixture)');
 
  const html=path.join(profile,'bookmarks.html');
  fs.writeFileSync(html,'<!DOCTYPE NETSCAPE-Bookmark-file-1><DL><DT><A HREF="https://example.test/book" ADD_DATE="1700000000">Imported &amp; safe</A></DL>');

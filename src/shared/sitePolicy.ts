@@ -72,15 +72,13 @@ export function getGoogleAuthNotice(rawUrl: string): { title: string; message: s
   try {
     const url = new URL(rawUrl);
     if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'accounts.google.com') return null;
-    const denied = /\/(?:rejected|deniedsigninrejected)(?:\/|$)/i.test(url.pathname) || /disallowed_useragent|deniedsigninrejected/i.test(url.searchParams.get('error') || '');
-    const oauth = /^\/o\/oauth2(?:\/|$)/i.test(url.pathname);
-    const signin = /^\/(?:(?:v\d+\/)?signin(?:\/|$)|ServiceLogin(?:\/|$)|AccountChooser(?:\/|$))/i.test(url.pathname);
-    if (!denied && !oauth && !signin) return null;
+    const denied = /\/(?:rejected|deniedsigninrejected)(?:\/|$)/i.test(url.pathname) || /^(?:disallowed_useragent|deniedsigninrejected)$/i.test(url.searchParams.get('error') || '');
+    // A normal sign-in page is not an error. Do not pre-empt the website's flow
+    // with an external-browser suggestion before Google has reported rejection.
+    if (!denied) return null;
     return {
-      title: denied ? 'Google ограничил вход в этом браузере' : 'Вход через Google',
-      message: denied
-        ? 'Google отклонил вход в этом браузере. Вход в системном браузере не переносит авторизацию обратно в SOUL-M8TE автоматически.'
-        : 'Для входа YouTube нужны cookies узлов Google и YouTube. В обычном профиле доступен режим совместимости в настройках приватности. Google всё равно может ограничить вход в Electron; авторизация в системном браузере автоматически сюда не переносится.',
+      title: 'Google ограничил вход в этом браузере',
+      message: 'Страница Google сообщает об отказе во входе. Открытие в другом браузере не переносит авторизацию обратно в SOUL-M8TE автоматически.',
     };
   } catch { return null; }
 }

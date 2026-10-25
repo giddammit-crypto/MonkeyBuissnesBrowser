@@ -87,6 +87,7 @@ function App(): React.JSX.Element {
   const [popover, setPopover] = useState<"menu" | "protection" | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [findOpen, setFindOpen] = useState(false);
+  const [authNoticeDismissed, setAuthNoticeDismissed] = useState(false);
   const [tabSearchOpen, setTabSearchOpen] = useState(false);
   const previousTabId = useRef<string | undefined>(undefined);
   const [findText, setFindText] = useState("");
@@ -100,6 +101,7 @@ function App(): React.JSX.Element {
     (tab) => tab.id === snapshot.activeTabId,
   );
   const authNotice = getGoogleAuthNotice(currentTab?.url ?? "");
+  useEffect(() => setAuthNoticeDismissed(false), [currentTab?.id, currentTab?.url]);
   const currentSite = getSiteKey(currentTab?.url ?? "");
   const sidebarCollapsed = snapshot?.settings.sidebarCollapsed ?? false;
   const showError = useCallback(
@@ -924,6 +926,7 @@ function App(): React.JSX.Element {
       <main className="content-area">
         {panel === "home" &&
           authNotice &&
+          !authNoticeDismissed &&
           currentTab &&
           !currentTab.isInternal && (
             <section
@@ -934,10 +937,6 @@ function App(): React.JSX.Element {
               <div>
                 <strong>{authNotice.title}</strong>
                 <p>{authNotice.message}</p>
-                <small>
-                  Откроется внешнее приложение со своим профилем. Cookies и
-                  настройки приватности SOUL-M8TE в нём не действуют.
-                </small>
               </div>
               <button
                 className="plain-button"
@@ -949,6 +948,7 @@ function App(): React.JSX.Element {
               >
                 <ExternalLink size={16} /> Открыть в системном браузере
               </button>
+              <button className="icon-button" aria-label="Скрыть помощь со входом Google" title="Скрыть помощь" onClick={() => setAuthNoticeDismissed(true)}><X size={16}/></button>
             </section>
           )}
         <div
