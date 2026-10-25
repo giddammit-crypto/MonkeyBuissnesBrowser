@@ -1,6 +1,6 @@
 {
   "name": "monkeybuissnesbrowser",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "SOUL-M8TE — Electron browser with private sessions, tab sleeping and native Chromium tabs.",
   "main": "dist/main/main/main.js",
   "author": {
@@ -60,7 +60,7 @@
       ],
       "category": "Network",
       "maintainer": "MonkeyBuissnesBrowser <maintainers@monkeybuissnesbrowser.invalid>",
-      "icon": "assets/icons/png"
+      "icon": "assets/icons/png/app-icon-512.png"
     },
     "win": {
       "target": [
