@@ -1191,6 +1191,7 @@ function TabStrip({
         {tabs.map((tab, index) => (
           <div
             key={tab.id}
+            onContextMenu={(event) => { event.preventDefault(); void window.browserApi.showTabMenu(tab.id).catch(console.error); }}
             className={`tab-container ${tab.id === snapshot.activeTabId ? "active" : ""} ${tab.isPrivate ? "private-tab" : ""} ${tab.isPinned ? "pinned-tab" : ""} ${tab.lifecycle === "hibernated" ? "sleeping-tab" : ""}`}
           >
             <button
