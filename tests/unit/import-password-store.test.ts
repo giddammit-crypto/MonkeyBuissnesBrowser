@@ -13,7 +13,7 @@ vi.mock('electron', () => ({ safeStorage: storage }));
 import { PasswordStore } from '../../src/main/persistence/PasswordStore';
 
 const directories: string[] = [];
-afterEach(() => { vi.clearAllMocks(); for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
+afterEach(() => { vi.clearAllMocks(); storage.isEncryptionAvailable.mockReturnValue(true); for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 const directory = () => { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-secure-import-')); directories.push(root); return root; };
 
 it('deduplicates same origin/user across login paths without replacing existing saved passwords', () => {
@@ -61,4 +61,20 @@ it('deletes one encrypted record atomically and refuses to replace a corrupted v
   expect(() => store.delete(two.id)).toThrow('Операция отменена');
   expect(fs.readFileSync(file, 'utf8')).toBe('broken-vault');
   expect(fs.readdirSync(path.dirname(file))).toEqual(['passwords.enc']);
+});
+
+it('reports locked and corrupted vaults rather than an empty password list and recovers without data loss', () => {
+  const root=directory(); const store=new PasswordStore(root);
+  store.addMany([{origin:'https://saved.test',username:'user',password:'fake-fixture',browser:'file'}]);
+  const file=path.join(root,'browser-data/passwords.enc'); const before=fs.readFileSync(file);
+  storage.isEncryptionAvailable.mockReturnValue(false);
+  expect(()=>store.summaries()).toThrow('недоступно');
+  expect(fs.readFileSync(file)).toEqual(before);
+  storage.isEncryptionAvailable.mockReturnValue(true);
+  expect(store.summaries()).toHaveLength(1);
+  fs.writeFileSync(file,'broken-fixture');
+  expect(()=>store.summaries()).toThrow('Операция отменена');
+  expect(fs.readFileSync(file,'utf8')).toBe('broken-fixture');
+  fs.writeFileSync(file,before);
+  expect(store.summaries()).toHaveLength(1);
 });

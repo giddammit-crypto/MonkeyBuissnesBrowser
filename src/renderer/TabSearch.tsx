@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Globe2, Search, Shield, X } from 'lucide-react';
 import type { BrowserSnapshot } from '../shared/types';
+import { userFacingError } from './userFacingError';
 
 export interface TabSearchProps {
   snapshot: BrowserSnapshot;
@@ -68,7 +69,7 @@ export default function TabSearch({ snapshot, onActivate, onCloseTab, onDismiss,
       if (activate) { await onActivate(id); restoreFocus.current = false; onDismiss(); }
       else await onCloseTab(id);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Действие с вкладкой не выполнено.');
+      setError(userFacingError(cause, 'Действие с вкладкой не выполнено.'));
       onError?.(cause);
     } finally {
       closingRef.current.delete(id);

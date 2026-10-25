@@ -14,7 +14,7 @@ import type { ChromeBounds, TabAction, DownloadAction } from '../../shared/ipc';
 import { FilterEngine, SessionAdBlock } from '../../services/adblock/FilterEngine';
 import { MemoryManager } from '../../services/memory/MemoryManager';
 import { VpnConfigStore } from '../../services/vpn/VpnConfigStore';
-import { isLikelyMediaUrl, isSafeMediaUrl, mediaKindForMime, mediaKindForUrl } from '../../shared/media';
+import { isSafeMediaUrl, mediaKindForMime, mediaKindForUrl } from '../../shared/media';
 import { isSafeWebUrl, parseOmniboxInput } from '../../shared/omnibox';
 import { canRequestStorageAccess, getExternalPageUrl, getSiteKey, normalizeCookieExceptions, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
 import type {
@@ -287,7 +287,11 @@ export class BrowserController {
     if (this.tabs.size === 0) await this.createTab({ url: NEW_TAB_URL, isPrivate: false, active: true });
     else if (this.activeTabId === tabId) {
       const remaining = [...this.tabs.values()];
-      const fallback = remaining.slice().reverse().find((entry) => entry.workspaceId === tab.workspaceId) ?? remaining.at(-1);
+      const reversed = remaining.slice().reverse();
+      const fallback = reversed.find((entry) => entry.workspaceId === tab.workspaceId && entry.isPrivate === tab.isPrivate)
+        ?? reversed.find((entry) => entry.isPrivate === tab.isPrivate)
+        ?? reversed.find((entry) => entry.workspaceId === tab.workspaceId)
+        ?? reversed[0];
       if (fallback) this.activateTab(fallback.id);
     }
     this.emitSnapshot();
@@ -298,6 +302,9 @@ export class BrowserController {
   }
 
   async reopenClosedTab(): Promise<void> {
+    // Private sessions do not retain reopen history, and must not silently
+    // reopen an ordinary-profile page through a shortcut or direct shell call.
+    if (this.tabs.get(this.activeTabId)?.isPrivate) return;
     const saved = this.closedTabs.pop();
     if (!saved) return;
     this.activeWorkspaceId = saved.workspaceId;
@@ -612,13 +619,14 @@ export class BrowserController {
 
   async switchWorkspace(workspaceId: string): Promise<void> {
     if (!this.stores.workspaces.get().some((workspace) => workspace.id === workspaceId)) return;
+    const isPrivate = this.tabs.get(this.activeTabId)?.isPrivate ?? false;
     this.activeWorkspaceId = workspaceId;
-    const firstTab = Array.from(this.tabs.values()).find((tab) => tab.workspaceId === workspaceId);
+    const firstTab = Array.from(this.tabs.values()).find((tab) => tab.workspaceId === workspaceId && tab.isPrivate === isPrivate);
     if (firstTab) {
       this.activateTab(firstTab.id);
       return;
     }
-    await this.createTab({ url: NEW_TAB_URL, active: true });
+    await this.createTab({ url: NEW_TAB_URL, isPrivate, active: true });
   }
 
   getVpnSnapshot(): VpnSnapshot {
@@ -663,7 +671,7 @@ export class BrowserController {
       message: `Открыть ${new URL(url).hostname} в системном браузере?`,
       detail: tab.isPrivate
         ? 'Адрес будет передан обычному системному браузеру. Приватная сессия и её прокси не распространяются на него. Выполненный там вход не переносится в SOUL-M8TE.'
-        : 'Авторизация будет выполнена в системном браузере и не перенесётся в SOUL-M8TE автоматически.',
+        : 'Страница откроется в системном браузере. Выполненный там вход не переносится в SOUL-M8TE автоматически.',
       buttons: ['Отмена', 'Открыть'], defaultId: 0, cancelId: 0, noLink: true,
     });
     if (result.response === 1) await shell.openExternal(url);
@@ -735,7 +743,7 @@ export class BrowserController {
         const decision = await dialog.showMessageBox(owner, {
           type: 'question', title: 'Заполнить сохранённый пароль',
           message: `Заполнить форму входа на ${metadata.origin}?`,
-          detail: `Логин: ${metadata.username.replace(/[\r\n\0]/g, ' ').slice(0, 160) || 'не указан'}. Поля будут заполнены без отправки формы. Сайт сможет прочитать введённые данные.`,
+          detail: `Логин: ${metadata.username.replace(/[\r\n\0]/g, ' ').slice(0, 160) || 'не указан'}. Браузер заполнит поля и не будет нажимать кнопку входа. Сайт сможет прочитать данные и сам отреагировать на ввод.`,
           buttons: ['Отмена', 'Заполнить'], defaultId: 0, cancelId: 0, noLink: true,
         });
         return decision.response === 1;
@@ -1033,7 +1041,13 @@ export class BrowserController {
     contents.on('did-navigate-in-page', (_event, url) => this.updateUrl(tab, url));
     contents.on('page-title-updated', (event, title) => {
       event.preventDefault();
+      if (contents.isDestroyed() || this.tabs.get(tab.id) !== tab || tab.webContentsId !== contents.id) return;
+      const currentUrl = contents.getURL();
+      // Ignore a title from the previous document while a new omnibox
+      // navigation is pending, or from a detached/replaced WebContents.
+      if (currentUrl !== tab.url) return;
       tab.title = title || tab.url;
+      if (!tab.isPrivate && !tab.isInternal && isSafeWebUrl(currentUrl)) this.stores.updateHistoryTitle(currentUrl, tab.title);
       this.emitSnapshot();
     });
     contents.on('page-favicon-updated', (_event, favicons) => {
@@ -1262,9 +1276,12 @@ export class BrowserController {
   }
 
   private showContextMenu(contents: Electron.WebContents, params: Electron.ContextMenuParams): void {
-    const mediaUrl = params.srcURL && isSafeMediaUrl(params.srcURL) ? params.srcURL : undefined;
+    // Chromium already identified a rendered media element. CDN/API image or
+    // media endpoints need not have an extension; arbitrary links still do.
+    const recognizedMedia = ['image', 'video', 'audio'].includes(params.mediaType);
+    const mediaUrl = recognizedMedia && params.srcURL && isSafeWebUrl(params.srcURL) ? params.srcURL : undefined;
     const linkedMediaUrl = params.linkURL && isSafeMediaUrl(params.linkURL) ? params.linkURL : undefined;
-    const mediaKind = mediaUrl ? mediaKindForUrl(mediaUrl) : undefined;
+    const linkedMediaKind = linkedMediaUrl ? mediaKindForUrl(linkedMediaUrl) : undefined;
     const template: Electron.MenuItemConstructorOptions[] = [];
 
     if (params.mediaType === 'image') {
@@ -1287,7 +1304,7 @@ export class BrowserController {
       });
     } else if (linkedMediaUrl) {
       template.push({
-        label: `Сохранить ${mediaKind === 'image' ? 'изображение' : mediaKind === 'video' ? 'видео' : 'файл'}`,
+        label: `Сохранить ${linkedMediaKind === 'image' ? 'изображение' : linkedMediaKind === 'video' ? 'видео' : linkedMediaKind === 'audio' ? 'аудио' : 'файл'}`,
         click: () => this.downloadMedia(contents, linkedMediaUrl),
       });
     }
@@ -1318,8 +1335,10 @@ export class BrowserController {
   }
 
   private downloadMedia(contents: Electron.WebContents, url: string): void {
-    if (!isSafeMediaUrl(url) || !isLikelyMediaUrl(new URL(url))) return;
-    contents.downloadURL(url);
+    if (!isSafeWebUrl(url) || contents.isDestroyed()) return;
+    try { contents.downloadURL(url); } catch (cause) {
+      this.eventListener?.({ type: 'navigation-error', message: cause instanceof Error ? cause.message : 'Не удалось сохранить медиафайл.' });
+    }
   }
 
   private isAllowedExternalUrl(rawUrl: string): boolean {

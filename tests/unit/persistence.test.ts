@@ -12,6 +12,33 @@ afterEach(() => {
 });
 
 describe('BrowserStores', () => {
+  it('updates a late document title without creating another visit or changing visit metadata', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-history-title-'));
+    temporaryDirectories.push(directory);
+    const stores = new BrowserStores(directory);
+    const first = stores.addHistory({ url: 'https://example.test/first', title: 'Loading' });
+    const second = stores.addHistory({ url: 'https://example.test/second', title: 'Second' });
+    expect(stores.updateHistoryTitle(first.url, 'Actual document title')).toBe(true);
+    expect(stores.history.get()).toEqual([second, { ...first, title: 'Actual document title' }]);
+    expect(new BrowserStores(directory).history.get()).toEqual(stores.history.get());
+    expect(stores.updateHistoryTitle(first.url, 'Actual document title')).toBe(false);
+  });
+
+  it('does not recreate removed or cleared history entries when a late title arrives', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-history-removed-title-'));
+    temporaryDirectories.push(directory);
+    const stores = new BrowserStores(directory);
+    const removed = stores.addHistory({ url: 'https://example.test/removed', title: 'Removed' });
+    const kept = stores.addHistory({ url: 'https://example.test/kept', title: 'Kept' });
+    stores.history.set([kept]);
+    expect(stores.updateHistoryTitle(removed.url, 'Late title')).toBe(false);
+    expect(stores.history.get()).toEqual([kept]);
+    stores.history.set([]);
+    expect(stores.updateHistoryTitle(kept.url, 'After clear')).toBe(false);
+    expect(stores.history.get()).toEqual([]);
+    expect(stores.updateHistoryTitle('javascript:alert(1)', 'Unsafe')).toBe(false);
+  });
+
   it('persists history and bookmarks across store instances', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'northstar-browser-'));
     temporaryDirectories.push(directory);

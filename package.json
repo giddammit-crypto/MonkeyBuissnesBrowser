@@ -1,6 +1,6 @@
 {
   "name": "monkeybuissnesbrowser",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "SOUL-M8TE — Electron browser with private sessions, tab sleeping and native Chromium tabs.",
   "main": "dist/main/main/main.js",
   "author": {
@@ -21,7 +21,7 @@
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
-    "test:e2e:smoke": "node scripts/electron-smoke.mjs && node scripts/login-import-smoke.mjs && node scripts/youtube-cookies-smoke.mjs && node scripts/popup-smoke.mjs && node scripts/tab-search-smoke.mjs && node scripts/manager-smoke.mjs && node scripts/password-manager-smoke.mjs",
+    "test:e2e:smoke": "node scripts/electron-smoke.mjs && node scripts/login-import-smoke.mjs && node scripts/youtube-cookies-smoke.mjs && node scripts/popup-smoke.mjs && node scripts/tab-search-smoke.mjs && node scripts/manager-smoke.mjs && node scripts/password-manager-smoke.mjs && node scripts/manager-ui-regression.mjs && node scripts/media-smoke.mjs",
     "package": "npm run build && electron-builder --dir --publish never",
     "dist:linux": "npm run build && electron-builder --linux AppImage deb --publish never",
     "check": "npm run typecheck && npm test"

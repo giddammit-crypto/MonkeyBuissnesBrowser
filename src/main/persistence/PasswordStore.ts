@@ -51,7 +51,8 @@ export class PasswordStore {
   }
 
   summaries(): ImportedPasswordSummary[] {
-    return this.read().map(({ password: _password, ...summary }) => summary);
+    if (!this.canPersistSecurely()) throw new Error('Защищённое хранилище паролей недоступно. Сохранённые данные не изменены.');
+    return this.read(true).map(({ password: _password, ...summary }) => summary);
   }
 
   /** Main-process only. Callers must obtain explicit consent before reading a secret. */
@@ -77,7 +78,11 @@ export class PasswordStore {
   }
 
   private read(strict = false): StoredPassword[] {
-    if (!this.canPersistSecurely() || !fs.existsSync(this.filePath)) return [];
+    if (!this.canPersistSecurely()) {
+      if (strict) throw new Error('Защищённое хранилище паролей недоступно. Сохранённые данные не изменены.');
+      return [];
+    }
+    if (!fs.existsSync(this.filePath)) return [];
     try {
       const encrypted = fs.readFileSync(this.filePath, 'utf8');
       const records: unknown = JSON.parse(safeStorage.decryptString(Buffer.from(encrypted, 'base64')));

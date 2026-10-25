@@ -59,6 +59,7 @@ import logoDark from "./assets/soul/logo-dark.png";
 import portrait from "./assets/soul/portrait.webp";
 import symbol from "./assets/soul/symbol.svg";
 import "./styles.css";
+import { userFacingError } from "./userFacingError";
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const TabSearch = React.lazy(()=>import("./TabSearch"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
@@ -105,10 +106,7 @@ function App(): React.JSX.Element {
     (error: unknown) =>
       setToast({
         tone: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Действие не выполнено. Попробуйте ещё раз.",
+        message: userFacingError(error),
       }),
     [],
   );
@@ -520,6 +518,7 @@ function App(): React.JSX.Element {
             <MenuAction
               icon={<RotateCcw size={16} />}
               label="Открыть закрытую вкладку"
+              disabled={isPrivate}
               detail="Ctrl+Shift+T"
               onClick={() => {
                 setPopover(null);
@@ -1570,8 +1569,8 @@ function DownloadsPanel({
       {visible.length === 0 ? (
         <EmptyState
           icon={<Download size={28} />}
-          title={query?"Ничего не найдено":"Загрузок пока нет"}
-          description="Сохранённые файлы и их состояние появятся здесь."
+          title={query.trim()?"Ничего не найдено":"Загрузок пока нет"}
+          description={query.trim()?"Попробуйте другое название или адрес файла.":"Сохранённые файлы и их состояние появятся здесь."}
         />
       ) : (
         <div className="download-list">
@@ -1763,9 +1762,7 @@ function ImportDataCard(): React.JSX.Element {
         );
     } catch (caught) {
       setError(
-        caught instanceof Error
-          ? caught.message
-          : "Не удалось найти профили браузеров.",
+        userFacingError(caught, "Не удалось найти профили браузеров."),
       );
     } finally {
       setBusy(null);
@@ -1813,7 +1810,7 @@ function ImportDataCard(): React.JSX.Element {
       );
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "Импорт не выполнен.",
+        userFacingError(caught, "Импорт не выполнен."),
       );
     } finally {
       setBusy(null);
@@ -1839,9 +1836,7 @@ function ImportDataCard(): React.JSX.Element {
       } else setMessage("Выбор файла отменён. Данные не изменены.");
     } catch (caught) {
       setError(
-        caught instanceof Error
-          ? caught.message
-          : "Не удалось импортировать файл.",
+        userFacingError(caught, "Не удалось импортировать файл."),
       );
     } finally {
       setBusy(null);
@@ -2010,7 +2005,7 @@ function ImportDataCard(): React.JSX.Element {
             Не отправляйте этот файл другим людям и не храните в общих папках.
             После переноса удалите ненужный CSV из места экспорта. SOUL-M8TE
             сохраняет пароли только при доступном системном шифровании.
-            Автозаполнение паролей пока не поддерживается.
+            Автоматическое фоновое заполнение не поддерживается. Ручное заполнение доступно в разделе паролей после подтверждения.
           </p>
         </div>
       </div>

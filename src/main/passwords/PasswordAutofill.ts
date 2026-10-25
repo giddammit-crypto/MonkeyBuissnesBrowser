@@ -40,9 +40,19 @@ function fillVisibleTopFrame(input: PageFillInput): PasswordFillResult & { eligi
   const password = candidates[0];
   const form = password.form;
   if (!form || !(form instanceof HTMLFormElement) || password.autocomplete.toLowerCase().includes('new-password')) return { filled: false, reason: 'Поддерживается только видимая форма входа; формы регистрации и iframe не заполняются.' };
-  let action: URL;
-  try { action = new URL(form.action || location.href, location.href); } catch { return { filled: false, reason: 'У формы некорректный адрес отправки.' }; }
-  if (action.protocol !== 'https:' || action.origin !== input.origin || action.username || action.password) return { filled: false, reason: 'Форма отправляет данные на другой адрес. Заполнение отклонено.' };
+  const sameOriginAction = (raw: string): boolean => {
+    try { const action = new URL(raw, location.href); return action.protocol === 'https:' && action.origin === input.origin && !action.username && !action.password; } catch { return false; }
+  };
+  if (!sameOriginAction(form.action || location.href)) return { filled: false, reason: 'Форма отправляет данные на другой адрес. Заполнение отклонено.' };
+  // form.elements includes externally associated submit buttons. Image inputs are
+  // historically omitted from that collection, so include those explicitly too.
+  const controls = [...form.elements, ...document.querySelectorAll<HTMLInputElement>('input[type="image"]')];
+  for (const control of controls) {
+    const submitter = control instanceof HTMLButtonElement && control.type === 'submit' || control instanceof HTMLInputElement && ['submit', 'image'].includes(control.type);
+    if (submitter && (control as HTMLInputElement | HTMLButtonElement).form === form && control.hasAttribute('formaction') && !sameOriginAction((control as HTMLInputElement | HTMLButtonElement).formAction)) {
+      return { filled: false, reason: 'Кнопка формы отправляет данные на другой адрес. Заполнение отклонено.' };
+    }
+  }
   const fields = [...form.querySelectorAll<HTMLInputElement>('input')].filter(field => field.form === form && field !== password && ['text', 'email', 'tel'].includes(field.type) && !field.readOnly && visible(field));
   const marked = fields.filter(field => /^(?:username|email)$/.test(field.autocomplete.toLowerCase()) || field.type === 'email' || /(?:user|login|email|логин|почт)/i.test(`${field.name} ${field.id}`));
   const users = marked.length ? marked : fields;
@@ -52,8 +62,17 @@ function fillVisibleTopFrame(input: PageFillInput): PasswordFillResult & { eligi
   if (!setter || !password.isConnected || location.origin !== input.origin) return { filled: false, reason: 'Форма изменилась. Повторите заполнение.' };
   // Set both native values before dispatching page-observable events. No submit,
   // click, requestSubmit, synthetic Enter or page-defined setters are invoked.
+  const previousUsername = users[0]?.value;
+  const previousPassword = password.value;
   if (users[0]) setter.call(users[0], input.credentials.username);
   setter.call(password, input.credentials.password);
+  // Native HTML inputs normalize some values (password newlines, email spaces).
+  // A normalized value is a different credential: restore without emitting events.
+  if (password.value !== input.credentials.password || users[0] && users[0].value !== input.credentials.username) {
+    if (users[0]) setter.call(users[0], previousUsername);
+    setter.call(password, previousPassword);
+    return { filled: false, reason: 'Поля этой формы изменяют символы логина или пароля. Исходные значения восстановлены; заполнение отменено.' };
+  }
   for (const field of [...users.slice(0, 1), password]) {
     field.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     field.dispatchEvent(new Event('change', { bubbles: true, composed: true }));

@@ -131,6 +131,17 @@ export class BrowserStores {
     return next;
   }
 
+  updateHistoryTitle(url: string, title: string): boolean {
+    if (typeof url !== 'string' || typeof title !== 'string' || !isSafeWebUrl(url)) return false;
+    const entries = this.history.get();
+    const normalizedTitle = title.trim().slice(0, 1000) || url;
+    // A delayed document title must not recreate a visit after history was
+    // cleared or an individual entry was removed by the user.
+    if (!entries.some(entry => entry.url === url && entry.title !== normalizedTitle)) return false;
+    this.history.set(entries.map(entry => entry.url === url ? { ...entry, title: normalizedTitle } : entry));
+    return true;
+  }
+
   toggleBookmark(entry: Omit<BookmarkEntry, 'id' | 'createdAt'>): BookmarkEntry | null {
     let canonical = entry.url;
     try { canonical = new URL(entry.url).href; } catch { /* saveBookmark supplies validation. */ }

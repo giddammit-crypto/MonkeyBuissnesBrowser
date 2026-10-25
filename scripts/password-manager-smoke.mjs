@@ -131,12 +131,50 @@ try {
     await expect(shell.locator('[data-password-manager]')).toHaveCount(0);
     await expect.poll(async () => (await values(tab)).password).toBe(fakePassword);
     assert.equal((await values(tab)).submits,0);
-    await expect(shell.locator('.app-toast')).toContainText('Логин и пароль заполнены. Форма не отправлена.');
+    await expect(shell.locator('.app-toast')).toContainText('Поля заполнены. Браузер не нажимает кнопку входа.');
     assert(!(await shell.locator('body').textContent()).includes(fakePassword));
     const prompts = await app.evaluate(() => globalThis.__passwordFixturePrompts);
     assert(prompts.length > before, 'native confirmation must be part of the UI flow');
     assert.equal(prompts.at(-1).title,'Заполнить сохранённый пароль');
     assert(!JSON.stringify(prompts).includes(fakePassword));
+  });
+  await check('native value normalization rolls both fields back without input/change events or false success', async () => {
+    const originalCsv=fs.readFileSync(filePath,'utf8');
+    const csv=value=>`"${value.replaceAll('"','""')}"`;
+    for(const [username,password,email] of [['newline-user','line one\nline two',false],['  mail@example.test  ','valid-password',true]]) {
+      fs.writeFileSync(filePath,`url,username,password\n${loginOrigin},${csv(username)},${csv(password)}\n`);
+      const report=await invoke('importBrowserFile','passwords'); assert.equal(report.imported,1);
+      const record=(await invoke('getImportedPasswordSummaries')).find(record=>record.username===username);
+      const tab=await create();
+      await pageScript(tab.url,`document.querySelector('#login').type=${JSON.stringify(email?'email':'text')};document.querySelector('#login').value='before@example.test';document.querySelector('#secret').value='before-password';window.fixtureInputEvents=0;document.querySelector('form').addEventListener('input',()=>window.fixtureInputEvents++);document.querySelector('form').addEventListener('change',()=>window.fixtureInputEvents++);`);
+      const result=await invoke('fillSavedPassword',tab.id,record.id);
+      assert.equal(result.filled,false); assert(result.reason.includes('восстановлены'));
+      const actual=await values(tab); assert.equal(actual.username,'before@example.test'); assert.equal(actual.password,'before-password');
+      assert.equal(await pageScript(tab.url,'window.fixtureInputEvents'),0);
+      assert.equal(await invoke('deleteSavedPassword',record.id),true);
+    }
+    fs.writeFileSync(filePath,originalCsv);
+  });
+  await check('submit-button formaction overrides, external buttons and image submitters cannot bypass exact-origin guard', async () => {
+    const attacks=[
+      `document.querySelector('button[type=submit]').setAttribute('formaction',${JSON.stringify(`${otherOrigin}/session`)})`,
+      `document.querySelector('button[type=submit]').removeAttribute('type');document.querySelector('button').setAttribute('formaction',${JSON.stringify(`${otherOrigin}/session`)})`,
+      `document.querySelector('form').insertAdjacentHTML('afterend','<button form="login-form" formaction="${otherOrigin}/session">External submit</button>')`,
+      `document.querySelector('form').insertAdjacentHTML('afterend','<input type="image" form="login-form" formaction="${otherOrigin}/session">')`,
+    ];
+    for(const code of attacks) {
+      const tab=await create(); await pageScript(tab.url,code);
+      const result=await invoke('fillSavedPassword',tab.id,saved.id);
+      assert.equal(result.filled,false); assert(result.reason.includes('другой адрес')); assert.equal((await values(tab)).password,'');
+    }
+    const normal=await create(); await pageScript(normal.url,`document.querySelector('button').setAttribute('formaction','/another-session')`);
+    assert.equal((await invoke('fillSavedPassword',normal.id,saved.id)).filled,true);
+  });
+  await check('site input handlers may submit independently; fill does not promise that the site stayed idle', async () => {
+    const tab=await create();
+    await pageScript(tab.url,`document.querySelector('#secret').addEventListener('change',()=>document.querySelector('form').requestSubmit())`);
+    assert.equal((await invoke('fillSavedPassword',tab.id,saved.id)).filled,true);
+    assert.equal((await values(tab)).submits,1,'the site may react to normal input/change events, even without a browser submit call');
   });
   await check('native cancellation leaves fields empty and a different-origin credential ID is rejected', async () => {
     const tab = await create(); await mode('cancel');
@@ -171,6 +209,30 @@ try {
     await mode('allow'); assert.equal(await invoke('deleteSavedPassword', saved.id), true);
     assert(!(await invoke('getImportedPasswordSummaries')).some(record => record.id === saved.id));
     const tab = await create(); await safeRejection(() => invoke('fillSavedPassword', tab.id, saved.id)); assert.equal((await values(tab)).password, '');
+  });
+  await check('locked or damaged vault shows an error instead of an empty list and refresh recovers without changing records', async () => {
+    await shell.getByRole('button',{name:'Настройки',exact:true}).first().click();
+    const manager=shell.locator('[data-password-manager]');
+    await expect(manager.locator('.password-record')).toHaveCount(1);
+    const vault=path.join(dataPath,'browser-data/passwords.enc'); const backup=fs.readFileSync(vault);
+    const refresh=manager.getByRole('button',{name:'Обновить список паролей',exact:true});
+    await app.evaluate(({safeStorage})=>{safeStorage.isEncryptionAvailable=()=>false;});
+    await refresh.click();
+    await expect(manager.getByRole('alert')).toContainText('Список паролей сейчас недоступен');
+    await expect(manager.locator('.password-record')).toHaveCount(0);
+    assert(!(await manager.innerText()).includes('Сохранённых записей пока нет'));
+    assert(!(await manager.innerText()).includes('В хранилище: 0'));
+    assert.deepEqual(fs.readFileSync(vault),backup);
+    await app.evaluate(({safeStorage})=>{safeStorage.isEncryptionAvailable=()=>true;});
+    fs.writeFileSync(vault,'damaged-local-fixture');
+    await refresh.click();
+    await expect(manager.getByRole('alert')).toContainText('Список паролей сейчас недоступен');
+    assert.equal(fs.readFileSync(vault,'utf8'),'damaged-local-fixture');
+    fs.writeFileSync(vault,backup); await refresh.click();
+    await expect(manager.getByRole('alert')).toHaveCount(0);
+    await expect(manager.locator('.password-record')).toHaveCount(1);
+    assert((await invoke('getImportedPasswordSummaries')).some(record=>record.id===other.id));
+    assert.deepEqual(fs.readFileSync(vault),backup);
   });
   const prompts = await app.evaluate(() => globalThis.__passwordFixturePrompts);
   assert(!JSON.stringify(prompts).includes(fakePassword)); assert.deepEqual(errors, []);
