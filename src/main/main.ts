@@ -93,7 +93,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('browser:close-tab', (event, tabId: string) => requireShell(event).closeTab(tabId));
   ipcMain.handle('browser:show-tab-menu', (event, tabId: string) => requireShell(event).showTabMenu(tabId));
-  ipcMain.handle('browser:close-related-tabs', (event, tabId: string, scope: 'others' | 'right') => requireShell(event).closeRelatedTabs(tabId, scope));
+  ipcMain.handle('browser:close-related-tabs', (event, tabId: string, scope: 'others' | 'right' | 'left') => requireShell(event).closeRelatedTabs(tabId, scope));
   ipcMain.handle('browser:navigate', (event, tabId: string, input: string) => requireShell(event).navigate(tabId, input));
   ipcMain.handle('browser:back', (event, tabId: string) => requireShell(event).goBack(tabId));
   ipcMain.handle('browser:forward', (event, tabId: string) => requireShell(event).goForward(tabId));
