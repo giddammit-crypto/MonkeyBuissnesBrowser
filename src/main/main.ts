@@ -92,6 +92,8 @@ function registerIpc(): void {
     if (event.senderFrame === event.sender.mainFrame && typeof dirty === 'boolean') controller?.markFormState(event.sender.id, dirty);
   });
   ipcMain.handle('browser:close-tab', (event, tabId: string) => requireShell(event).closeTab(tabId));
+  ipcMain.handle('browser:show-tab-menu', (event, tabId: string) => requireShell(event).showTabMenu(tabId));
+  ipcMain.handle('browser:close-related-tabs', (event, tabId: string, scope: 'others' | 'right') => requireShell(event).closeRelatedTabs(tabId, scope));
   ipcMain.handle('browser:navigate', (event, tabId: string, input: string) => requireShell(event).navigate(tabId, input));
   ipcMain.handle('browser:back', (event, tabId: string) => requireShell(event).goBack(tabId));
   ipcMain.handle('browser:forward', (event, tabId: string) => requireShell(event).goForward(tabId));
@@ -101,6 +103,11 @@ function registerIpc(): void {
   ipcMain.handle('browser:wake-tab', (event, tabId: string) => requireShell(event).wakeTab(tabId));
   ipcMain.handle('browser:sample-performance', (event) => requireShell(event).samplePerformance());
   ipcMain.handle('browser:toggle-bookmark', (event, tabId: string) => requireShell(event).toggleBookmark(tabId));
+  ipcMain.handle('browser:save-bookmark', (event, input: { id?: string; title: string; url: string }) => requireShell(event).saveBookmark(input));
+  ipcMain.handle('browser:remove-bookmark', (event, id: string) => requireShell(event).removeBookmark(id));
+  ipcMain.handle('browser:remove-history-entry', (event, id: string) => requireShell(event).removeHistoryEntry(id));
+  ipcMain.handle('browser:clear-browsing-history', (event) => requireShell(event).clearBrowsingHistory());
+  ipcMain.handle('browser:clear-finished-downloads', (event, isPrivate?: boolean) => requireShell(event).clearFinishedDownloads(isPrivate));
   ipcMain.handle('browser:query-history', (event, query?: string) => requireShell(event).queryHistory(query));
   ipcMain.handle('browser:get-downloads', (event) => requireShell(event).getSnapshot().downloads);
   ipcMain.handle('browser:open-download', (event, downloadId: string) => requireShell(event).openDownload(downloadId));
@@ -115,6 +122,8 @@ function registerIpc(): void {
   ipcMain.handle('browser:discover-import-profiles', (event) => requireShell(event).discoverImportProfiles());
   ipcMain.handle('browser:import-data', (event, input: { profileId: string; data: import('../shared/types').ImportDataKind[] }) => requireShell(event).importBrowserData(input));
   ipcMain.handle('browser:get-imported-passwords', (event) => requireShell(event).getImportedPasswordSummaries());
+  ipcMain.handle('browser:delete-saved-password', (event, id: string) => requireShell(event).deleteSavedPassword(id));
+  ipcMain.handle('browser:fill-saved-password', (event, tabId: string, id: string) => requireShell(event).fillSavedPassword(tabId, id));
   ipcMain.handle('browser:set-chrome-bounds', (event, bounds: ChromeBounds) => requireShell(event).setChromeBounds(bounds));
   ipcMain.handle('window:minimize', (event) => requireShell(event).minimizeWindow());
   ipcMain.handle('window:toggle-maximize', (event) => requireShell(event).toggleMaximizeWindow());

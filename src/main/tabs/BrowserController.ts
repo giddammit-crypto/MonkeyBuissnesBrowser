@@ -35,6 +35,7 @@ import type {
 } from '../../shared/types';
 import { BrowserStores, buildStoredSession } from '../persistence/BrowserStores';
 import { PasswordStore } from '../persistence/PasswordStore';
+import { fillSavedCredential } from '../passwords/PasswordAutofill';
 import { BrowserDataImporter, type ImportedCookie } from '../import/BrowserDataImporter';
 
 const shellPreloadPath = path.resolve(__dirname, '../../preload/shell-preload.js');
@@ -86,6 +87,7 @@ export class BrowserController {
   private readonly liveDownloads = new Map<string, { item: Electron.DownloadItem; tabId?: string }>();
   private readonly closedTabs: Array<Pick<TabSnapshot, 'url' | 'workspaceId' | 'isPinned' | 'isMuted'>> = [];
   private readonly popupOpeners = new Map<string, string>();
+  private readonly findQueries = new Map<string, string>();
 
   constructor() {
     this.stores = new BrowserStores(app.getPath('userData'));
@@ -275,6 +277,7 @@ export class BrowserController {
       if (this.closedTabs.length > 20) this.closedTabs.shift();
     }
     this.tabs.delete(tabId);
+    this.findQueries.delete(tabId);
     this.popupOpeners.delete(tabId);
     this.memoryManager.removeTab(tabId);
     this.detachView(tab);
@@ -333,14 +336,61 @@ export class BrowserController {
     this.emitSnapshot();
   }
 
+  async closeRelatedTabs(tabId: string, scope: 'others' | 'right'): Promise<void> {
+    const reference = this.tabs.get(tabId);
+    if (!reference || (scope !== 'others' && scope !== 'right')) return;
+    // Match the visible strip order. Bulk actions never cross workspaces or
+    // normal/private boundaries, and pinned tabs remain protected.
+    const ordered = [...this.tabs.values()]
+      .filter((tab) => tab.workspaceId === reference.workspaceId && tab.isPrivate === reference.isPrivate)
+      .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+    const referenceIndex = ordered.findIndex((tab) => tab.id === tabId);
+    const closing = ordered.filter((tab, index) => tab.id !== tabId && !tab.isPinned && (scope === 'others' || index > referenceIndex));
+    if (closing.some((tab) => tab.id === this.activeTabId)) this.activateTab(reference.id);
+    for (const tab of closing) await this.closeTab(tab.id);
+  }
+
+  showTabMenu(tabId: string): void {
+    const tab = this.tabs.get(tabId);
+    if (!tab || !this.window || this.window.isDestroyed() || this.disposed) return;
+    const peers = [...this.tabs.values()]
+      .filter((entry) => entry.workspaceId === tab.workspaceId && entry.isPrivate === tab.isPrivate)
+      .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+    const index = peers.findIndex((entry) => entry.id === tabId);
+    const report = (cause: unknown) => {
+      if (!this.disposed) this.eventListener?.({ type: 'navigation-error', message: cause instanceof Error ? cause.message : 'Не удалось выполнить действие с вкладкой.' });
+    };
+    const safely = (action: () => unknown) => () => {
+      try { void Promise.resolve(action()).catch(report); } catch (cause) { report(cause); }
+    };
+    const template: Electron.MenuItemConstructorOptions[] = [
+      { label: tab.isPinned ? 'Открепить вкладку' : 'Закрепить вкладку', type: 'checkbox', checked: tab.isPinned, click: safely(() => this.tabAction(tabId, 'pin')) },
+      { label: tab.isMuted ? 'Включить звук' : 'Отключить звук', type: 'checkbox', checked: tab.isMuted, click: safely(() => this.tabAction(tabId, 'mute')) },
+      { label: 'Дублировать вкладку', enabled: tab.url === NEW_TAB_URL || isSafeWebUrl(tab.url), click: safely(() => this.tabAction(tabId, 'duplicate')) },
+      { type: 'separator' },
+      { label: 'Закрыть вкладку', click: safely(() => this.closeTab(tabId)) },
+      { label: 'Закрыть вкладки справа', enabled: peers.some((entry, peerIndex) => peerIndex > index && !entry.isPinned), click: safely(() => this.closeRelatedTabs(tabId, 'right')) },
+      { label: 'Закрыть другие вкладки', enabled: peers.some((entry) => entry.id !== tabId && !entry.isPinned), click: safely(() => this.closeRelatedTabs(tabId, 'others')) },
+      { type: 'separator' },
+      // Private tabs have no reopen history; this menu must not silently switch
+      // a private action into the ordinary profile's previously closed pages.
+      { label: 'Открыть закрытую вкладку', enabled: !tab.isPrivate && this.closedTabs.length > 0, click: safely(() => this.reopenClosedTab()) },
+    ];
+    try { Menu.buildFromTemplate(template).popup({ window: this.window }); } catch (cause) { report(cause); }
+  }
+
   findInPage(tabId: string, text: string, forward = true): void {
     const contents = this.tabs.get(tabId)?.view?.webContents;
     if (!contents || contents.isDestroyed()) return;
     if (typeof text !== 'string' || !text.trim()) { this.stopFindInPage(tabId); return; }
-    contents.findInPage(text.slice(0, 1000), { forward, findNext: true });
+    const query = text.slice(0, 1000);
+    const findNext = this.findQueries.get(tabId) === query;
+    this.findQueries.set(tabId, query);
+    contents.findInPage(query, { forward, findNext });
   }
 
   stopFindInPage(tabId: string): void {
+    this.findQueries.delete(tabId);
     const contents = this.tabs.get(tabId)?.view?.webContents;
     if (contents && !contents.isDestroyed()) contents.stopFindInPage('clearSelection');
   }
@@ -480,6 +530,43 @@ export class BrowserController {
     if (download?.path) shell.showItemInFolder(download.path);
   }
 
+  saveBookmark(input: { id?: string; title: string; url: string }): BookmarkEntry {
+    const bookmark = this.stores.saveBookmark(input);
+    this.emitSnapshot();
+    return bookmark;
+  }
+
+  removeBookmark(id: string): void {
+    this.stores.bookmarks.set(this.stores.bookmarks.get().filter(entry => entry.id !== id));
+    this.emitSnapshot();
+  }
+
+  removeHistoryEntry(id: string): void {
+    this.stores.history.set(this.stores.history.get().filter(entry => entry.id !== id));
+    this.emitSnapshot();
+  }
+
+  async clearBrowsingHistory(): Promise<void> {
+    if (!this.window) return;
+    const { response } = await dialog.showMessageBox(this.window, { type: 'question', title: 'Очистить историю?', message: 'Удалить историю посещений обычного профиля?', detail: 'Cookies, входы на сайты, закладки и файлы загрузок сохранятся.', buttons: ['Отмена', 'Очистить историю'], defaultId: 0, cancelId: 0, noLink: true });
+    if (response !== 1) return;
+    this.stores.history.set([]);
+    this.closedTabs.length = 0;
+    for (const tab of this.tabs.values()) if (!tab.isPrivate && tab.view && !tab.view.webContents.isDestroyed()) {
+      tab.view.webContents.navigationHistory.clear();
+      this.updateNavigationState(tab);
+    }
+    this.emitSnapshot();
+  }
+
+  clearFinishedDownloads(isPrivate = false): void {
+    if (typeof isPrivate !== 'boolean') throw new Error('Некорректный режим загрузок.');
+    const active = this.downloads.filter(entry => Boolean(entry.isPrivate) !== isPrivate || this.liveDownloads.has(entry.id) || entry.state === 'queued' || entry.state === 'progressing');
+    this.downloads.splice(0, this.downloads.length, ...active);
+    this.stores.downloads.set(active.filter(entry => !entry.isPrivate).slice(0, 100));
+    this.emitSnapshot();
+  }
+
   updateSettings(patch: Partial<BrowserSettings>): BrowserSettings {
     const next = this.stores.settings.update((current) => {
       const theme = patch.theme === 'light' || patch.theme === 'dark' || patch.theme === 'system' ? patch.theme : current.theme;
@@ -616,6 +703,46 @@ export class BrowserController {
 
   getImportedPasswordSummaries(): ImportedPasswordSummary[] {
     return this.passwords.summaries();
+  }
+
+  async deleteSavedPassword(passwordId: string): Promise<boolean> {
+    if (!this.window || typeof passwordId !== 'string') throw new Error('Выберите запись пароля.');
+    const summary = this.passwords.summaries().find(record => record.id === passwordId);
+    if (!summary) return false;
+    const result = await dialog.showMessageBox(this.window, {
+      type: 'question', title: 'Удалить сохранённый пароль',
+      message: `Удалить запись для ${summary.origin}?`,
+      detail: `Логин: ${summary.username.replace(/[\r\n\0]/g, ' ').slice(0, 160) || 'не указан'}. Удаление нельзя отменить.`,
+      buttons: ['Отмена', 'Удалить'], defaultId: 0, cancelId: 0, noLink: true,
+    });
+    if (result.response !== 1) return false;
+    const deleted = this.passwords.delete(passwordId);
+    if (deleted) this.eventListener?.({ type: 'passwords-changed' });
+    return deleted;
+  }
+
+  async fillSavedPassword(tabId: string, passwordId: string): Promise<{ filled: boolean; reason?: string }> {
+    const tab = this.tabs.get(tabId);
+    const contents = tab?.view?.webContents;
+    if (!this.window || !tab || tab.id !== this.activeTabId || tab.isPrivate || tab.isInternal || !contents || contents.isDestroyed()) {
+      throw new Error('Заполнение доступно только для текущей обычной HTTPS-вкладки.');
+    }
+    const owner = this.window;
+    const result = await fillSavedCredential({
+      contents, passwordId, store: this.passwords,
+      isCurrent: () => !this.disposed && this.activeTabId === tabId && this.tabs.get(tabId) === tab && tab.view?.webContents === contents && !tab.isPrivate,
+      confirm: async metadata => {
+        const decision = await dialog.showMessageBox(owner, {
+          type: 'question', title: 'Заполнить сохранённый пароль',
+          message: `Заполнить форму входа на ${metadata.origin}?`,
+          detail: `Логин: ${metadata.username.replace(/[\r\n\0]/g, ' ').slice(0, 160) || 'не указан'}. Поля будут заполнены без отправки формы. Сайт сможет прочитать введённые данные.`,
+          buttons: ['Отмена', 'Заполнить'], defaultId: 0, cancelId: 0, noLink: true,
+        });
+        return decision.response === 1;
+      },
+    });
+    if (result.filled) this.memoryManager.updateTab(tabId, { hasFormEdits: true, lastInteractionAt: Date.now() });
+    return result;
   }
 
   setChromeBounds(bounds: ChromeBounds): void {
@@ -1024,7 +1151,7 @@ export class BrowserController {
     const entry: DownloadEntry = {
       id, url, filename, kind, mimeType: mimeType || undefined,
       isPrivate: sourceTab?.isPrivate ?? Boolean(this.privateSession && this.privateSession === webContents?.session),
-      state: 'queued', receivedBytes: 0, totalBytes: item.getTotalBytes(), startedAt: Date.now(),
+      isLive: true, canResume: false, state: 'queued', receivedBytes: 0, totalBytes: item.getTotalBytes(), startedAt: Date.now(),
     };
     // This API must run synchronously inside will-download. Electron owns the
     // native dialog and the DownloadItem remains live while the user chooses.
@@ -1041,11 +1168,14 @@ export class BrowserController {
       entry.path = item.getSavePath() || undefined;
       entry.state = state === 'interrupted' ? 'interrupted' : 'progressing';
       entry.isPaused = item.isPaused();
+      entry.canResume = item.canResume();
       this.persistDownloads();
       this.emitSnapshot();
     });
     item.once('done', (_event, state) => {
       this.liveDownloads.delete(id);
+      entry.isLive = false;
+      entry.canResume = false;
       entry.path = item.getSavePath() || undefined;
       entry.state = state === 'completed' ? 'completed' : state === 'cancelled' ? 'cancelled' : 'interrupted';
       entry.receivedBytes = item.getReceivedBytes();
@@ -1074,6 +1204,9 @@ export class BrowserController {
   private normalizeDownloads(): void {
     let changed = false;
     for (const download of this.downloads) {
+      if (download.isPaused) { download.isPaused = false; changed = true; }
+      download.isLive = false;
+      download.canResume = false;
       const legacyDownload = download as DownloadEntry & { kind?: DownloadEntry['kind']; startedAt?: number };
       if (!legacyDownload.kind) {
         legacyDownload.kind = 'file';
@@ -1222,6 +1355,14 @@ export class BrowserController {
         }
       }
       if (modifier && key === 'l') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'focus-address' }); });
+      else if (modifier && input.shift && key === 'a') run(() => {
+        this.exitPageFullscreen();
+        this.shellView?.webContents.focus();
+        // The user can request search immediately after activation, before the
+        // coalesced snapshot arrives. Its privacy mode must use current state.
+        this.snapshotListener?.(this.getSnapshot());
+        this.eventListener?.({ type: 'show-tab-search' });
+      });
       else if (modifier && input.shift && key === 't') run(() => { void this.reopenClosedTab(); });
       else if (modifier && input.shift && (key === 'n' || key === 'p')) run(() => { void this.createTab({ isPrivate: true }); });
       else if (modifier && key === 't') run(() => { void this.createTab(); });
@@ -1234,7 +1375,7 @@ export class BrowserController {
       else if (modifier && key === 'p' && tab) run(() => { void this.tabAction(tab.id, 'print'); });
       else if (modifier && ['+', '=', '-', '0'].includes(key) && tab) run(() => { void this.tabAction(tab.id, key === '0' ? 'zoom-reset' : key === '-' ? 'zoom-out' : 'zoom-in'); });
       else if (modifier && key === 'tab') run(() => {
-        const tabs = [...this.tabs.values()].filter((entry) => entry.workspaceId === this.activeWorkspaceId);
+        const tabs = [...this.tabs.values()].filter((entry) => entry.workspaceId === this.activeWorkspaceId && entry.isPrivate === tab?.isPrivate);
         const index = tabs.findIndex((entry) => entry.id === this.activeTabId);
         const next = tabs[(index + (input.shift ? -1 : 1) + tabs.length) % tabs.length];
         if (next) this.activateTab(next.id);
@@ -1242,7 +1383,8 @@ export class BrowserController {
       else if (input.alt && key === 'arrowleft' && tab) run(() => { void this.goBack(tab.id); });
       else if (input.alt && key === 'arrowright' && tab) run(() => { void this.goForward(tab.id); });
       else if (key === 'f11') run(() => { if (this.htmlFullscreenTabId) this.exitPageFullscreen(); else if (this.window) this.window.setFullScreen(!this.window.isFullScreen()); });
-      else if (key === 'escape' && tab?.isLoading) run(() => { void this.stop(tab.id); });
+      // Shell dialogs/find own Escape even while the underlying site is loading.
+      else if (key === 'escape' && tab?.isLoading && contents.id === tab.webContentsId) run(() => { void this.stop(tab.id); });
     });
   }
 

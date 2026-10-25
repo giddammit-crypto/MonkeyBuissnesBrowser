@@ -132,13 +132,29 @@ export class BrowserStores {
   }
 
   toggleBookmark(entry: Omit<BookmarkEntry, 'id' | 'createdAt'>): BookmarkEntry | null {
-    const existing = this.bookmarks.get().find((item) => item.url === entry.url);
+    let canonical = entry.url;
+    try { canonical = new URL(entry.url).href; } catch { /* saveBookmark supplies validation. */ }
+    const existing = this.bookmarks.get().find((item) => new URL(item.url).href === canonical);
     if (existing) {
       this.bookmarks.set(this.bookmarks.get().filter((item) => item.id !== existing.id));
       return null;
     }
-    const next: BookmarkEntry = { ...entry, id: crypto.randomUUID(), createdAt: Date.now() };
-    this.bookmarks.set([next, ...this.bookmarks.get()]);
+    return this.saveBookmark(entry);
+  }
+
+  saveBookmark(input: { id?: string; title: string; url: string }): BookmarkEntry {
+    if (!input || typeof input.url !== 'string' || input.url.length > 8192 || typeof input.title !== 'string') throw new Error('Укажите название и адрес закладки.');
+    let parsed: URL;
+    try { parsed = new URL(input.url.trim()); } catch { throw new Error('Укажите полный HTTP(S)-адрес страницы.'); }
+    if (!isSafeWebUrl(parsed.href) || parsed.username || parsed.password) throw new Error('Закладка должна содержать HTTP(S)-адрес без логина и пароля.');
+    const items = this.bookmarks.get();
+    const existing = input.id === undefined ? undefined : items.find(item => item.id === input.id);
+    if (input.id !== undefined && !existing) throw new Error('Закладка уже удалена.');
+    const duplicate = items.find(item => new URL(item.url).href === parsed.href && item.id !== existing?.id);
+    if (duplicate) throw new Error('Этот адрес уже есть в закладках.');
+    if (!existing && items.length >= 500) throw new Error('Достигнут лимит 500 закладок. Удалите ненужные записи.');
+    const next: BookmarkEntry = { id: existing?.id ?? crypto.randomUUID(), createdAt: existing?.createdAt ?? Date.now(), url: parsed.href, title: input.title.trim().slice(0, 1000) || parsed.hostname };
+    this.bookmarks.set(existing ? items.map(item => item.id === next.id ? next : item) : [next, ...items]);
     return next;
   }
 }

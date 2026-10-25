@@ -77,6 +77,30 @@ describe('BrowserStores', () => {
     first.settings.set({ ...first.settings.get(), googleSignInCompatibility: false });
     expect(new BrowserStores(directory).settings.get().googleSignInCompatibility).toBe(false);
   });
+
+  it('edits bookmarks without changing identity or losing them after restart', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-bookmark-manager-'));
+    temporaryDirectories.push(directory);
+    const stores = new BrowserStores(directory);
+    const saved = stores.saveBookmark({title:' Original ',url:'https://example.test'});
+    const edited = stores.saveBookmark({id:saved.id,title:'Changed',url:'https://example.test/new'});
+    expect(edited).toMatchObject({id:saved.id,createdAt:saved.createdAt,title:'Changed',url:'https://example.test/new'});
+    expect(new BrowserStores(directory).bookmarks.get()).toEqual([edited]);
+    expect(()=>stores.saveBookmark({title:'Duplicate',url:edited.url})).toThrow('уже есть');
+    expect(()=>stores.saveBookmark({id:'missing',title:'Stale',url:'https://new.test'})).toThrow('уже удалена');
+    expect(stores.bookmarks.get()).toEqual([edited]);
+  });
+
+  it('rejects unsafe bookmark URLs and credentials while keeping existing records', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-bookmark-urls-'));
+    temporaryDirectories.push(directory);
+    const stores = new BrowserStores(directory);
+    const saved=stores.saveBookmark({title:'Safe',url:'https://safe.test/'});
+    for(const url of ['javascript:alert(1)','file:///etc/passwd','https://user:secret@host.test','not a url']) {
+      expect(()=>stores.saveBookmark({id:saved.id,title:'Bad',url})).toThrow();
+    }
+    expect(stores.bookmarks.get()).toEqual([saved]);
+  });
 });
 
 

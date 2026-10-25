@@ -40,6 +40,8 @@ export interface DownloadEntry {
   mimeType?: string;
   isPrivate?: boolean;
   isPaused?: boolean;
+  isLive?: boolean;
+  canResume?: boolean;
   thumbnail?: string;
   state: 'queued' | 'progressing' | 'completed' | 'cancelled' | 'interrupted';
   receivedBytes: number;

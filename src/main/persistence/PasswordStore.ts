@@ -54,6 +54,28 @@ export class PasswordStore {
     return this.read().map(({ password: _password, ...summary }) => summary);
   }
 
+  /** Main-process only. Callers must obtain explicit consent before reading a secret. */
+  getForOrigin(id: string, exactOrigin: string): { username: string; password: string } | null {
+    const canonical = (raw: string): string | null => {
+      try { const url = new URL(raw); return url.protocol === 'https:' && !url.username && !url.password ? url.origin : null; } catch { return null; }
+    };
+    const origin = canonical(exactOrigin);
+    if (!origin || !this.canPersistSecurely()) return null;
+    const requested = new URL(exactOrigin);
+    if (requested.pathname !== '/' || requested.search || requested.hash) return null;
+    const record = this.read(true).find(record => record.id === id && canonical(record.origin) === origin);
+    return record ? { username: record.username, password: record.password } : null;
+  }
+
+  delete(id: string): boolean {
+    if (!this.canPersistSecurely()) throw new Error('Защищённое хранилище недоступно. Запись не удалена.');
+    const records = this.read(true);
+    const next = records.filter(record => record.id !== id);
+    if (next.length === records.length) return false;
+    this.write(next);
+    return true;
+  }
+
   private read(strict = false): StoredPassword[] {
     if (!this.canPersistSecurely() || !fs.existsSync(this.filePath)) return [];
     try {
@@ -64,7 +86,7 @@ export class PasswordStore {
       if (strict && valid.length !== records.length) throw new Error('Invalid vault record');
       return valid;
     } catch {
-      if (strict) throw new Error('Существующее хранилище паролей недоступно или повреждено. Импорт отменён, чтобы не заменить сохранённые данные.');
+      if (strict) throw new Error('Существующее хранилище паролей недоступно или повреждено. Операция отменена, чтобы не заменить сохранённые данные.');
       return [];
     }
   }
