@@ -54,11 +54,14 @@ import type {
   ImportFileReport,
 } from "../shared/types";
 import { getGoogleAuthNotice, getSiteKey } from "../shared/sitePolicy";
+import { normalizeNewTabBackground } from "../shared/background";
 import logoLight from "./assets/soul/logo-light.png";
 import logoDark from "./assets/soul/logo-dark.png";
 import portrait from "./assets/soul/portrait.webp";
+import chloeWallpaper from "./assets/soul/chloe-wallpaper.webp";
 import symbol from "./assets/soul/symbol.svg";
 import "./styles.css";
+import "./newtab-wallpaper.css";
 import { userFacingError } from "./userFacingError";
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const TabSearch = React.lazy(()=>import("./TabSearch"));
@@ -1280,8 +1283,10 @@ function NewTabPage({
     ? "⌘"
     : "Ctrl";
   const recent = privateMode ? [] : snapshot.history.slice(0, 3);
+  const background = normalizeNewTabBackground(snapshot.settings.newTabBackground);
   return (
-    <div className={`new-tab-page ${privateMode ? "private-newtab" : ""}`}>
+    <div className={`new-tab-page ${privateMode ? "private-newtab" : ""}`} data-new-tab-background={background} data-background={background}>
+      {background === "portrait" && <div className="newtab-wallpaper" data-newtab-wallpaper aria-hidden="true"><img src={chloeWallpaper} alt="" decoding="async" draggable={false} /></div>}
       <div className="newtab-topline">
         <span>
           {new Intl.DateTimeFormat("ru-RU", {
@@ -2165,6 +2170,20 @@ function SettingsPanel({
               <option value="system">Как в системе</option>
               <option value="light">Светлая</option>
               <option value="dark">Тёмная</option>
+            </select>
+          </label>
+          <label className="setting-row">
+            <span>
+              <strong>Фон новой вкладки</strong>
+              <small>Локальное изображение или однотонный фон.</small>
+            </span>
+            <select
+              aria-label="Фон новой вкладки"
+              value={settings.newTabBackground}
+              onChange={event => update({ newTabBackground: normalizeNewTabBackground(event.target.value) })}
+            >
+              <option value="portrait">Девушка SOUL-M8TE</option>
+              <option value="plain">Однотонный</option>
             </select>
           </label>
           <label className="setting-row">

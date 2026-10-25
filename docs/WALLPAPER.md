@@ -1,0 +1,11 @@
+# Фон новой вкладки SOUL-M8TE
+
+Локальный фон с Хлоей из Detroit: Become Human включён по умолчанию. В **Настройки → Фон новой вкладки** можно выбрать **«Девушка SOUL-M8TE»** или **«Однотонный»**. Выбор сохраняется после перезапуска и применяется также к приватной стартовой странице; история в ней не отображается.
+
+На широком окне содержимое расположено слева от лица, на компактном изображение закрывает более плотная подложка для чтения. Портрет декоративный, не перехватывает мышь и не загружается с внешних сайтов. Изображение отключено в режиме однотонного фона.
+
+Файл: `src/renderer/assets/soul/chloe-wallpaper.webp`, 1672×941, около 100 КБ. Создан встроенным ImageGen с `src/renderer/assets/soul/portrait.webp` как референсом персонажа. Затем изображение перекодировано в WebP с качеством 90 без изменения размера и кадрирования. Логотипы и значки приложения не заменялись.
+
+## Промпт изображения
+
+Use case: stylized-concept. Asset type: production desktop browser new-tab wallpaper, landscape 16:9, ideally 2560x1440. Input image is identity reference only, not a composition to keep. Create a polished cinematic 3D portrait of Chloe, the female android from Detroit: Become Human, using the supplied SOUL-M8TE reference face, recognizable natural features, blue-grey eyes and small blue LED at her right temple, adult, calm thoughtful expression, looking slightly toward the left. Show complete head, natural hair and upper torso in a restrained dark grey crew-neck outfit. Place her in the RIGHT THIRD of the wide scene; head near x=80%, y=38%, leave the LEFT 62% beautifully quiet and nearly empty for a browser's search field and saved-page controls. Soft understated modern interior background, slate grey and cool ivory, subtle diffused light, gentle blue-grey atmosphere, premium photographic game-render quality. No science-fiction machinery, no neon, no circuit overlays, no extra characters, no props, no text, no letters, no UI, no logos, no watermarks. Do NOT reproduce the circle, cutout edge or black corners of the reference. Compose a continuous full rectangular landscape wallpaper with natural background everywhere. Face and LED must remain recognizable if cropped to the right half; generous negative space at left. This must be an actual image asset, not a screenshot or app mockup.

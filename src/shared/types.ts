@@ -58,11 +58,13 @@ export interface WorkspaceEntry {
   tabIds: string[];
 }
 
+export type NewTabBackground = 'portrait' | 'plain';
+
 export interface BrowserSettings {
   theme: 'light' | 'dark' | 'system';
   sidebarCollapsed: boolean;
   searchEngine: string;
-  newTabBackground: string;
+  newTabBackground: NewTabBackground;
   sleepAfterMinutes: 5 | 15 | 30 | 60 | 0;
   adBlockEnabled?: boolean;
   blockThirdPartyCookies?: boolean;

@@ -201,3 +201,83 @@ describe('defensive browser persistence', () => {
     expect(fs.readFileSync(path.join(root, 'browser-data/downloads.json'), 'utf8')).not.toContain('secret');
   });
 });
+
+// Restoring a bounded session must not replace the page the user actually left
+// selected, even when private/invalid records precede it in an old session file.
+describe('bounded session active-tab retention', () => {
+  const ordinary = (index: number): TabSnapshot => ({
+    id: `ordinary-${index}`, url: `https://example.test/${index}`, title: `Ordinary ${index}`,
+    workspaceId: 'personal', isPrivate: false, isPinned: index === 130, isMuted: false,
+    isInternal: false, isLoading: false, canGoBack: false, canGoForward: false, lifecycle: 'background',
+  });
+  function root(): string {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-session-budget-'));
+    temporaryDirectories.push(directory);
+    fs.mkdirSync(path.join(directory, 'browser-data'));
+    return directory;
+  }
+
+  it('keeps the first 99 eligible tabs plus an active ordinary tab beyond the 100-tab budget', () => {
+    const tabs = Array.from({ length: 140 }, (_, index) => ordinary(index));
+    const privateTab = { ...ordinary(999), id: 'private', url: 'https://secret.test/', isPrivate: true };
+    const invalidTab = { ...ordinary(998), id: 'invalid', url: 'file:///private/local-file' };
+    const source = [privateTab, ...tabs.slice(0, 50), invalidTab, ...tabs.slice(50)];
+    const stored = buildStoredSession(source, tabs[130].id);
+    expect(stored.tabs.map(tab => tab.url)).toEqual([...tabs.slice(0, 99).map(tab => tab.url), tabs[130].url]);
+    expect(stored.activeIndex).toBe(99);
+    expect(stored.tabs[stored.activeIndex]).toMatchObject({ url: tabs[130].url, title: 'Ordinary 130', isPinned: true });
+    const stores = new BrowserStores(root());
+    stores.session.set(stored);
+    expect(stores.session.get()).toEqual(stored);
+    const newTab = { ...ordinary(999), id: 'selected-newtab', url: 'browser://newtab', isInternal: true };
+    const withNewTab = buildStoredSession([...tabs, newTab], newTab.id);
+    expect(withNewTab.tabs).toHaveLength(100);
+    expect(withNewTab.tabs[withNewTab.activeIndex].url).toBe('browser://newtab');
+  });
+
+  it('retains a valid active raw session entry beyond the budget while filtering private and unsafe records', () => {
+    const tabs = Array.from({ length: 140 }, (_, index) => ordinary(index));
+    const source = [
+      { ...ordinary(998), isPrivate: true, url: 'https://secret.test/' },
+      { ...ordinary(999), url: 'javascript:alert(1)' },
+      ...tabs,
+    ];
+    const directory = root();
+    fs.writeFileSync(path.join(directory, 'browser-data/session.json'), JSON.stringify({ tabs: source, activeIndex: source.indexOf(tabs[130]) }));
+    const restored = new BrowserStores(directory).session.get();
+    expect(restored.tabs.map(tab => tab.url)).toEqual([...tabs.slice(0, 99).map(tab => tab.url), tabs[130].url]);
+    expect(restored.activeIndex).toBe(99);
+    expect(restored.tabs[restored.activeIndex].title).toBe('Ordinary 130');
+    expect(JSON.stringify(restored)).not.toContain('secret.test');
+    expect(JSON.stringify(restored)).not.toContain('javascript:');
+  });
+
+  it.each([-1, 99999, 0.5, null, '130'])('uses the first eligible tab for invalid saved active index %s', (activeIndex) => {
+    const directory = root();
+    const tabs = Array.from({ length: 140 }, (_, index) => ordinary(index));
+    fs.writeFileSync(path.join(directory, 'browser-data/session.json'), JSON.stringify({ tabs, activeIndex }));
+    const restored = new BrowserStores(directory).session.get();
+    expect(restored.tabs).toHaveLength(100);
+    expect(restored.activeIndex).toBe(0);
+    expect(restored.tabs[0].url).toBe(tabs[0].url);
+  });
+
+  it.each([0, 1])('does not promote private/unsafe selected entry %s into the restored session', (activeIndex) => {
+    const directory = root();
+    const tabs = [
+      { ...ordinary(998), isPrivate: true, url: 'https://secret.test/' },
+      { ...ordinary(999), url: 'file:///private/local-file' },
+      ...Array.from({ length: 140 }, (_, index) => ordinary(index)),
+    ];
+    fs.writeFileSync(path.join(directory, 'browser-data/session.json'), JSON.stringify({ tabs, activeIndex }));
+    const restored = new BrowserStores(directory).session.get();
+    expect(restored.tabs).toHaveLength(100);
+    expect(restored.activeIndex).toBe(0);
+    expect(restored.tabs[0].url).toBe('https://example.test/0');
+    expect(JSON.stringify(restored)).not.toContain('secret.test');
+    expect(JSON.stringify(restored)).not.toContain('file:');
+    const saved = buildStoredSession(tabs, tabs[activeIndex].id);
+    expect(saved.activeIndex).toBe(0);
+    expect(saved.tabs[0].url).toBe('https://example.test/0');
+  });
+});

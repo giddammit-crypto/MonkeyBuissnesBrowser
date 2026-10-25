@@ -121,6 +121,18 @@ try {
   await invoke('tabAction', pinned.id, 'pin');
   const right = await create('/right');
   const privatePeer = await create('/private-peer', true);
+  await invoke('activateTab',pinned.id);
+  const ordered=(await snapshot()).tabs.filter(entry=>entry.workspaceId===reference.workspaceId&&!entry.isPrivate).sort((a,b)=>Number(b.isPinned)-Number(a.isPinned));
+  assert.equal(ordered[0].id,pinned.id);
+  const nextToPinned=ordered[1];
+  await nativeKey(`${base}/pinned`,'Tab',[primary]);
+  await expect.poll(async()=>(await snapshot()).activeTabId).toBe(nextToPinned.id);
+  await nativeKey(nextToPinned.isInternal?'app://shell/index.html':nextToPinned.url,'Tab',[primary,'shift']);
+  await expect.poll(async()=>(await snapshot()).activeTabId).toBe(pinned.id);
+  await nativeKey(`${base}/pinned`,'Tab',[primary,'shift']);
+  await expect.poll(async()=>(await snapshot()).activeTabId).toBe(ordered.at(-1).id);
+  console.log('PASS native forward/reverse/wrap tab cycling follows pinned-first visible order within current mode/workspace');
+
   await invoke('closeRelatedTabs', reference.id, 'right');
   let ids = new Set((await snapshot()).tabs.map(entry => entry.id));
   assert.equal(ids.has(right.id), false);
@@ -165,7 +177,7 @@ try {
   }, `${base}/reference`);
   assert.deepEqual(webSecurity, { bridge: 'undefined', node: 'undefined' });
   console.log('PASS new/repeated find query behavior and website cannot access renderer IPC bridge/Node');
-  console.log(JSON.stringify({ ok: true, groups: 6 }));
+  console.log(JSON.stringify({ ok: true, groups: 7 }));
 } finally {
   if (app) await app.close();
   server.closeAllConnections();

@@ -3,12 +3,13 @@ import type { BrowserSettings, BookmarkEntry, DownloadEntry, HistoryEntry, TabSn
 import { isSafeWebUrl } from '../../shared/omnibox';
 import { JsonStore } from './JsonStore';
 import { normalizeCookieExceptions } from '../../shared/sitePolicy';
+import { normalizeNewTabBackground } from '../../shared/background';
 
 const defaultSettings: BrowserSettings = {
   theme: 'system',
   sidebarCollapsed: false,
   searchEngine: 'https://yandex.ru/search/?text=',
-  newTabBackground: 'mountain-lake',
+  newTabBackground: 'portrait',
   sleepAfterMinutes: 15,
   adBlockEnabled: true,
   blockThirdPartyCookies: true,
@@ -42,7 +43,7 @@ function normalizeSettings(value: unknown): BrowserSettings {
     theme: ['light', 'dark', 'system'].includes(text(raw.theme)) ? raw.theme as BrowserSettings['theme'] : defaultSettings.theme,
     sidebarCollapsed: typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : defaultSettings.sidebarCollapsed,
     searchEngine: typeof raw.searchEngine === 'string' && raw.searchEngine.length <= 2000 && isSafeWebUrl(raw.searchEngine) ? raw.searchEngine : defaultSettings.searchEngine,
-    newTabBackground: text(raw.newTabBackground, defaultSettings.newTabBackground).slice(0, 120),
+    newTabBackground: normalizeNewTabBackground(raw.newTabBackground),
     sleepAfterMinutes: [0, 5, 15, 30, 60].includes(Number(raw.sleepAfterMinutes)) && typeof raw.sleepAfterMinutes === 'number' ? raw.sleepAfterMinutes as BrowserSettings['sleepAfterMinutes'] : defaultSettings.sleepAfterMinutes,
     adBlockEnabled: typeof raw.adBlockEnabled === 'boolean' ? raw.adBlockEnabled : true,
     blockThirdPartyCookies: typeof raw.blockThirdPartyCookies === 'boolean' ? raw.blockThirdPartyCookies : true,
@@ -72,9 +73,16 @@ export interface StoredSession {
 
 function normalizeSession(value: unknown): StoredSession {
   const raw = object(value);
-  const tabs = normalizeEntries<JsonObject>(raw.tabs, (entry) => entry.isPrivate !== true && (entry.url === 'browser://newtab' || isSafeWebUrl(text(entry.url))), 100);
+  const validTab = (entry: JsonObject) => entry.isPrivate !== true && (entry.url === 'browser://newtab' || isSafeWebUrl(text(entry.url)));
+  const tabs = normalizeEntries<JsonObject>(raw.tabs, validTab, 100);
   const original = Array.isArray(raw.tabs) ? raw.tabs : [];
-  const active = finite(raw.activeIndex) ? original[Math.trunc(raw.activeIndex)] : undefined;
+  const active = finite(raw.activeIndex) && Number.isInteger(raw.activeIndex) && raw.activeIndex >= 0 ? original[raw.activeIndex] : undefined;
+  // Keep the same bounded first-tabs policy, but never silently discard the
+  // selected valid ordinary tab when it falls beyond the storage budget.
+  if (active && typeof active === 'object' && !Array.isArray(active) && validTab(active as JsonObject) && !tabs.includes(active as JsonObject)) {
+    if (tabs.length === 100) tabs.pop();
+    tabs.push(active as JsonObject);
+  }
   return {
     tabs: tabs.map((tab) => ({ url: text(tab.url), title: text(tab.title).slice(0, 1000), workspaceId: text(tab.workspaceId, 'personal'), isPinned: tab.isPinned === true, isMuted: tab.isMuted === true })),
     activeIndex: Math.max(0, tabs.indexOf(active as JsonObject)),
@@ -83,7 +91,13 @@ function normalizeSession(value: unknown): StoredSession {
 
 /** Session persistence is an allowlist: private tabs and runtime fields never reach disk. */
 export function buildStoredSession(tabs: TabSnapshot[], activeTabId: string): StoredSession {
-  const regularTabs = tabs.filter((tab) => !tab.isPrivate && (tab.url === 'browser://newtab' || isSafeWebUrl(tab.url))).slice(0, 100);
+  const eligible = tabs.filter((tab) => !tab.isPrivate && (tab.url === 'browser://newtab' || isSafeWebUrl(tab.url)));
+  const active = eligible.find((tab) => tab.id === activeTabId);
+  const regularTabs = eligible.slice(0, 100);
+  if (active && !regularTabs.includes(active)) {
+    if (regularTabs.length === 100) regularTabs.pop();
+    regularTabs.push(active);
+  }
   return {
     tabs: regularTabs.map((tab) => ({ url: tab.url, title: tab.title, workspaceId: tab.workspaceId, isPinned: tab.isPinned, isMuted: tab.isMuted })),
     activeIndex: Math.max(0, regularTabs.findIndex((tab) => tab.id === activeTabId)),

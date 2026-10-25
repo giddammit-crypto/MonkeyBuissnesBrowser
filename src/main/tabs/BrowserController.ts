@@ -16,6 +16,7 @@ import { MemoryManager } from '../../services/memory/MemoryManager';
 import { VpnConfigStore } from '../../services/vpn/VpnConfigStore';
 import { isSafeMediaUrl, mediaKindForMime, mediaKindForUrl } from '../../shared/media';
 import { isSafeWebUrl, parseOmniboxInput } from '../../shared/omnibox';
+import { normalizeNewTabBackground } from '../../shared/background';
 import { canRequestStorageAccess, getExternalPageUrl, getSiteKey, normalizeCookieExceptions, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
 import type {
   BookmarkEntry,
@@ -586,7 +587,7 @@ export class BrowserController {
         theme,
         sidebarCollapsed: typeof patch.sidebarCollapsed === 'boolean' ? patch.sidebarCollapsed : current.sidebarCollapsed,
         searchEngine,
-        newTabBackground: typeof patch.newTabBackground === 'string' ? patch.newTabBackground.slice(0, 120) : current.newTabBackground,
+        newTabBackground: normalizeNewTabBackground(patch.newTabBackground === undefined ? current.newTabBackground : patch.newTabBackground),
         sleepAfterMinutes,
         adBlockEnabled: typeof patch.adBlockEnabled === 'boolean' ? patch.adBlockEnabled : current.adBlockEnabled ?? true,
         blockThirdPartyCookies: typeof patch.blockThirdPartyCookies === 'boolean' ? patch.blockThirdPartyCookies : current.blockThirdPartyCookies ?? true,
@@ -1394,7 +1395,9 @@ export class BrowserController {
       else if (modifier && key === 'p' && tab) run(() => { void this.tabAction(tab.id, 'print'); });
       else if (modifier && ['+', '=', '-', '0'].includes(key) && tab) run(() => { void this.tabAction(tab.id, key === '0' ? 'zoom-reset' : key === '-' ? 'zoom-out' : 'zoom-in'); });
       else if (modifier && key === 'tab') run(() => {
-        const tabs = [...this.tabs.values()].filter((entry) => entry.workspaceId === this.activeWorkspaceId && entry.isPrivate === tab?.isPrivate);
+        const tabs = [...this.tabs.values()]
+          .filter((entry) => entry.workspaceId === this.activeWorkspaceId && entry.isPrivate === tab?.isPrivate)
+          .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
         const index = tabs.findIndex((entry) => entry.id === this.activeTabId);
         const next = tabs[(index + (input.shift ? -1 : 1) + tabs.length) % tabs.length];
         if (next) this.activateTab(next.id);
