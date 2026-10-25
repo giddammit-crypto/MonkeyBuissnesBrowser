@@ -41,7 +41,7 @@ export interface BrowserApi {
   closePrivateTabs(): Promise<void>;
   closeTab(tabId: string): Promise<void>;
   showTabMenu(tabId: string): Promise<void>;
-  closeRelatedTabs(tabId: string, scope: 'others' | 'right'): Promise<void>;
+  closeRelatedTabs(tabId: string, scope: 'others' | 'right' | 'left'): Promise<void>;
   navigate(tabId: string, input: string): Promise<void>;
   goBack(tabId: string): Promise<void>;
   goForward(tabId: string): Promise<void>;
