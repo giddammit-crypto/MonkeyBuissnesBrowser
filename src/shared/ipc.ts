@@ -5,6 +5,8 @@ import type {
   DownloadEntry,
   HistoryEntry,
   ImportDataKind,
+  ImportFileKind,
+  ImportFileReport,
   ImportProfile,
   ImportReport,
   ImportedPasswordSummary,
@@ -27,6 +29,9 @@ export interface BrowserApi {
   getSnapshot(): Promise<BrowserSnapshot>;
   createTab(input?: { url?: string; isPrivate?: boolean }): Promise<TabSnapshot>;
   activateTab(tabId: string): Promise<void>;
+  openCurrentPageExternally(tabId: string): Promise<void>;
+  setSiteCookieException(tabId: string, allow: boolean): Promise<void>;
+  importBrowserFile(kind: ImportFileKind): Promise<ImportFileReport | null>;
   tabAction(tabId: string, action: TabAction): Promise<void>;
   reopenClosedTab(): Promise<void>;
   findInPage(tabId: string, text: string, forward?: boolean): Promise<void>;
