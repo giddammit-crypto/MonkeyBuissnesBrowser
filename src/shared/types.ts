@@ -65,6 +65,8 @@ export interface BrowserSettings {
   sidebarCollapsed: boolean;
   searchEngine: string;
   newTabBackground: NewTabBackground;
+  accentColor?: 'blue' | 'teal' | 'violet' | 'rose';
+  wallpaperDim?: number;
   sleepAfterMinutes: 5 | 15 | 30 | 60 | 0;
   adBlockEnabled?: boolean;
   blockThirdPartyCookies?: boolean;
