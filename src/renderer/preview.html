@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MonkeyBuissnesBrowser — visual preview</title>
+    <script>
+      const previewTab = {
+        id: 'preview-tab', url: 'browser://newtab', title: 'Новая вкладка', favicon: '', isLoading: false,
+        canGoBack: false, canGoForward: false, isMuted: false, isPinned: false, isPrivate: false,
+        isInternal: true, lifecycle: 'active', workspaceId: 'personal'
+      };
+      const previewSnapshot = {
+        tabs: [previewTab], activeTabId: previewTab.id, history: [], bookmarks: [], downloads: [],
+        workspaces: [{ id: 'personal', name: 'Personal', color: '#e52d3f', tabIds: [] }],
+        vpn: { configured: false, mode: 'system', state: 'not-configured', addresses: [], dns: [], peerCount: 0, savedSecurely: false, errors: [] },
+        settings: { theme: 'light', sidebarCollapsed: false, searchEngine: 'https://yandex.ru/search/?text=', newTabBackground: 'mountain-lake', sleepAfterMinutes: 15 },
+        adBlock: { enabled: true, blockedTotal: 0, blockedByHost: {} }, performance: null
+      };
+      window.browserApi = {
+        getSnapshot: async () => previewSnapshot, createTab: async () => previewTab, activateTab: async () => {}, closeTab: async () => {},
+        navigate: async () => {}, goBack: async () => {}, goForward: async () => {}, reload: async () => {}, stop: async () => {},
+        toggleBookmark: async () => null, queryHistory: async () => [], getDownloads: async () => [], openDownload: async () => {}, showDownloadInFolder: async () => {}, hibernateTab: async () => false, wakeTab: async () => {}, samplePerformance: async () => null, updateSettings: async (patch) => { previewSnapshot.settings = { ...previewSnapshot.settings, ...patch }; return previewSnapshot.settings; }, createWorkspace: async (name) => { const workspace = { id: name.toLowerCase().replace(/\s+/g, '-'), name, color: '#4b82c3', tabIds: [] }; previewSnapshot.workspaces.push(workspace); return workspace; }, switchWorkspace: async () => {}, getVpnSnapshot: async () => previewSnapshot.vpn, importVpnConfig: async () => previewSnapshot.vpn, clearVpnConfig: async () => { previewSnapshot.vpn = { configured: false, mode: 'system', state: 'not-configured', addresses: [], dns: [], peerCount: 0, savedSecurely: false, errors: [] }; return previewSnapshot.vpn; }, clearHistoryAndCookies: async () => {}, discoverImportProfiles: async () => [], importBrowserData: async () => ({ browser: 'chrome', profileName: 'Preview', imported: { history: 0, bookmarks: 0, cookies: 0, passwords: 0 }, skipped: { history: 0, bookmarks: 0, cookies: 0, passwords: 0 }, warnings: [], errors: [] }), getImportedPasswordSummaries: async () => [],
+        setChromeBounds: async () => {}, minimizeWindow: async () => {}, toggleMaximizeWindow: async () => {}, closeWindow: async () => {},
+        onSnapshotChanged: () => () => {}, onTabEvent: () => () => {}
+      };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
