@@ -63,6 +63,9 @@ export interface BrowserApi {
   updateSettings(patch: Partial<BrowserSettings>): Promise<BrowserSettings>;
   createWorkspace(name: string): Promise<WorkspaceEntry>;
   switchWorkspace(workspaceId: string): Promise<void>;
+  listLocalExtensions(): Promise<Array<{ id: string; name: string; version: string; directory: string }>>;
+  installLocalExtension(): Promise<{ id: string; name: string; version: string; directory: string } | null>;
+  removeLocalExtension(id: string): Promise<void>;
   getVpnSnapshot(): Promise<VpnSnapshot>;
   importVpnConfig(): Promise<VpnSnapshot>;
   clearVpnConfig(): Promise<VpnSnapshot>;
