@@ -267,6 +267,7 @@ function App(): React.JSX.Element {
     return () => media.removeEventListener("change", apply);
   }, [snapshot?.settings.theme]);
   useEffect(() => {
+    document.documentElement.dataset.appearance = snapshot?.settings.appearancePreset ?? "classic";
     document.documentElement.dataset.accent = snapshot?.settings.accentColor ?? "blue";
     document.documentElement.style.setProperty("--wallpaper-dim", String((snapshot?.settings.wallpaperDim ?? 0) / 100));
   }, [snapshot?.settings.accentColor, snapshot?.settings.wallpaperDim]);
@@ -2250,6 +2251,13 @@ function SettingsPanel({
             >
               <option value="portrait">Девушка SOUL-M8TE</option>
               <option value="plain">Однотонный</option>
+            </select>
+          </label>
+          <label className="setting-row">
+            <span><strong>Стиль оформления</strong><small>Отдельный стиль Detroit · Хлоя. Исходные светлая и тёмная темы не изменяются.</small></span>
+            <select aria-label="Стиль оформления" value={settings.appearancePreset ?? "classic"} onChange={event => update({ appearancePreset: event.target.value as "classic" | "detroit" })}>
+              <option value="classic">Классический SOUL-M8TE</option>
+              <option value="detroit">Detroit · Хлоя</option>
             </select>
           </label>
           <label className="setting-row">
