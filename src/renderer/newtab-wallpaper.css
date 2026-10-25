@@ -148,3 +148,17 @@
 .custom-wallpaper-upload:focus-within { outline: 2px solid currentColor; outline-offset: 2px; }
 .custom-wallpaper-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .custom-wallpaper-setting [role="status"] { flex-basis: 100%; }
+
+/* Additional appearance choices are opt-in; default accent remains untouched. */
+:root[data-accent="teal"] { --accent: #087f7c; --accent-soft: #d7f3f0; }
+:root[data-accent="violet"] { --accent: #7654b2; --accent-soft: #eee6f8; }
+:root[data-accent="rose"] { --accent: #ab4568; --accent-soft: #fae5ed; }
+:root[data-theme="dark"][data-accent="teal"] { --accent: #74d5cc; --accent-soft: #204340; }
+:root[data-theme="dark"][data-accent="violet"] { --accent: #c5a6ff; --accent-soft: #3c3152; }
+:root[data-theme="dark"][data-accent="rose"] { --accent: #ffacc5; --accent-soft: #50303d; }
+.newtab-wallpaper::before {
+  content: ""; position: absolute; inset: 0; z-index: 1;
+  background: rgb(0 0 0 / var(--wallpaper-dim, 0)); pointer-events: none;
+}
+.newtab-wallpaper::after { z-index: 2; }
+.settings-panel input[type="range"] { accent-color: var(--accent); max-width: 180px; }
