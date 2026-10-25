@@ -267,6 +267,10 @@ function App(): React.JSX.Element {
     return () => media.removeEventListener("change", apply);
   }, [snapshot?.settings.theme]);
   useEffect(() => {
+    document.documentElement.dataset.accent = snapshot?.settings.accentColor ?? "blue";
+    document.documentElement.style.setProperty("--wallpaper-dim", String((snapshot?.settings.wallpaperDim ?? 0) / 100));
+  }, [snapshot?.settings.accentColor, snapshot?.settings.wallpaperDim]);
+  useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     const update = () => {
@@ -2247,6 +2251,20 @@ function SettingsPanel({
               <option value="portrait">Девушка SOUL-M8TE</option>
               <option value="plain">Однотонный</option>
             </select>
+          </label>
+          <label className="setting-row">
+            <span><strong>Акцентный цвет</strong><small>Отдельная персонализация; светлая и тёмная темы остаются прежними.</small></span>
+            <select aria-label="Акцентный цвет" value={settings.accentColor ?? "blue"} onChange={event => update({ accentColor: event.target.value as "blue" | "teal" | "violet" | "rose" })}>
+              <option value="blue">Классический синий</option>
+              <option value="teal">Бирюзовый</option>
+              <option value="violet">Фиолетовый</option>
+              <option value="rose">Розовый</option>
+            </select>
+          </label>
+          <label className="setting-row">
+            <span><strong>Затемнение обоев</strong><small>От 0% до 75%, влияет только на изображение новой вкладки.</small></span>
+            <input aria-label="Затемнение обоев" type="range" min="0" max="75" step="5" value={settings.wallpaperDim ?? 0} onChange={event => update({ wallpaperDim: Number(event.target.value) })} />
+            <output>{settings.wallpaperDim ?? 0}%</output>
           </label>
           <div className="setting-row custom-wallpaper-setting">
             <span>
