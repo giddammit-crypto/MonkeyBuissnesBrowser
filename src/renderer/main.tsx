@@ -97,25 +97,36 @@ function useCustomWallpaper(): [string | null, (data: string | null) => void] {
 async function imageAsWallpaper(file: File): Promise<string> {
   if (!["image/png", "image/jpeg", "image/webp"].includes(file.type))
     throw new Error("Поддерживаются только PNG, JPEG и WebP.");
-  if (file.size === 0 || file.size > 2_000_000)
-    throw new Error("Изображение должно быть не больше 2 МБ.");
-  const result = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Не удалось прочитать файл."));
-    reader.onload = () => resolve(String(reader.result));
-    reader.readAsDataURL(file);
-  });
-  if (!/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(result))
-    throw new Error("Недопустимый формат изображения.");
-  await new Promise<void>((resolve, reject) => {
-    const img = new window.Image();
-    img.onload = () => img.naturalWidth > 0 && img.naturalHeight > 0 && img.naturalWidth <= 8192 && img.naturalHeight <= 8192
-      ? resolve() : reject(new Error("Размер изображения превышает 8192 пикселей."));
-    img.onerror = () => reject(new Error("Изображение повреждено."));
-    img.src = result;
-  });
-  return result;
+  if (!file.size || file.size > 20_000_000)
+    throw new Error("Изображение должно быть не больше 20 МБ.");
+  const blobUrl = URL.createObjectURL(file);
+  try {
+    const photo = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new window.Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Изображение повреждено."));
+      image.src = blobUrl;
+    });
+    if (!photo.naturalWidth || !photo.naturalHeight || photo.naturalWidth > 12000 || photo.naturalHeight > 12000)
+      throw new Error("Неподдерживаемое разрешение изображения.");
+    const scale = Math.min(1, 2560 / photo.naturalWidth, 1600 / photo.naturalHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(photo.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(photo.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Не удалось подготовить изображение.");
+    context.drawImage(photo, 0, 0, canvas.width, canvas.height);
+    for (const quality of [0.88, 0.74, 0.6]) {
+      const compressed = canvas.toDataURL("image/webp", quality);
+      if (compressed.startsWith("data:image/webp;base64,") && compressed.length <= 3_000_000)
+        return compressed;
+    }
+    throw new Error("Не удалось сжать обои. Выберите изображение меньшего разрешения.");
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
 }
+
 const quickLinks = [
   { label: "Почта", url: "https://mail.yandex.ru/" },
   { label: "Новости", url: "https://news.google.com/" },
