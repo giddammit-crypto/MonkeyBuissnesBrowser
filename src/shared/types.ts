@@ -65,6 +65,7 @@ export interface BrowserSettings {
   sidebarCollapsed: boolean;
   searchEngine: string;
   newTabBackground: NewTabBackground;
+  appearancePreset?: 'classic' | 'detroit';
   accentColor?: 'blue' | 'teal' | 'violet' | 'rose';
   wallpaperDim?: number;
   sleepAfterMinutes: 5 | 15 | 30 | 60 | 0;
