@@ -9,6 +9,11 @@ import type { BrowserApi, ChromeBounds } from '../shared/ipc';
 import type { BrowserSettings } from '../shared/types';
 import { BrowserController } from './tabs/BrowserController';
 
+// Branding must not silently create a new profile. Test/explicit CLI profiles
+// remain authoritative and the installed browser keeps its original user data.
+if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', path.join(app.getPath('appData'), 'MonkeyBuissnesBrowser'));
+app.setName('SOUL-M8TE');
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'app',
@@ -59,7 +64,7 @@ function registerAppProtocol(): void {
 }
 
 function requireShell(event: Electron.IpcMainInvokeEvent): BrowserController {
-  if (!controller || !controller.isTrustedShell(event.sender.id)) {
+  if (!controller || (!controller.isTrustedShell(event.sender.id) || event.senderFrame !== event.sender.mainFrame || event.senderFrame.url !== 'app://shell/index.html')) {
     throw new Error('Untrusted IPC sender');
   }
   return controller;
@@ -73,6 +78,16 @@ function registerIpc(): void {
     requireShell(event).createTab(input),
   );
   ipcMain.handle('browser:activate-tab', (event, tabId: string) => requireShell(event).activateTab(tabId));
+  ipcMain.handle('browser:tab-action', (event, tabId: string, action: import('../shared/ipc').TabAction) => requireShell(event).tabAction(tabId, action));
+  ipcMain.handle('browser:reopen-closed-tab', (event) => requireShell(event).reopenClosedTab());
+  ipcMain.handle('browser:find', (event, tabId: string, text: string, forward?: boolean) => requireShell(event).findInPage(tabId, text, forward));
+  ipcMain.handle('browser:stop-find', (event, tabId: string) => requireShell(event).stopFindInPage(tabId));
+  ipcMain.handle('browser:control-download', (event, id: string, action: import('../shared/ipc').DownloadAction) => requireShell(event).controlDownload(id, action));
+  ipcMain.handle('browser:private-proxy', (event, proxy: string) => requireShell(event).setPrivateProxy(proxy));
+  ipcMain.handle('browser:close-private-tabs', (event) => requireShell(event).closePrivateTabs());
+  ipcMain.on('page:form-state', (event, dirty: unknown) => {
+    if (event.senderFrame === event.sender.mainFrame && typeof dirty === 'boolean') controller?.markFormState(event.sender.id, dirty);
+  });
   ipcMain.handle('browser:close-tab', (event, tabId: string) => requireShell(event).closeTab(tabId));
   ipcMain.handle('browser:navigate', (event, tabId: string, input: string) => requireShell(event).navigate(tabId, input));
   ipcMain.handle('browser:back', (event, tabId: string) => requireShell(event).goBack(tabId));

@@ -12,6 +12,7 @@ export interface TabSnapshot {
   isPinned: boolean;
   isPrivate: boolean;
   isInternal: boolean;
+  zoomFactor?: number;
   lifecycle: TabLifecycle;
   workspaceId: string;
 }
@@ -37,6 +38,8 @@ export interface DownloadEntry {
   path?: string;
   kind: 'image' | 'video' | 'audio' | 'file';
   mimeType?: string;
+  isPrivate?: boolean;
+  isPaused?: boolean;
   thumbnail?: string;
   state: 'queued' | 'progressing' | 'completed' | 'cancelled' | 'interrupted';
   receivedBytes: number;
@@ -59,6 +62,9 @@ export interface BrowserSettings {
   searchEngine: string;
   newTabBackground: string;
   sleepAfterMinutes: 5 | 15 | 30 | 60 | 0;
+  adBlockEnabled?: boolean;
+  blockThirdPartyCookies?: boolean;
+  restoreSession?: boolean;
 }
 
 export type ImportBrowser = 'chrome' | 'yandex' | 'firefox';
@@ -110,6 +116,7 @@ export interface VpnSnapshot {
 export interface BrowserSnapshot {
   tabs: TabSnapshot[];
   activeTabId: string;
+  privacy: { privateTabCount: number; proxy: string };
   history: HistoryEntry[];
   bookmarks: BookmarkEntry[];
   downloads: DownloadEntry[];

@@ -20,10 +20,20 @@ export interface ChromeBounds {
   height: number;
 }
 
+export type TabAction = 'mute' | 'pin' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'print' | 'duplicate' | 'hibernate';
+export type DownloadAction = 'pause' | 'resume' | 'cancel';
+
 export interface BrowserApi {
   getSnapshot(): Promise<BrowserSnapshot>;
   createTab(input?: { url?: string; isPrivate?: boolean }): Promise<TabSnapshot>;
   activateTab(tabId: string): Promise<void>;
+  tabAction(tabId: string, action: TabAction): Promise<void>;
+  reopenClosedTab(): Promise<void>;
+  findInPage(tabId: string, text: string, forward?: boolean): Promise<void>;
+  stopFindInPage(tabId: string): Promise<void>;
+  controlDownload(downloadId: string, action: DownloadAction): Promise<void>;
+  setPrivateProxy(proxy: string): Promise<void>;
+  closePrivateTabs(): Promise<void>;
   closeTab(tabId: string): Promise<void>;
   navigate(tabId: string, input: string): Promise<void>;
   goBack(tabId: string): Promise<void>;

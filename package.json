@@ -1,7 +1,7 @@
 {
   "name": "monkeybuissnesbrowser",
-  "version": "0.1.0",
-  "description": "MonkeyBuissnesBrowser — secure native Electron browser with real Chromium tabs.",
+  "version": "0.2.0",
+  "description": "SOUL-M8TE — Electron browser with private sessions, tab sleeping and native Chromium tabs.",
   "main": "dist/main/main/main.js",
   "author": {
     "name": "MonkeyBuissnesBrowser",
@@ -45,7 +45,7 @@
   },
   "build": {
     "appId": "com.monkeybuissnes.browser",
-    "productName": "MonkeyBuissnesBrowser",
+    "productName": "SOUL-M8TE",
     "asar": true,
     "files": [
       "dist/**/*",
@@ -53,20 +53,33 @@
       "package.json"
     ],
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Network",
       "maintainer": "MonkeyBuissnesBrowser <maintainers@monkeybuissnesbrowser.invalid>",
       "icon": "assets/icons/png"
     },
     "win": {
-      "target": ["nsis"],
-      "icon": "assets/icons/ico/MonkeyBuissnesBrowser.ico"
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icons/ico/SOUL-M8TE.ico"
     },
     "mac": {
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "assets/icons/png/app-icon-512.png"
     },
     "directories": {
       "output": "release"
-    }
+    },
+    "artifactName": "SOUL-M8TE-${version}-${os}-${arch}.${ext}"
+  },
+  "engines": {
+    "node": ">=24.0.0"
   }
 }

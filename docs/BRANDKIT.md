@@ -1,31 +1,23 @@
-# MonkeyBuissnesBrowser BrandKit
+# SOUL-M8TE Brand Guidelines 1.0
 
-Источник визуальной айдентики: `/home/astra/Downloads/MonkeyBuissnesBrowser_BrandKit`.
+Реализация использует предоставленные пользователем SOUL-M8TE_Brandbook_Kit и SOUL-M8TE_Brandbook_RU. Сохраняется спокойная, минималистичная эстетика без неоновых/футуристических эффектов.
 
-## Использованные ассеты
+| Токен | Значение |
+| --- | --- |
+| Ink | #171B20 |
+| Paper | #F7F8FA |
+| White | #FFFFFF |
+| Signal Blue | #8CBCE8 |
+| Signal Blue Dark | #4078A7 |
+| Slate | #A9B1BC |
+| Gray | #68727E |
+| Warm Sand | #C9AB90 |
+| Hairline | #E3E7EC |
+| Брендовый шрифт | Montserrat |
+| Шрифт интерфейса | Inter |
 
-- `src/renderer/assets/brand/logo-horizontal-detailed.png` — горизонтальный логотип в titlebar.
-- `src/renderer/assets/brand/mascot-badge-512.png` — фирменный знак для будущих splash/settings экранов.
-- `src/renderer/assets/brand/app-icon-1024.png` — мастер-иконка приложения.
-- `assets/icons/ico/MonkeyBuissnesBrowser.ico` — Windows icon для упаковки.
-- `src/renderer/assets/monkey-business-los-angeles.jpg` — адаптивный фон новой вкладки, предоставленный пользователем.
+Шрифты Latin/Cyrillic загружаются локально из `src/renderer/assets/fonts`; лицензии OFL находятся рядом. Подключений Google Fonts и других удалённых font API нет.
 
-## Палитра
+Оригинальные светлый/тёмный логотипы, портрет и векторный знак находятся в `src/renderer/assets/soul`. Использованы ресурсы предоставленного комплекта без перерисовки. Иконки приложения — `assets/icons/png`, Windows ICO — `assets/icons/ico/SOUL-M8TE.ico`. Техническое имя пакета и appId сохранены ради совместимости профиля; видимое имя — SOUL-M8TE.
 
-- Charcoal — `#2F343A`
-- Warm Beige — `#C9A78C`
-- Soft Cream — `#F7F3EA`
-- Tie Red — `#B21E2D`
-- Espresso — `#4A2E24`
-- Sky Blue — `#3EA6FF`
-
-В интерфейсе Sky Blue используется как основной интерактивный акцент, а красный оставлен для редких предупреждений и эмоциональных деталей. Большие поверхности не заливаются бежевым цветом.
-
-## Принципы
-
-- Точное написание бренда: `MonkeyBuissnesBrowser`.
-- Короткое имя: `Monkey Browser`.
-- Слоган: «Меньше шума. Больше возможностей.»
-- Логотип не заменяется текстовой имитацией и не растягивается по пропорциям.
-- Для toolbar используются линейные иконки Lucide; маскот не дублируется в каждой карточке.
-- Фоновое изображение новой вкладки масштабируется через `background-size: cover`, а на узких окнах меняет фокус, чтобы персонаж оставался видимым.
+Главная страница содержит поиск, реальные быстрые ссылки и сохранённые закладки. Декоративные новости, погода и вымышленные задачи удалены. Цветовое состояние приватного режима дополняется текстом и иконкой; информация о видимости IP доступна непосредственно на новой приватной вкладке.
