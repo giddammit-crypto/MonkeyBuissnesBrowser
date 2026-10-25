@@ -69,6 +69,52 @@ const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
 type Panel = "home" | "bookmarks" | "history" | "downloads" | "settings";
 type Toast = { tone: "error" | "success" | "info"; message: string };
+// User wallpapers are kept in the trusted shell's local storage. Never load
+// remote/CSS URLs, SVG or arbitrary files into the privileged browser shell.
+const CUSTOM_WALLPAPER_KEY = "soul-m8te-custom-wallpaper-v1";
+const CUSTOM_WALLPAPER_EVENT = "soul-m8te-wallpaper-changed";
+function readCustomWallpaper(): string | null {
+  try {
+    const value = localStorage.getItem(CUSTOM_WALLPAPER_KEY);
+    return value && /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(value) ? value : null;
+  } catch { return null; }
+}
+function useCustomWallpaper(): [string | null, (data: string | null) => void] {
+  const [image, setImage] = useState<string | null>(readCustomWallpaper);
+  useEffect(() => {
+    const changed = () => setImage(readCustomWallpaper());
+    window.addEventListener(CUSTOM_WALLPAPER_EVENT, changed);
+    return () => window.removeEventListener(CUSTOM_WALLPAPER_EVENT, changed);
+  }, []);
+  const save = (value: string | null) => {
+    if (value === null) localStorage.removeItem(CUSTOM_WALLPAPER_KEY);
+    else localStorage.setItem(CUSTOM_WALLPAPER_KEY, value);
+    window.dispatchEvent(new Event(CUSTOM_WALLPAPER_EVENT));
+  };
+  return [image, save];
+}
+async function imageAsWallpaper(file: File): Promise<string> {
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type))
+    throw new Error("Поддерживаются только PNG, JPEG и WebP.");
+  if (file.size === 0 || file.size > 2_000_000)
+    throw new Error("Изображение должно быть не больше 2 МБ.");
+  const result = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Не удалось прочитать файл."));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+  if (!/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(result))
+    throw new Error("Недопустимый формат изображения.");
+  await new Promise<void>((resolve, reject) => {
+    const img = new window.Image();
+    img.onload = () => img.naturalWidth > 0 && img.naturalHeight > 0 && img.naturalWidth <= 8192 && img.naturalHeight <= 8192
+      ? resolve() : reject(new Error("Размер изображения превышает 8192 пикселей."));
+    img.onerror = () => reject(new Error("Изображение повреждено."));
+    img.src = result;
+  });
+  return result;
+}
 const quickLinks = [
   { label: "Почта", url: "https://mail.yandex.ru/" },
   { label: "Новости", url: "https://news.google.com/" },
@@ -1284,9 +1330,10 @@ function NewTabPage({
     : "Ctrl";
   const recent = privateMode ? [] : snapshot.history.slice(0, 3);
   const background = normalizeNewTabBackground(snapshot.settings.newTabBackground);
+  const [customWallpaper] = useCustomWallpaper();
   return (
     <div className={`new-tab-page ${privateMode ? "private-newtab" : ""}`} data-new-tab-background={background} data-background={background}>
-      {background === "portrait" && <div className="newtab-wallpaper" data-newtab-wallpaper aria-hidden="true"><img src={chloeWallpaper} alt="" decoding="async" draggable={false} /></div>}
+      {background === "portrait" && <div className="newtab-wallpaper" data-newtab-wallpaper aria-hidden="true"><img src={customWallpaper ?? chloeWallpaper} alt="" decoding="async" draggable={false} /></div>}
       <div className="newtab-topline">
         <span>
           {new Intl.DateTimeFormat("ru-RU", {
@@ -2123,6 +2170,21 @@ function SettingsPanel({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const settings = snapshot.settings;
+  const [customWallpaper, saveCustomWallpaper] = useCustomWallpaper();
+  const [wallpaperMessage, setWallpaperMessage] = useState("");
+  const onWallpaperFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const wallpaper = await imageAsWallpaper(file);
+      saveCustomWallpaper(wallpaper);
+      update({ newTabBackground: "portrait" });
+      setWallpaperMessage("Собственные обои сохранены на этом устройстве.");
+    } catch (error) {
+      setWallpaperMessage(error instanceof Error ? error.message : "Не удалось установить обои.");
+    }
+  };
   const workingSet = snapshot.performance
     ? Math.round(snapshot.performance.totalWorkingSet / 1024)
     : null;
@@ -2186,6 +2248,20 @@ function SettingsPanel({
               <option value="plain">Однотонный</option>
             </select>
           </label>
+          <div className="setting-row custom-wallpaper-setting">
+            <span>
+              <strong>Собственные обои</strong>
+              <small>Локальный PNG, JPEG или WebP до 2 МБ. Не отправляется в интернет.</small>
+            </span>
+            <div className="custom-wallpaper-controls">
+              <label className="custom-wallpaper-upload">
+                Выбрать файл
+                <input type="file" accept="image/png,image/jpeg,image/webp" aria-label="Загрузить собственные обои" onChange={(event) => void onWallpaperFile(event)} />
+              </label>
+              {customWallpaper && <button type="button" className="plain-button" onClick={() => { saveCustomWallpaper(null); setWallpaperMessage("Возвращён стандартный портрет."); }}>Сбросить</button>}
+            </div>
+            {wallpaperMessage && <small role="status">{wallpaperMessage}</small>}
+          </div>
           <label className="setting-row">
             <span>
               <strong>Поисковая система</strong>
