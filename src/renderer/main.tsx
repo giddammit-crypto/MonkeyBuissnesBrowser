@@ -2175,6 +2175,25 @@ function SettingsPanel({
   const [proxy, setProxy] = useState(snapshot.privacy?.proxy ?? "");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  const [installedExtensions, setInstalledExtensions] = useState<Array<{ id: string; name: string; version: string; directory: string }>>([]);
+  const [extensionError, setExtensionError] = useState("");
+  const refreshExtensions = useCallback(async () => {
+    setInstalledExtensions(await window.browserApi.listLocalExtensions());
+  }, []);
+  useEffect(() => { void refreshExtensions().catch(() => undefined); }, [refreshExtensions]);
+  const installExtension = async () => {
+    try {
+      setExtensionError("");
+      await window.browserApi.installLocalExtension();
+      await refreshExtensions();
+    } catch (error) { setExtensionError(userFacingError(error)); }
+  };
+  const removeExtension = async (id: string) => {
+    try {
+      await window.browserApi.removeLocalExtension(id);
+      await refreshExtensions();
+    } catch (error) { setExtensionError(userFacingError(error)); }
+  };
   const settings = snapshot.settings;
   const [customWallpaper, saveCustomWallpaper] = useCustomWallpaper();
   const [wallpaperMessage, setWallpaperMessage] = useState("");
@@ -2296,6 +2315,20 @@ function SettingsPanel({
               {customWallpaper && <button type="button" className="plain-button" onClick={() => { saveCustomWallpaper(null); setWallpaperMessage("Возвращён стандартный портрет."); }}>Сбросить</button>}
             </div>
             {wallpaperMessage && <small role="status">{wallpaperMessage}</small>}
+          </div>
+          <div className="setting-row custom-wallpaper-setting">
+            <span>
+              <strong>Локальные расширения</strong>
+              <small>Поддерживаются только совместимые распакованные расширения. Не устанавливайте непроверенный код.</small>
+            </span>
+            <button className="plain-button" onClick={() => void installExtension()}>Установить из папки</button>
+            {installedExtensions.length > 0 && <div className="extension-list">{installedExtensions.map(item =>
+              <div key={item.id} className="extension-entry">
+                <span>{item.name} · {item.version}</span>
+                <button type="button" className="plain-button" onClick={() => void removeExtension(item.id)}>Удалить</button>
+              </div>
+            )}</div>}
+            {extensionError && <small role="alert">{extensionError}</small>}
           </div>
           <label className="setting-row">
             <span>
