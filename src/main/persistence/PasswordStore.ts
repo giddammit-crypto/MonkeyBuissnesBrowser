@@ -23,7 +23,10 @@ export class PasswordStore {
 
   canPersistSecurely(): boolean {
     try {
-      return safeStorage.isEncryptionAvailable();
+      if (!safeStorage.isEncryptionAvailable()) return false;
+      if (process.platform !== 'linux') return true;
+      const backend = safeStorage.getSelectedStorageBackend();
+      return backend !== 'basic_text' && backend !== 'unknown';
     } catch {
       return false;
     }
@@ -52,7 +55,9 @@ export class PasswordStore {
     if (!this.canPersistSecurely() || !fs.existsSync(this.filePath)) return [];
     try {
       const encrypted = fs.readFileSync(this.filePath, 'utf8');
-      return JSON.parse(safeStorage.decryptString(Buffer.from(encrypted, 'base64'))) as StoredPassword[];
+      const records: unknown = JSON.parse(safeStorage.decryptString(Buffer.from(encrypted, 'base64')));
+      if (!Array.isArray(records)) return [];
+      return records.filter((record): record is StoredPassword => record && typeof record.origin === 'string' && typeof record.username === 'string' && typeof record.password === 'string' && typeof record.id === 'string' && typeof record.importedAt === 'number');
     } catch {
       return [];
     }
@@ -61,10 +66,10 @@ export class PasswordStore {
   private write(value: StoredPassword[]): void {
     if (!this.canPersistSecurely()) return;
     const directory = path.dirname(this.filePath);
-    fs.mkdirSync(directory, { recursive: true });
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const encrypted = safeStorage.encryptString(JSON.stringify(value)).toString('base64');
     const temporaryPath = `${this.filePath}.tmp`;
-    fs.writeFileSync(temporaryPath, encrypted, 'utf8');
+    fs.writeFileSync(temporaryPath, encrypted, { encoding: 'utf8', mode: 0o600 });
     fs.renameSync(temporaryPath, this.filePath);
   }
 }

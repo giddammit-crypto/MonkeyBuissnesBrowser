@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import type { BrowserStores } from '../persistence/BrowserStores';
 import type { PasswordStore } from '../persistence/PasswordStore';
 import type {
@@ -145,7 +146,7 @@ export class BrowserDataImporter {
       const available: ImportDataKind[] = [];
       if (fs.existsSync(path.join(profilePath, 'History'))) available.push('history');
       if (fs.existsSync(path.join(profilePath, 'Bookmarks'))) available.push('bookmarks');
-      if (fs.existsSync(path.join(profilePath, 'Cookies'))) available.push('cookies');
+      if (fs.existsSync(this.chromiumCookiePath(profilePath))) available.push('cookies');
       if (fs.existsSync(path.join(profilePath, 'Login Data'))) available.push('passwords');
       if (available.length === 0) continue;
       const profileName = path.basename(profilePath) === path.basename(root) ? 'Основной профиль' : path.basename(profilePath);
@@ -245,16 +246,19 @@ export class BrowserDataImporter {
   private async importCookies(profile: ImportProfile): Promise<{ imported: number; skipped: number; warnings: string[] }> {
     const warnings: string[] = [];
     const cookies: ImportedCookie[] = [];
+    let total = 0;
     if (profile.browser === 'firefox') {
       const rows = await this.querySqlite(path.join(profile.path, 'cookies.sqlite'), "SELECT host, name, value, path, expiry, isSecure, isHttpOnly FROM moz_cookies WHERE value IS NOT NULL AND value != '' LIMIT 2000");
+      total = rows.length;
       for (const row of rows) {
         const host = String(row.host);
         if (!host) continue;
         cookies.push({ url: `${Boolean(row.isSecure) ? 'https' : 'http'}://${host.replace(/^\./, '')}${String(row.path || '/')}`, name: String(row.name), value: String(row.value), domain: host, path: String(row.path || '/'), expirationDate: Number(row.expiry) > 0 ? Number(row.expiry) : undefined, secure: Boolean(row.isSecure), httpOnly: Boolean(row.isHttpOnly) });
       }
     } else {
-      const rows = await this.querySqlite(path.join(profile.path, 'Cookies'), "SELECT host_key AS host, name, value, hex(encrypted_value) AS encrypted_hex, path, expires_utc, is_secure, is_httponly FROM cookies LIMIT 2000");
-      const key = this.chromiumStorageKey(profile.browser);
+      const rows = await this.querySqlite(this.chromiumCookiePath(profile.path), "SELECT host_key AS host, name, value, hex(encrypted_value) AS encrypted_hex, path, expires_utc, is_secure, is_httponly FROM cookies LIMIT 2000");
+      total = rows.length;
+      const key = rows.some((row) => !row.value && row.encrypted_hex) ? this.chromiumStorageKey(profile.browser) : undefined;
       for (const row of rows) {
         let value = String(row.value || '');
         if (!value && row.encrypted_hex && key) value = this.decryptChromiumValue(String(row.encrypted_hex), key) ?? '';
@@ -262,10 +266,10 @@ export class BrowserDataImporter {
         const host = String(row.host);
         cookies.push({ url: `${Boolean(row.is_secure) ? 'https' : 'http'}://${host.replace(/^\./, '')}${String(row.path || '/')}`, name: String(row.name), value, domain: host, path: String(row.path || '/'), expirationDate: Number(row.expires_utc) > 0 ? chromiumTime(row.expires_utc) / 1000 : undefined, secure: Boolean(row.is_secure), httpOnly: Boolean(row.is_httponly) });
       }
-      if (!key) warnings.push('Зашифрованные cookies Chromium не импортированы: не удалось получить ключ системного хранилища.');
+      if (!key && rows.some((row) => !row.value && row.encrypted_hex)) warnings.push('Зашифрованные cookies Chromium не импортированы: не удалось получить ключ системного хранилища.');
     }
     const imported = await this.setCookies(cookies);
-    return { imported, skipped: Math.max(0, cookies.length - imported), warnings };
+    return { imported, skipped: Math.max(0, total - imported), warnings };
   }
 
   private async importPasswords(profile: ImportProfile): Promise<{ imported: number; skipped: number; warnings: string[] }> {
@@ -279,25 +283,28 @@ export class BrowserDataImporter {
     return { imported, skipped: Math.max(0, rows.length - imported), warnings: imported < rows.length ? ['Часть паролей пропущена: они пустые, дублируются или используют неподдерживаемое шифрование.'] : [] };
   }
 
-  private querySqlite(databasePath: string, query: string): Promise<Row[]> {
-    return new Promise((resolve, reject) => {
-      execFile('sqlite3', ['-readonly', '-json', databasePath, query], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
-        if (error) {
-          reject(new Error(`не удалось прочитать SQLite-профиль (${error.message || 'sqlite3 недоступен'})`));
-          return;
-        }
-        if (!stdout.trim()) {
-          resolve([]);
-          return;
-        }
-        try {
-          const parsed = JSON.parse(stdout) as unknown;
-          resolve(Array.isArray(parsed) ? parsed as Row[] : []);
-        } catch (parseError) {
-          reject(new Error(`не удалось разобрать SQLite-профиль (${parseError instanceof Error ? parseError.message : 'некорректный JSON'})`));
-        }
-      });
-    });
+  private chromiumCookiePath(profilePath: string): string {
+    const modernPath = path.join(profilePath, 'Network', 'Cookies');
+    return fs.existsSync(modernPath) ? modernPath : path.join(profilePath, 'Cookies');
+  }
+
+  private async querySqlite(databasePath: string, query: string): Promise<Row[]> {
+    let database: DatabaseSync | undefined;
+    try {
+      // The bundled Node runtime reads SQLite directly: users need no sqlite3 executable.
+      // Read-only access keeps source browser profiles intact, including WAL data.
+      database = new DatabaseSync(databasePath, { readOnly: true });
+      database.exec('PRAGMA busy_timeout = 1000');
+      const statement = database.prepare(query);
+      statement.setReadBigInts(true);
+      return statement.all().map((row) => Object.fromEntries(Object.entries(row).map(
+        ([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value],
+      )));
+    } catch {
+      throw new Error('не удалось прочитать SQLite-профиль. Закройте исходный браузер и повторите импорт.');
+    } finally {
+      database?.close();
+    }
   }
 
   private chromiumStorageKey(browser: Extract<ImportBrowser, 'chrome' | 'yandex'>): Buffer | undefined {

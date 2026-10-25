@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { BrowserStores } from '../../src/main/persistence/BrowserStores';
+import type { DownloadEntry, TabSnapshot } from '../../src/shared/types';
+import { BrowserStores, buildStoredSession } from '../../src/main/persistence/BrowserStores';
 
 const temporaryDirectories: string[] = [];
 
@@ -37,7 +38,7 @@ describe('BrowserStores', () => {
     expect(stores.bookmarks.get()).toHaveLength(0);
   });
 
-  it('uses Yandex as the default search engine and migrates the old Google default', () => {
+  it("uses Yandex by default and preserves a user's selected search engine", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'northstar-browser-'));
     temporaryDirectories.push(directory);
     const stores = new BrowserStores(directory);
@@ -45,7 +46,7 @@ describe('BrowserStores', () => {
 
     stores.settings.set({ ...stores.settings.get(), searchEngine: 'https://www.google.com/search?q=' });
     const migrated = new BrowserStores(directory);
-    expect(migrated.settings.get().searchEngine).toBe('https://yandex.ru/search/?text=');
+    expect(migrated.settings.get().searchEngine).toBe('https://www.google.com/search?q=');
   });
 
   it('persists download entries for the Downloads panel', () => {
@@ -66,5 +67,77 @@ describe('BrowserStores', () => {
 
     const second = new BrowserStores(directory);
     expect(second.downloads.get()[0]).toMatchObject({ filename: 'photo.jpg', kind: 'image', state: 'completed' });
+  });
+});
+
+
+describe('defensive browser persistence', () => {
+  function directory(): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-stores-'));
+    temporaryDirectories.push(root);
+    fs.mkdirSync(path.join(root, 'browser-data'));
+    return root;
+  }
+
+  it('merges missing settings while rejecting invalid types and unsafe URLs', () => {
+    const root = directory();
+    fs.writeFileSync(path.join(root, 'browser-data/settings.json'), JSON.stringify({ theme: 'dark', searchEngine: 'javascript:alert(1)', sleepAfterMinutes: '5', restoreSession: false }));
+    const stores = new BrowserStores(root);
+    expect(stores.settings.get()).toMatchObject({ theme: 'dark', searchEngine: 'https://yandex.ru/search/?text=', sleepAfterMinutes: 15, restoreSession: false, adBlockEnabled: true, sidebarCollapsed: false });
+  });
+
+  it('recovers from null objects and corrupted collection entries without crashing', () => {
+    const root = directory();
+    fs.writeFileSync(path.join(root, 'browser-data/settings.json'), 'null');
+    fs.writeFileSync(path.join(root, 'browser-data/history.json'), JSON.stringify([null, { url: 'https://example.test', title: null }, { id: 'safe', title: 'Valid', url: 'https://example.test/', visitedAt: 10 }]));
+    fs.writeFileSync(path.join(root, 'browser-data/workspaces.json'), '{}');
+    fs.writeFileSync(path.join(root, 'browser-data/bookmarks.json'), '{broken');
+    const stores = new BrowserStores(root);
+    expect(stores.settings.get().theme).toBe('system');
+    expect(stores.history.get()).toHaveLength(1);
+    expect(stores.bookmarks.get()).toEqual([]);
+    expect(stores.workspaces.get()[0].id).toBe('personal');
+  });
+
+  it('excludes private tabs, unsafe schemes, and runtime fields from session files', () => {
+    const root = directory();
+    const tab = (id: string, url: string, isPrivate = false) => ({ id, url, title: id, workspaceId: 'personal', isPrivate, isPinned: false, isMuted: false, favicon: 'https://secret.test/favicon' } as TabSnapshot);
+    const tabs = [tab('private-secret', 'https://secret.test/', true), tab('normal', 'https://example.test/'), tab('blocked', 'file:///etc/passwd'), tab('selected', 'browser://newtab')];
+    const stores = new BrowserStores(root);
+    stores.session.set(buildStoredSession(tabs, 'selected'));
+    const saved = fs.readFileSync(path.join(root, 'browser-data/session.json'), 'utf8');
+    expect(saved).not.toContain('secret');
+    expect(saved).not.toContain('favicon');
+    expect(saved).not.toContain('file:');
+    const restored = new BrowserStores(root).session.get();
+    expect(restored.tabs).toHaveLength(2);
+    expect(restored.activeIndex).toBe(1);
+    if (process.platform !== 'win32') expect(fs.statSync(path.join(root, 'browser-data/session.json')).mode & 0o777).toBe(0o600);
+  });
+
+  it('keeps normal blob exports after restart without allowing unsafe sources or private exports', () => {
+    const root = directory();
+    const stores = new BrowserStores(root);
+    const record = (id: string, url: string, isPrivate = false) => ({ id, url, filename: `${id}.csv`, path: `/saved/${id}.csv`, state: 'completed', kind: 'file', receivedBytes: 12, totalBytes: 12, startedAt: 100, isPrivate } as DownloadEntry);
+    stores.downloads.set([
+      record('normal-export', 'blob:https://example.test/valid-export'),
+      record('local-export', 'blob:http://localhost:4174/valid-export'),
+      record('private-export', 'blob:https://secret.test/private-export', true),
+      record('unsafe-file', 'blob:file:///etc/passwd'),
+      record('unsafe-script', 'javascript:alert(1)'),
+    ]);
+    const restored = new BrowserStores(root).downloads.get();
+    expect(restored.map((entry) => entry.id)).toEqual(['normal-export', 'local-export']);
+    expect(restored[0]).toMatchObject({ path: '/saved/normal-export.csv', state: 'completed' });
+    expect(fs.readFileSync(path.join(root, 'browser-data/downloads.json'), 'utf8')).not.toContain('secret.test');
+    expect(buildStoredSession([{ id: 'blob-tab', url: restored[0].url, isPrivate: false } as TabSnapshot], 'blob-tab').tabs).toEqual([]);
+  });
+
+  it('defensively prevents private download records from being persisted', () => {
+    const root = directory();
+    const stores = new BrowserStores(root);
+    stores.downloads.set([{ id: 'private', filename: 'secret', url: 'https://secret.test/', isPrivate: true, state: 'completed' } as never]);
+    expect(new BrowserStores(root).downloads.get()).toEqual([]);
+    expect(fs.readFileSync(path.join(root, 'browser-data/downloads.json'), 'utf8')).not.toContain('secret');
   });
 });

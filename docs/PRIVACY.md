@@ -1,13 +1,27 @@
-# Private and anonymous browsing mode
+# Приватные сессии SOUL-M8TE
 
-The browser's **anonymous tab** is an ephemeral Chromium session:
+Приватные вкладки используют общую непостоянную Chromium partition. В ней работают cookies и авторизация между вкладкой и её popup; обычный профиль изолирован. После закрытия последней приватной вкладки сессия очищается. Следующая приватная сессия получает новую partition.
 
-- it uses a non-persistent session partition;
-- its history is not written to the browser history store;
-- cookies, local storage, IndexedDB, service workers and cache data are cleared when the tab closes;
-- WebRTC is configured with `disable_non_proxied_udp` for the private tab;
-- camera, microphone, geolocation and notification permission requests remain denied by default.
+## Что защищается
 
-This is local privacy protection, not network anonymity. The tab does not hide the IP address from a website or the network provider, does not provide Tor routing, and does not replace a real VPN. The UI intentionally says this explicitly so that private mode is not mistaken for an anonymous network.
+- URL приватных вкладок не пишутся в историю, восстановление сессии и список закрытых вкладок.
+- Записи приватных загрузок и их миниатюры не пишутся в постоянное хранилище приложения. Активные приватные загрузки отменяются при закрытии всей приватной сессии.
+- Временные cookies, localStorage, IndexedDB, service workers, cache и HTTP authentication очищаются после закрытия последней приватной вкладки; очистка выполняется также при штатном завершении приложения.
+- Ссылки, новые вкладки, popup и дубликаты наследуют режим исходной вкладки.
+- WebRTC использует `disable_non_proxied_udp`; приватные запросы отправляют DNT и Sec-GPC. Эти сигналы не обязывают сайт прекратить сбор данных.
+- Приватная сессия всегда фильтрует cookies сторонних хостов на уровне запросов и ответов. Это консервативное сравнение hostname, а не полноценный механизм site isolation/anti-tracking с Public Suffix List.
+- Счётчики блокировщика приватной сессии отделены от постоянного профиля.
 
-Shortcut: `Ctrl+Shift+P` on Linux/Windows, or `Cmd+Shift+P` on macOS.
+Файлы и закладки, которые пользователь явно сохраняет, остаются. Непостоянная partition не означает гарантированное отсутствие следов в swap, crash dump, системных журналах или сторонних средствах наблюдения. Защита от криминалистического восстановления не заявляется.
+
+## Прокси
+
+В настройках можно указать работающий `socks5://host:port`, `http://host:port` или `https://host:port` для приватной сессии. Логин/пароль, пути и списки серверов не принимаются. Адрес хранится в памяти процесса. При включённом прокси не задаётся DIRECT fallback, убирается неявный loopback bypass и закрываются прежние соединения.
+
+Смена маршрута не анонимизирует уже выполненные запросы. Для нового режима рекомендуется закрыть все приватные вкладки, настроить прокси и начать новую сессию. Браузер не запускает Tor, не предоставляет прокси-сервер и не проверяет доверенность сервера. SOUL-M8TE не эквивалентен Tor Browser: fingerprinting, DNS, IPv6, расширения и взаимодействие с системой требуют отдельного анализа. E2E проверяет, что недоступный SOCKS endpoint не приводит к прямому HTTP-запросу; это не полная проверка всех сетевых утечек.
+
+## Разрешения и хранилище
+
+Удалённые страницы запускаются с sandbox, context isolation, web security и без Node.js/API оболочки. IPC оболочки проверяет ID WebContents, главный frame и локальный URL. Разрешения камеры/микрофона, геолокации и уведомлений запрашиваются для HTTPS-сайтов и действуют на сессию.
+
+Файлы приложения сохраняются атомарно с правами 0600, каталоги — 0700, где ОС поддерживает POSIX permissions. Пароли и WireGuard-конфигурации сохраняются только при доступном защищённом `safeStorage`; Linux `basic_text` не считается защищённым backend.

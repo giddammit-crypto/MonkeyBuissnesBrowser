@@ -5,6 +5,8 @@ export interface MemoryTabState {
   audible: boolean;
   loading: boolean;
   downloading: boolean;
+  hasFormEdits?: boolean;
+  capturing?: boolean;
   lastInteractionAt: number;
   lifecycle: 'active' | 'background' | 'hibernated' | 'crashed';
 }
@@ -44,6 +46,8 @@ export class MemoryManager {
     if (tab.audible) return { allowed: false, reason: 'audible-tab' };
     if (tab.loading) return { allowed: false, reason: 'loading' };
     if (tab.downloading) return { allowed: false, reason: 'download-in-progress' };
+    if (tab.hasFormEdits) return { allowed: false, reason: 'unsaved-form' };
+    if (tab.capturing) return { allowed: false, reason: 'media-capture' };
     if (Date.now() - tab.lastInteractionAt < idleMinutes * 60_000) return { allowed: false, reason: 'recent-interaction' };
     return { allowed: true };
   }

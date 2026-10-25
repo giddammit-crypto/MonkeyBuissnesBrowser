@@ -1,34 +1,29 @@
 import type { NavigationIntent } from './types';
 
 const SEARCH_URL = 'https://yandex.ru/search/?text=';
-const BLOCKED_SCHEMES = new Set(['javascript:', 'data:', 'file:', 'vbscript:']);
 
 export function parseOmniboxInput(rawInput: string, searchUrl = SEARCH_URL): NavigationIntent {
   const input = rawInput.trim();
   if (!input) return { kind: 'invalid', reason: 'Введите адрес или поисковый запрос.' };
 
-  try {
-    const explicit = new URL(input);
-    if (BLOCKED_SCHEMES.has(explicit.protocol)) {
-      return { kind: 'invalid', reason: 'Эта схема URL запрещена в адресной строке.' };
-    }
-    if (explicit.protocol === 'http:' || explicit.protocol === 'https:') {
-      return { kind: 'url', url: explicit.toString() };
-    }
-    return { kind: 'invalid', reason: `Схема ${explicit.protocol} не поддерживается.` };
-  } catch {
-    // A host-like input without a scheme is still a URL candidate.
+  // Detect host:port before URL(), which interprets localhost:4174 as a scheme.
+  if (/^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?(?:[/?#].*)?$/i.test(input)) {
+    try { return { kind: 'url', url: new URL(`http://${input}`).href }; }
+    catch { return { kind: 'invalid', reason: 'Некорректный адрес.' }; }
   }
-
-  if (/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/.*)?$/i.test(input)) {
-    return { kind: 'url', url: `http://${input}` };
+  if (/^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+(?::\d+)?(?:[/?#][^\s]*)?$/u.test(input)) {
+    try { return { kind: 'url', url: new URL(`https://${input}`).href }; }
+    catch { return { kind: 'invalid', reason: 'Некорректный адрес.' }; }
   }
-
-  if (/^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?(?:\/.*)?$/i.test(input)) {
-    return { kind: 'url', url: `https://${input}` };
+  if (/^(?:https?|javascript|data|file|vbscript|ftp):/i.test(input) || /^[a-z][a-z\d+.-]*:\S/i.test(input)) {
+    try {
+      const explicit = new URL(input);
+      if (explicit.protocol === 'http:' || explicit.protocol === 'https:') return { kind: 'url', url: explicit.href };
+      return { kind: 'invalid', reason: `Схема ${explicit.protocol} не поддерживается.` };
+    } catch { return { kind: 'invalid', reason: 'Некорректный адрес.' }; }
   }
-
-  return { kind: 'search', url: `${searchUrl}${encodeURIComponent(input)}` };
+  const safeSearchUrl = isSafeWebUrl(searchUrl) ? searchUrl : SEARCH_URL;
+  return { kind: 'search', url: `${safeSearchUrl}${encodeURIComponent(input)}` };
 }
 
 export function isSafeWebUrl(rawUrl: string): boolean {
