@@ -2293,6 +2293,13 @@ function SettingsPanel({
               <option value="plain">Однотонный</option>
             </select>
           </label>
+          <div className="setting-row">
+            <span>
+              <strong>Установленная версия</strong>
+              <small>Если здесь нет новых настроек, запущена старая сборка. После обновления GitHub приложение нужно пересобрать и переустановить.</small>
+            </span>
+            <strong>SOUL-M8TE 0.5.0</strong>
+          </div>
           <label className="setting-row">
             <span><strong>Стиль оформления</strong><small>Отдельный стиль Detroit · Хлоя. Исходные светлая и тёмная темы не изменяются.</small></span>
             <select aria-label="Стиль оформления" value={settings.appearancePreset ?? "classic"} onChange={event => update({ appearancePreset: event.target.value as "classic" | "detroit" })}>
