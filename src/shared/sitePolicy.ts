@@ -16,6 +16,21 @@ export function normalizeCookieExceptions(value: unknown): string[] {
   return [...new Set(value.filter((entry): entry is string => typeof entry === 'string' && entry.length <= 2048).map(getSiteKey).filter((entry): entry is string => Boolean(entry)))].slice(0, 100);
 }
 
+/** YouTube's account hand-off crosses registrable domains. Never allow all Google traffic. */
+export function isGoogleYouTubeSignInRequest(requestUrl: string, topLevelUrl: string): boolean {
+  try {
+    const request = new URL(requestUrl);
+    const top = new URL(topLevelUrl);
+    if (request.protocol !== 'https:' || top.protocol !== 'https:' || request.port || top.port || request.username || request.password || top.username || top.password) return false;
+    const topSite = getSiteKey(top.href);
+    const accountHost = request.hostname === 'accounts.google.com' || request.hostname === 'accounts.youtube.com';
+    if (topSite === 'https://youtube.com' && accountHost) return true;
+    if (topSite !== 'https://google.com') return false;
+    return request.hostname === 'accounts.youtube.com' ||
+      (['youtube.com', 'www.youtube.com'].includes(request.hostname) && request.pathname.startsWith('/accounts/'));
+  } catch { return false; }
+}
+
 export function shouldStripThirdPartyCookies(input: {
   requestUrl: string;
   topLevelUrl: string;
@@ -23,6 +38,7 @@ export function shouldStripThirdPartyCookies(input: {
   isPrivate: boolean;
   enabled: boolean;
   exceptions?: string[];
+  googleSignInCompatibility?: boolean;
 }): boolean {
   // Main navigations must be able to set and send their first-party login cookies.
   if (input.resourceType === 'mainFrame' || (!input.isPrivate && !input.enabled)) return false;
@@ -32,7 +48,23 @@ export function shouldStripThirdPartyCookies(input: {
   // An absent/opaque initiator must not silently disable protection.
   if (!topSite) return true;
   if (!input.isPrivate && input.exceptions?.includes(topSite)) return false;
+  if (!input.isPrivate && input.googleSignInCompatibility !== false && isGoogleYouTubeSignInRequest(input.requestUrl, input.topLevelUrl)) return false;
   return requestSite !== topSite;
+}
+
+/** Only known sign-in frames or a user's explicit site exception can request access. */
+export function canRequestStorageAccess(input: {
+  requestUrl: string; topLevelUrl: string; isPrivate: boolean;
+  exceptions?: string[]; googleSignInCompatibility?: boolean;
+}): boolean {
+  if (input.isPrivate) return false;
+  try {
+    const request = new URL(input.requestUrl);
+    const top = new URL(input.topLevelUrl);
+    if (request.protocol !== 'https:' || top.protocol !== 'https:' || request.username || request.password || top.username || top.password) return false;
+    return Boolean(input.exceptions?.includes(getSiteKey(top.href) || '')) ||
+      (input.googleSignInCompatibility !== false && isGoogleYouTubeSignInRequest(request.href, top.href));
+  } catch { return false; }
 }
 
 /** Identify Google's documented embedded-browser/OAuth restriction, not a generic network failure. */
@@ -40,13 +72,13 @@ export function getGoogleAuthNotice(rawUrl: string): { title: string; message: s
   try {
     const url = new URL(rawUrl);
     if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'accounts.google.com') return null;
-    const denied = /\/(?:rejected|deniedsigninrejected)(?:\/|$)/i.test(url.pathname) || /disallowed_useragent|deniedsigninrejected/i.test(url.searchParams.get('error') || '');
-    const oauth = /^\/o\/oauth2(?:\/|$)/i.test(url.pathname);
-    const signin = /^\/(?:v\d+\/)?signin(?:\/|$)/i.test(url.pathname);
-    if (!denied && !oauth && !signin) return null;
+    const denied = /\/(?:rejected|deniedsigninrejected)(?:\/|$)/i.test(url.pathname) || /^(?:disallowed_useragent|deniedsigninrejected)$/i.test(url.searchParams.get('error') || '');
+    // A normal sign-in page is not an error. Do not pre-empt the website's flow
+    // with an external-browser suggestion before Google has reported rejection.
+    if (!denied) return null;
     return {
-      title: denied ? 'Google ограничил вход в этом браузере' : 'Вход через Google',
-      message: 'Google может отклонять вход во встроенных браузерах. Продолжите в системном браузере. Этот вход не переносит авторизацию обратно в SOUL-M8TE автоматически.',
+      title: 'Google ограничил вход в этом браузере',
+      message: 'Страница Google сообщает об отказе во входе. Открытие в другом браузере не переносит авторизацию обратно в SOUL-M8TE автоматически.',
     };
   } catch { return null; }
 }

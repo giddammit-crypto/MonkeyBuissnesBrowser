@@ -65,6 +65,33 @@ describe('password CSV import', () => {
   });
 });
 
+describe('password CSV dialect detection', () => {
+  it('selects a quoted semicolon header before reading 20k+ quoted data commas or multiline passwords (LF/CRLF)', () => {
+    for (const newline of ['\n', '\r\n']) {
+      const data = ['"url";"username";"password"', ...Array.from({length: 10_001}, (_, index) => `https://example.test;user${index};"first,part${newline}second,part"`)];
+      for (const finalNewline of ['', newline]) {
+        const parsed = parsePasswordsCsv(data.join(newline) + finalNewline);
+        expect(parsed.total).toBe(10_001);
+        expect(parsed.records).toHaveLength(10_001);
+        expect(parsed.records[0].password).toBe(`first,part${newline}second,part`);
+      }
+    }
+  });
+});
+
+describe('CSV record limit', () => {
+  it('accepts exactly 20,000 data records equally with LF, CRLF or no final newline', () => {
+    const data = ['url,username,password', ...Array.from({length: 20_000}, (_, index) => `https://example.test,user${index},password`)];
+    for (const newline of ['\n', '\r\n']) {
+      for (const finalNewline of ['', newline]) expect(parsePasswordsCsv(data.join(newline) + finalNewline).records).toHaveLength(20_000);
+    }
+  });
+  it('rejects 20,001 records regardless of the final newline', () => {
+    const data = ['url,username,password', ...Array.from({length: 20_001}, (_, index) => `https://example.test,user${index},password`)];
+    for (const finalNewline of ['', '\n']) expect(() => parsePasswordsCsv(data.join('\n') + finalNewline)).toThrow('20 000 записей');
+  });
+});
+
 describe('Chromium safe-storage formats', () => {
   function encrypt(plain: Buffer, key: Buffer, version: string): string { const cipher = crypto.createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20)); return Buffer.concat([Buffer.from(version), cipher.update(plain), cipher.final()]).toString('hex'); }
   it('validates and strips schema24 host digest before UTF-8 decoding', () => {

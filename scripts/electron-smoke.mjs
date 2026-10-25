@@ -103,7 +103,7 @@ try {
     await waitTab(privateTab.id, {isLoading:false});
     assert.equal(await content('/private', 'typeof window.browserApi'), 'undefined');
     const before = (await snapshot()).tabs.length;
-    await content('/private', `window.open('${base}/private-popup','_blank')`);
+    assert.equal(await content('/private', `window.open('${base}/private-popup','_blank')!==null`), true);
     await expect.poll(async()=>(await snapshot()).tabs.length).toBe(before+1);
     const popup=(await snapshot()).tabs.find(t=>t.url===`${base}/private-popup`);
     assert(popup?.isPrivate, 'popup must inherit privacy');

@@ -54,11 +54,18 @@ import type {
   ImportFileReport,
 } from "../shared/types";
 import { getGoogleAuthNotice, getSiteKey } from "../shared/sitePolicy";
+import { normalizeNewTabBackground } from "../shared/background";
 import logoLight from "./assets/soul/logo-light.png";
 import logoDark from "./assets/soul/logo-dark.png";
 import portrait from "./assets/soul/portrait.webp";
+import chloeWallpaper from "./assets/soul/chloe-wallpaper.webp";
 import symbol from "./assets/soul/symbol.svg";
 import "./styles.css";
+import "./newtab-wallpaper.css";
+import { userFacingError } from "./userFacingError";
+const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
+const TabSearch = React.lazy(()=>import("./TabSearch"));
+const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
 type Panel = "home" | "bookmarks" | "history" | "downloads" | "settings";
 type Toast = { tone: "error" | "success" | "info"; message: string };
@@ -83,6 +90,9 @@ function App(): React.JSX.Element {
   const [popover, setPopover] = useState<"menu" | "protection" | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [findOpen, setFindOpen] = useState(false);
+  const [authNoticeDismissed, setAuthNoticeDismissed] = useState(false);
+  const [tabSearchOpen, setTabSearchOpen] = useState(false);
+  const previousTabId = useRef<string | undefined>(undefined);
   const [findText, setFindText] = useState("");
   const [findResult, setFindResult] = useState("");
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -94,16 +104,14 @@ function App(): React.JSX.Element {
     (tab) => tab.id === snapshot.activeTabId,
   );
   const authNotice = getGoogleAuthNotice(currentTab?.url ?? "");
+  useEffect(() => setAuthNoticeDismissed(false), [currentTab?.id, currentTab?.url]);
   const currentSite = getSiteKey(currentTab?.url ?? "");
   const sidebarCollapsed = snapshot?.settings.sidebarCollapsed ?? false;
   const showError = useCallback(
     (error: unknown) =>
       setToast({
         tone: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Действие не выполнено. Попробуйте ещё раз.",
+        message: userFacingError(error),
       }),
     [],
   );
@@ -138,6 +146,11 @@ function App(): React.JSX.Element {
       if (event.type === "focus-address") {
         addressRef.current?.focus();
         addressRef.current?.select();
+        return;
+      }
+      if (event.type === "show-tab-search") {
+        setTabSearchOpen(true);
+        setPopover(null);
         return;
       }
       if (event.type === "show-find") {
@@ -179,6 +192,11 @@ function App(): React.JSX.Element {
       setAddress(currentTab?.isInternal ? "" : (currentTab?.url ?? ""));
   }, [currentTab?.id, currentTab?.url, currentTab?.isInternal, editingAddress]);
   useEffect(() => {
+    const previous = previousTabId.current;
+    if (previous && previous !== currentTab?.id) run(window.browserApi.stopFindInPage(previous));
+    previousTabId.current = currentTab?.id;
+    setEditingAddress(false);
+    setAddress(currentTab?.isInternal ? "" : (currentTab?.url ?? ""));
     setFindText("");
     setFindResult("");
     setFindOpen(false);
@@ -210,6 +228,7 @@ function App(): React.JSX.Element {
       const hidden =
         panel !== "home" ||
         Boolean(popover) ||
+        tabSearchOpen ||
         currentTab?.lifecycle === "crashed";
       run(
         window.browserApi.setChromeBounds(
@@ -235,6 +254,7 @@ function App(): React.JSX.Element {
   }, [
     panel,
     popover,
+    tabSearchOpen,
     toast,
     sidebarCollapsed,
     findOpen,
@@ -244,7 +264,7 @@ function App(): React.JSX.Element {
   ]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || tabSearchOpen) return;
       setPopover(null);
       setToast(null);
       if (findOpen && currentTab) {
@@ -254,7 +274,7 @@ function App(): React.JSX.Element {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [currentTab?.id, findOpen, panel, run]);
+  }, [currentTab?.id, findOpen, panel, tabSearchOpen, run]);
 
   if (!snapshot)
     return (
@@ -326,6 +346,7 @@ function App(): React.JSX.Element {
           </button>
         </div>
       </div>
+      <button className="tab-search-trigger icon-button" data-tab-search-trigger aria-label="Поиск по вкладкам" title="Поиск по вкладкам · Ctrl+Shift+A" onClick={() => { setTabSearchOpen(true); setPopover(null); }}><Search size={16}/></button>
       <TabStrip
         snapshot={snapshot}
         onActivate={(id) => {
@@ -502,6 +523,7 @@ function App(): React.JSX.Element {
             <MenuAction
               icon={<RotateCcw size={16} />}
               label="Открыть закрытую вкладку"
+              disabled={isPrivate}
               detail="Ctrl+Shift+T"
               onClick={() => {
                 setPopover(null);
@@ -681,6 +703,14 @@ function App(): React.JSX.Element {
                       ? "Сторонние cookies уже разрешены общей настройкой обычного профиля."
                       : "Исключение применяется к этому сайту и его поддоменам только в обычном профиле. После изменения обновите страницу. Оно не отменяет ограничения входа Google."}
                 </small>
+                {!isPrivate &&
+                  snapshot.settings.blockThirdPartyCookies !== false && (
+                    <small className="google-cookie-compatibility-status">
+                      {snapshot.settings.googleSignInCompatibility !== false
+                        ? "Совместимость входа Google / YouTube включена: cookies между узлами входа разрешены. Для остальных сайтов действуют общие настройки и ваши исключения."
+                        : "Совместимость входа Google / YouTube выключена. Для cookies действуют общие настройки и ваши исключения."}
+                    </small>
+                  )}
               </div>
             )}
             <p className="privacy-note">
@@ -899,6 +929,7 @@ function App(): React.JSX.Element {
       <main className="content-area">
         {panel === "home" &&
           authNotice &&
+          !authNoticeDismissed &&
           currentTab &&
           !currentTab.isInternal && (
             <section
@@ -909,10 +940,6 @@ function App(): React.JSX.Element {
               <div>
                 <strong>{authNotice.title}</strong>
                 <p>{authNotice.message}</p>
-                <small>
-                  Откроется внешнее приложение со своим профилем. Cookies и
-                  настройки приватности SOUL-M8TE в нём не действуют.
-                </small>
               </div>
               <button
                 className="plain-button"
@@ -924,6 +951,7 @@ function App(): React.JSX.Element {
               >
                 <ExternalLink size={16} /> Открыть в системном браузере
               </button>
+              <button className="icon-button" aria-label="Скрыть помощь со входом Google" title="Скрыть помощь" onClick={() => setAuthNoticeDismissed(true)}><X size={16}/></button>
             </section>
           )}
         <div
@@ -959,31 +987,39 @@ function App(): React.JSX.Element {
             />
           )}
           {panel === "bookmarks" && (
-            <EntriesPanel
+            <React.Suspense fallback={<p role="status">Открываем раздел…</p>}><EntriesPanel
               kind="bookmarks"
               snapshot={snapshot}
               onOpen={navigate}
-            />
+            /></React.Suspense>
           )}
           {panel === "history" && (
-            <EntriesPanel
+            <React.Suspense fallback={<p role="status">Открываем раздел…</p>}><EntriesPanel
               kind="history"
               snapshot={snapshot}
               onOpen={navigate}
-            />
+            /></React.Suspense>
           )}
           {panel === "downloads" && (
-            <DownloadsPanel downloads={snapshot.downloads} run={run} />
+            <DownloadsPanel downloads={snapshot.downloads.filter(item=>Boolean(item.isPrivate)===isPrivate)} isPrivate={isPrivate} run={run} />
           )}
           {panel === "settings" && (
             <SettingsPanel
               snapshot={snapshot}
               run={run}
               onDone={() => openPanel("home")}
+              onPasswordFeedback={(message,isError)=>setToast({tone:isError?"error":"success",message})}
+              onBeforePasswordFill={async()=>{
+                setPanel("home");setPopover(null);
+                await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
+                const b=viewportRef.current?.getBoundingClientRect();
+                if(b) await window.browserApi.setChromeBounds({x:b.x,y:b.y,width:b.width,height:b.height});
+              }}
             />
           )}
         </div>
       </main>
+      {tabSearchOpen && <React.Suspense fallback={<div className="tab-search-backdrop"><p role="status">Открываем поиск по вкладкам…</p></div>}><TabSearch snapshot={snapshot} onActivate={async id=>{setPanel("home"); await window.browserApi.activateTab(id);}} onCloseTab={id=>window.browserApi.closeTab(id)} onDismiss={()=>setTabSearchOpen(false)} onError={showError}/></React.Suspense>}
       {popover && (
         <button
           className="popover-dismiss"
@@ -1027,24 +1063,93 @@ function TabStrip({
   onClose: (id: string) => void;
   onCreate: () => void;
 }): React.JSX.Element {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [overflow, setOverflow] = useState({ left: false, right: false });
+  const hasOverflow = overflow.left || overflow.right;
   const active = snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId);
   const tabs = snapshot.tabs
     .filter((tab) => tab.workspaceId === active?.workspaceId)
     .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const update = () =>
+      setOverflow({
+        left: list.scrollLeft > 2,
+        right: list.scrollWidth - list.clientWidth - list.scrollLeft > 2,
+      });
+    list
+      .querySelector<HTMLElement>(".tab-container.active")
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const frame = requestAnimationFrame(update);
+    const observer = new ResizeObserver(update);
+    observer.observe(list);
+    list.addEventListener("scroll", update, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      list.removeEventListener("scroll", update);
+    };
+  }, [snapshot.activeTabId, tabs.length]);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      listRef.current
+        ?.querySelector<HTMLElement>(".tab-container.active")
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [snapshot.activeTabId, hasOverflow]);
+  const moveFocus = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
+    let next = index;
+    if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+    else if (event.key === "ArrowLeft")
+      next = (index - 1 + tabs.length) % tabs.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    // Manual tab activation keeps arrow-key navigation in the tab strip even
+    // when the target is a native web page. Enter/Space activates the button.
+    listRef.current
+      ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+      [next]?.focus();
+  };
   return (
     <div className="tab-strip">
-      <div className="tab-list" role="tablist" aria-label="Вкладки">
-        {tabs.map((tab) => (
+      {hasOverflow && (
+        <button
+          className="tab-scroll-button"
+          disabled={!overflow.left}
+          title="Предыдущие вкладки"
+          aria-label="Прокрутить вкладки влево"
+          onClick={() => listRef.current?.scrollBy({ left: -260 })}
+        >
+          <ArrowLeft size={15} />
+        </button>
+      )}
+      <div
+        className="tab-list"
+        ref={listRef}
+        role="tablist"
+        aria-label="Вкладки"
+      >
+        {tabs.map((tab, index) => (
           <div
             key={tab.id}
-            className={`tab-container ${tab.id === snapshot.activeTabId ? "active" : ""} ${tab.isPrivate ? "private-tab" : ""} ${tab.isPinned ? "pinned-tab" : ""}`}
+            className={`tab-container ${tab.id === snapshot.activeTabId ? "active" : ""} ${tab.isPrivate ? "private-tab" : ""} ${tab.isPinned ? "pinned-tab" : ""} ${tab.lifecycle === "hibernated" ? "sleeping-tab" : ""}`}
           >
             <button
               className="tab"
               role="tab"
+              tabIndex={tab.id === snapshot.activeTabId ? 0 : -1}
               aria-selected={tab.id === snapshot.activeTabId}
-              title={`${tab.title}${tab.isPrivate ? " · Приватная" : ""}${tab.lifecycle === "hibernated" ? " · Спит" : ""}`}
+              aria-label={tab.title || "Новая вкладка"}
+              title={`${tab.title}${tab.isPrivate ? " · Приватная" : ""}${tab.isPinned ? " · Закреплена" : ""}${tab.lifecycle === "hibernated" ? " · Спит" : ""}`}
               onClick={() => onActivate(tab.id)}
+              onKeyDown={(event) => moveFocus(event, index)}
               onAuxClick={(event) => {
                 if (event.button === 1) {
                   event.preventDefault();
@@ -1066,8 +1171,8 @@ function TabStrip({
                 )}
               </span>
               <span className="tab-title">{tab.title || "Новая вкладка"}</span>
-              {tab.isPinned && <Pin size={12} />}
-              {tab.isMuted && <VolumeX size={12} />}
+              {tab.isPinned && <Pin size={12} className="tab-state-icon" />}
+              {tab.isMuted && <VolumeX size={13} className="tab-state-icon" />}
               {tab.lifecycle === "hibernated" && (
                 <span className="sleep-indicator">Спит</span>
               )}
@@ -1075,13 +1180,25 @@ function TabStrip({
             <button
               className="tab-close"
               aria-label={`Закрыть вкладку ${tab.title}`}
+              title="Закрыть вкладку"
               onClick={() => onClose(tab.id)}
             >
-              <X size={13} />
+              <X size={14} />
             </button>
           </div>
         ))}
       </div>
+      {hasOverflow && (
+        <button
+          className="tab-scroll-button"
+          disabled={!overflow.right}
+          title="Следующие вкладки"
+          aria-label="Прокрутить вкладки вправо"
+          onClick={() => listRef.current?.scrollBy({ left: 260 })}
+        >
+          <ArrowRight size={15} />
+        </button>
+      )}
       <button
         className="new-tab-button"
         title="Новая вкладка · Ctrl+T"
@@ -1155,8 +1272,21 @@ function NewTabPage({
   onBookmarks: () => void;
   onSettings: () => void;
 }): React.JSX.Element {
+  const hostname = (url: string): string => {
+    try {
+      return new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+      return url;
+    }
+  };
+  const modifier = navigator.platform.toLowerCase().includes("mac")
+    ? "⌘"
+    : "Ctrl";
+  const recent = privateMode ? [] : snapshot.history.slice(0, 3);
+  const background = normalizeNewTabBackground(snapshot.settings.newTabBackground);
   return (
-    <div className={`new-tab-page ${privateMode ? "private-newtab" : ""}`}>
+    <div className={`new-tab-page ${privateMode ? "private-newtab" : ""}`} data-new-tab-background={background} data-background={background}>
+      {background === "portrait" && <div className="newtab-wallpaper" data-newtab-wallpaper aria-hidden="true"><img src={chloeWallpaper} alt="" decoding="async" draggable={false} /></div>}
       <div className="newtab-topline">
         <span>
           {new Intl.DateTimeFormat("ru-RU", {
@@ -1165,13 +1295,19 @@ function NewTabPage({
             month: "long",
           }).format(new Date())}
         </span>
-        <button
-          onClick={onSettings}
-          title="Настроить браузер"
-          aria-label="Настроить браузер"
-        >
-          <Settings size={17} />
-        </button>
+        <div className="newtab-top-actions">
+          <span className="newtab-profile-label">
+            {privateMode ? <Shield size={13} /> : <Globe2 size={13} />}{" "}
+            {privateMode ? "Приватный просмотр" : "Личное пространство"}
+          </span>
+          <button
+            onClick={onSettings}
+            title="Настроить браузер"
+            aria-label="Настроить браузер"
+          >
+            <Settings size={17} />
+          </button>
+        </div>
       </div>
       <div className="newtab-center">
         <Brand large />
@@ -1185,103 +1321,185 @@ function NewTabPage({
             ? snapshot.privacy?.proxy
               ? "Временная сессия. Для приватных вкладок настроен прокси."
               : "История не сохраняется. IP-адрес не скрывается."
-            : "Ваши страницы, идеи и открытия — в одном месте."}
+            : "Открывайте новое. Возвращайтесь к важному."}
         </p>
         <form
           className="hero-search"
           onSubmit={(event) => {
             event.preventDefault();
             const input = event.currentTarget.elements.namedItem("query");
-            if (input instanceof HTMLInputElement) onSearch(input.value);
+            if (input instanceof HTMLInputElement && input.value.trim())
+              onSearch(input.value);
           }}
         >
           <Search size={21} />
           <input
             name="query"
             autoComplete="off"
+            spellCheck={false}
             placeholder="Поиск или адрес страницы"
             aria-label="Поиск на новой вкладке"
           />
+          <kbd aria-hidden="true">{modifier} L</kbd>
           <button type="submit" title="Открыть" aria-label="Искать">
             <ArrowRight size={20} />
           </button>
         </form>
-        <div className="quick-links" aria-label="Быстрый доступ">
-          {quickLinks.map((link) => (
-            <button key={link.label} onClick={() => onOpen(link.url)}>
-              <span>
-                <Globe2 size={20} />
+        {!privateMode && (
+          <div className="quick-links" aria-label="Быстрый доступ">
+            {quickLinks.map((link, index) => (
+              <button
+                key={link.label}
+                title={link.url}
+                onClick={() => onOpen(link.url)}
+              >
+                <span className="quick-link-symbol">
+                  {index === 0 ? (
+                    <span className="mail-shortcut-symbol" aria-hidden="true">
+                      @
+                    </span>
+                  ) : index === 1 ? (
+                    <File size={20} />
+                  ) : (
+                    <Play size={20} />
+                  )}
+                </span>
+                <span className="quick-link-label">{link.label}</span>
+              </button>
+            ))}
+            <button onClick={onBookmarks}>
+              <span className="quick-link-symbol">
+                <Bookmark size={20} />
               </span>
-              {link.label}
+              <span className="quick-link-label">Сохранённое</span>
             </button>
-          ))}
-          <button onClick={onBookmarks}>
-            <span>
-              <Bookmark size={20} />
-            </span>
-            Сохранённое
-          </button>
-        </div>
-        {privateMode ? (
-          <div className="private-card">
-            <Shield size={23} />
-            <div>
-              <strong>Что остаётся приватным</strong>
-              <p>
-                Cookies и данные сайтов временные. Они удаляются после закрытия
-                всех приватных вкладок. Сохранённые файлы и закладки остаются на
-                устройстве.
-              </p>
-              <p>
-                Этот режим не скрывает IP-адрес и не заменяет Tor.{" "}
-                {snapshot.privacy?.proxy
-                  ? "Для приватных вкладок настроен прокси."
-                  : "Прокси не подключён."}
-              </p>
-              <button className="text-button" onClick={onSettings}>
-                Настроить приватность <ChevronRight size={15} />
-              </button>
-            </div>
           </div>
-        ) : snapshot.bookmarks.length > 0 ? (
-          <section className="newtab-saved">
-            <div className="section-heading">
-              <h2>Сохранённые страницы</h2>
-              <button className="text-button" onClick={onBookmarks}>
-                Все закладки <ChevronRight size={15} />
+        )}
+        {privateMode ? (
+          <section className="private-card" aria-label="О приватном режиме">
+            <div className="private-card-heading">
+              <Shield size={22} />
+              <strong>Вы управляете своими данными</strong>
+              <button className="text-button" onClick={onSettings}>
+                Настроить <ChevronRight size={15} />
               </button>
             </div>
-            <div className="saved-grid">
-              {snapshot.bookmarks.slice(0, 4).map((bookmark) => (
-                <button
-                  key={bookmark.id}
-                  className="saved-card"
-                  onClick={() => onOpen(bookmark.url)}
-                >
-                  <Globe2 size={19} />
-                  <span>
-                    <strong>{bookmark.title}</strong>
-                    <small>{new URL(bookmark.url).hostname}</small>
-                  </span>
-                  <ArrowRight size={16} />
-                </button>
-              ))}
+            <div className="privacy-facts">
+              <div>
+                <strong>Без истории</strong>
+                <span>Посещения не записываются.</span>
+              </div>
+              <div>
+                <strong>Временные cookies</strong>
+                <span>Удалятся после закрытия всех приватных вкладок.</span>
+              </div>
+              <div>
+                <strong>Вы решаете, что сохранить</strong>
+                <span>Скачанные файлы и закладки остаются.</span>
+              </div>
             </div>
+            <p className="private-network-note">
+              {snapshot.privacy?.proxy
+                ? "Настроен прокси для приватных вкладок. Проверьте внешний IP на доверенном сервисе."
+                : "IP-адрес виден сайтам и провайдеру. Этот режим не заменяет Tor или VPN."}
+            </p>
           </section>
         ) : (
-          <div className="newtab-tip">
-            <Star size={17} />
-            <span>Сохраняйте важные страницы звездой в адресной строке.</span>
-            <kbd>Ctrl D</kbd>
+          <div className="newtab-workspace">
+            <section className="newtab-saved">
+              <div className="section-heading">
+                <div>
+                  <Bookmark size={16} />
+                  <h2>Сохранённое</h2>
+                  <span className="section-count">
+                    {snapshot.bookmarks.length}
+                  </span>
+                </div>
+                <button className="text-button" onClick={onBookmarks}>
+                  Все закладки <ChevronRight size={15} />
+                </button>
+              </div>
+              {snapshot.bookmarks.length > 0 ? (
+                <div className="saved-grid">
+                  {snapshot.bookmarks.slice(0, 4).map((bookmark) => (
+                    <button
+                      key={bookmark.id}
+                      className="saved-card"
+                      title={`${bookmark.title}\n${bookmark.url}`}
+                      onClick={() => onOpen(bookmark.url)}
+                    >
+                      <span className="saved-site-icon">
+                        <Globe2 size={17} />
+                      </span>
+                      <span>
+                        <strong>{bookmark.title}</strong>
+                        <small>{hostname(bookmark.url)}</small>
+                      </span>
+                      <ArrowRight size={15} />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="newtab-empty-saved">
+                  <Star size={22} />
+                  <strong>Важное всегда рядом</strong>
+                  <p>Сохраняйте страницы звездой в адресной строке.</p>
+                  <button className="text-button" onClick={onBookmarks}>
+                    Открыть закладки <ChevronRight size={15} />
+                  </button>
+                </div>
+              )}
+            </section>
+            <section className="newtab-recent">
+              <div className="section-heading">
+                <div>
+                  <History size={16} />
+                  <h2>Недавно открывали</h2>
+                </div>
+                <span className="recent-local-note">На этом устройстве</span>
+              </div>
+              {recent.length > 0 ? (
+                <div className="recent-page-list">
+                  {recent.map((entry) => (
+                    <button
+                      className="recent-page-row"
+                      key={entry.id}
+                      title={`${entry.title}\n${entry.url}`}
+                      onClick={() => onOpen(entry.url)}
+                    >
+                      <span className="recent-page-dot" />
+                      <span>
+                        <strong>{entry.title}</strong>
+                        <small>{hostname(entry.url)}</small>
+                      </span>
+                      <ArrowRight size={15} />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="newtab-shortcut-list">
+                  <p>Несколько полезных сочетаний</p>
+                  <span>
+                    Адресная строка <kbd>{modifier} L</kbd>
+                  </span>
+                  <span>
+                    Новая вкладка <kbd>{modifier} T</kbd>
+                  </span>
+                  <span>
+                    Найти на странице <kbd>{modifier} F</kbd>
+                  </span>
+                </div>
+              )}
+            </section>
           </div>
         )}
       </div>
       <footer className="newtab-footer">
         <span>
           <span className="mode-dot" />
-          {privateMode ? "Приватная сессия" : "Личный профиль"}
+          {privateMode ? "Временная сессия" : "Ваш цифровой союзник"}
         </span>
-        <span>SOUL-M8TE · Ваш цифровой союзник</span>
+        <span>SOUL-M8TE Browser</span>
       </footer>
     </div>
   );
@@ -1325,96 +1543,6 @@ function EmptyState({
     </div>
   );
 }
-function EntriesPanel({
-  kind,
-  snapshot,
-  onOpen,
-}: {
-  kind: "bookmarks" | "history";
-  snapshot: BrowserSnapshot;
-  onOpen: (url: string) => void;
-}): React.JSX.Element {
-  const [query, setQuery] = useState("");
-  const entries = kind === "bookmarks" ? snapshot.bookmarks : snapshot.history;
-  const filtered = entries.filter((entry) =>
-    `${entry.title} ${entry.url}`.toLowerCase().includes(query.toLowerCase()),
-  );
-  return (
-    <section className="utility-panel">
-      <PanelHeader
-        icon={
-          kind === "bookmarks" ? <Bookmark size={22} /> : <History size={22} />
-        }
-        title={kind === "bookmarks" ? "Закладки" : "История"}
-        subtitle={
-          kind === "bookmarks"
-            ? "Ваши сохранённые страницы"
-            : "Последние посещения обычного профиля"
-        }
-      />
-      <label className="panel-search">
-        <Search size={18} />
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Найти по названию или адресу"
-          aria-label={
-            kind === "history" ? "Поиск в истории" : "Поиск в закладках"
-          }
-        />
-        <span>{filtered.length}</span>
-      </label>
-      {filtered.length === 0 ? (
-        <EmptyState
-          icon={
-            kind === "bookmarks" ? <Star size={28} /> : <History size={28} />
-          }
-          title={
-            query
-              ? "Ничего не найдено"
-              : kind === "bookmarks"
-                ? "Сохраните первую страницу"
-                : "История пуста"
-          }
-          description={
-            query
-              ? "Попробуйте другой запрос."
-              : kind === "bookmarks"
-                ? "Нажмите на звезду в адресной строке или Ctrl+D."
-                : "Посещённые страницы обычного профиля появятся здесь."
-          }
-        />
-      ) : (
-        <div className="entry-list">
-          {filtered.map((entry) => (
-            <button
-              className="entry-row"
-              key={entry.id}
-              onClick={() => onOpen(entry.url)}
-            >
-              <span className="entry-icon">
-                <Globe2 size={19} />
-              </span>
-              <span className="entry-copy">
-                <strong>{entry.title}</strong>
-                <small>{entry.url}</small>
-              </span>
-              {"visitedAt" in entry && (
-                <span className="entry-time">
-                  {new Date(entry.visitedAt).toLocaleDateString("ru-RU", {
-                    day: "numeric",
-                    month: "short",
-                  })}
-                </span>
-              )}
-              <ArrowRight size={17} />
-            </button>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "—";
   if (bytes < 1024) return `${bytes} Б`;
@@ -1426,10 +1554,15 @@ function formatBytes(bytes: number): string {
 function DownloadsPanel({
   downloads,
   run,
+  isPrivate,
 }: {
   downloads: DownloadEntry[];
+  isPrivate: boolean;
   run: (promise: Promise<unknown>) => void;
 }): React.JSX.Element {
+  const [query,setQuery]=useState("");
+  const visible=downloads.filter(item=>`${item.filename} ${item.url}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const hasFinished=downloads.some(item=>!item.isLive && !["queued","progressing"].includes(item.state));
   return (
     <section className="utility-panel">
       <PanelHeader
@@ -1437,17 +1570,19 @@ function DownloadsPanel({
         title="Загрузки"
         subtitle="Сохранённые файлы и текущие загрузки"
       />
-      {downloads.length === 0 ? (
+      <div className="manager-filters"><label className="panel-search"><Search size={18}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Найти файл" aria-label="Поиск в загрузках"/><span>{visible.length}</span></label><button className="plain-button" disabled={!hasFinished} title="Удаляет завершённые записи из списка; файлы остаются на диске" onClick={()=>run(window.browserApi.clearFinishedDownloads(isPrivate))}><Trash2 size={16}/>Очистить список</button></div>
+      {visible.length === 0 ? (
         <EmptyState
           icon={<Download size={28} />}
-          title="Загрузок пока нет"
-          description="Сохранённые файлы и их состояние появятся здесь."
+          title={query.trim()?"Ничего не найдено":"Загрузок пока нет"}
+          description={query.trim()?"Попробуйте другое название или адрес файла.":"Сохранённые файлы и их состояние появятся здесь."}
         />
       ) : (
         <div className="download-list">
-          {downloads.map((download) => {
-            const active =
+          {visible.map((download) => {
+            const active = download.isLive ||
               download.state === "queued" || download.state === "progressing";
+            const resumable = download.isPaused || (download.state === "interrupted" && download.canResume);
             const percent =
               download.totalBytes > 0
                 ? Math.min(
@@ -1457,7 +1592,7 @@ function DownloadsPanel({
                     ),
                   )
                 : null;
-            const status = download.isPaused
+            const status = resumable
               ? "На паузе"
               : {
                   queued: "Подготовка…",
@@ -1520,21 +1655,21 @@ function DownloadsPanel({
                       <button
                         className="icon-button"
                         aria-label={
-                          download.isPaused
+                          resumable
                             ? "Продолжить загрузку"
                             : "Приостановить загрузку"
                         }
-                        title={download.isPaused ? "Продолжить" : "Пауза"}
+                        title={resumable ? "Продолжить" : "Пауза"}
                         onClick={() =>
                           run(
                             window.browserApi.controlDownload(
                               download.id,
-                              download.isPaused ? "resume" : "pause",
+                              resumable ? "resume" : "pause",
                             ),
                           )
                         }
                       >
-                        {download.isPaused ? (
+                        {resumable ? (
                           <Play size={17} />
                         ) : (
                           <Pause size={17} />
@@ -1632,9 +1767,7 @@ function ImportDataCard(): React.JSX.Element {
         );
     } catch (caught) {
       setError(
-        caught instanceof Error
-          ? caught.message
-          : "Не удалось найти профили браузеров.",
+        userFacingError(caught, "Не удалось найти профили браузеров."),
       );
     } finally {
       setBusy(null);
@@ -1672,6 +1805,7 @@ function ImportDataCard(): React.JSX.Element {
         data: effectiveKinds,
       });
       setReport(next);
+      window.dispatchEvent(new Event("soul-passwords-changed"));
       setMessage(
         next.errors.length
           ? "Импорт завершён с ошибками. Проверьте результат ниже."
@@ -1681,7 +1815,7 @@ function ImportDataCard(): React.JSX.Element {
       );
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "Импорт не выполнен.",
+        userFacingError(caught, "Импорт не выполнен."),
       );
     } finally {
       setBusy(null);
@@ -1698,6 +1832,7 @@ function ImportDataCard(): React.JSX.Element {
       const next = await window.browserApi.importBrowserFile(kind);
       if (next) {
         setFileReport(next);
+      window.dispatchEvent(new Event("soul-passwords-changed"));
         setMessage(
           next.errors.length
             ? "Файл обработан с ошибками. Проверьте результат ниже."
@@ -1706,9 +1841,7 @@ function ImportDataCard(): React.JSX.Element {
       } else setMessage("Выбор файла отменён. Данные не изменены.");
     } catch (caught) {
       setError(
-        caught instanceof Error
-          ? caught.message
-          : "Не удалось импортировать файл.",
+        userFacingError(caught, "Не удалось импортировать файл."),
       );
     } finally {
       setBusy(null);
@@ -1877,7 +2010,7 @@ function ImportDataCard(): React.JSX.Element {
             Не отправляйте этот файл другим людям и не храните в общих папках.
             После переноса удалите ненужный CSV из места экспорта. SOUL-M8TE
             сохраняет пароли только при доступном системном шифровании.
-            Автозаполнение паролей пока не поддерживается.
+            Автоматическое фоновое заполнение не поддерживается. Ручное заполнение доступно в разделе паролей после подтверждения.
           </p>
         </div>
       </div>
@@ -1977,10 +2110,14 @@ function SettingsPanel({
   snapshot,
   run,
   onDone,
+  onBeforePasswordFill,
+  onPasswordFeedback,
 }: {
   snapshot: BrowserSnapshot;
   run: (promise: Promise<unknown>) => void;
   onDone: () => void;
+  onBeforePasswordFill: () => Promise<void>;
+  onPasswordFeedback: (message:string,isError?:boolean) => void;
 }): React.JSX.Element {
   const [proxy, setProxy] = useState(snapshot.privacy?.proxy ?? "");
   const [busy, setBusy] = useState(false);
@@ -2033,6 +2170,20 @@ function SettingsPanel({
               <option value="system">Как в системе</option>
               <option value="light">Светлая</option>
               <option value="dark">Тёмная</option>
+            </select>
+          </label>
+          <label className="setting-row">
+            <span>
+              <strong>Фон новой вкладки</strong>
+              <small>Локальное изображение или однотонный фон.</small>
+            </span>
+            <select
+              aria-label="Фон новой вкладки"
+              value={settings.newTabBackground}
+              onChange={event => update({ newTabBackground: normalizeNewTabBackground(event.target.value) })}
+            >
+              <option value="portrait">Девушка SOUL-M8TE</option>
+              <option value="plain">Однотонный</option>
             </select>
           </label>
           <label className="setting-row">
@@ -2094,7 +2245,8 @@ function SettingsPanel({
             <span>
               <strong>Блокировать сторонние cookies</strong>
               <small>
-                Некоторые встроенные сервисы могут потребовать входа.
+                Учитываются ваши исключения и режим совместимости входа Google /
+                YouTube.
               </small>
             </span>
             <input
@@ -2102,6 +2254,23 @@ function SettingsPanel({
               checked={settings.blockThirdPartyCookies ?? true}
               onChange={(event) =>
                 update({ blockThirdPartyCookies: event.target.checked })
+              }
+            />
+          </label>
+          <label className="setting-row">
+            <span>
+              <strong>Совместимость входа Google / YouTube</strong>
+              <small>
+                В обычном профиле разрешает cookies только между узлами входа
+                Google и YouTube. После изменения обновите страницу. Настройка
+                не отменяет ограничения Google для Electron.
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.googleSignInCompatibility ?? true}
+              onChange={(event) =>
+                update({ googleSignInCompatibility: event.target.checked })
               }
             />
           </label>
@@ -2252,6 +2421,7 @@ function SettingsPanel({
             </span>
           </div>
         </div>
+        <div className="settings-section"><h3>Пароли и вход на сайты</h3><React.Suspense fallback={<p role="status">Открываем менеджер паролей…</p>}><PasswordManager currentTab={snapshot.tabs.find(tab=>tab.id===snapshot.activeTabId)} onBeforeFill={onBeforePasswordFill} onFeedback={onPasswordFeedback}/></React.Suspense></div>
         <div className="settings-section import-section">
           <h3>Перенос данных</h3>
           <ImportDataCard />

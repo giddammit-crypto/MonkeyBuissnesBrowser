@@ -1,0 +1,138 @@
+/* Local decorative artwork is separate from the interactive shell content. */
+.new-tab-page[data-new-tab-background="portrait"] {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: #e5e9ed;
+  --wallpaper-panel: rgb(247 248 250 / 92%);
+  --wallpaper-panel-hover: rgb(231 240 248 / 97%);
+  --wallpaper-line: rgb(120 139 159 / 25%);
+}
+.newtab-wallpaper {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+.newtab-wallpaper img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 75% center;
+  pointer-events: none;
+}
+.newtab-wallpaper::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(90deg, rgb(247 248 250 / 96%) 0%, rgb(247 248 250 / 93%) 31%, rgb(247 248 250 / 69%) 53%, rgb(247 248 250 / 7%) 76%, rgb(247 248 250 / 2%) 100%);
+}
+.new-tab-page[data-new-tab-background="portrait"] > :not(.newtab-wallpaper) {
+  position: relative;
+  z-index: 1;
+}
+.new-tab-page[data-new-tab-background="portrait"] .newtab-center {
+  width: min(66%, 940px);
+  max-width: none;
+  margin: 0;
+  padding-top: 20px;
+}
+.new-tab-page[data-new-tab-background="portrait"] .hero-search {
+  background: var(--wallpaper-panel);
+  border-color: var(--wallpaper-line);
+}
+.new-tab-page[data-new-tab-background="portrait"] .newtab-workspace {
+  gap: 20px;
+  border-color: var(--wallpaper-line);
+}
+.new-tab-page[data-new-tab-background="portrait"] .newtab-recent {
+  padding-left: 20px;
+  border-color: var(--wallpaper-line);
+}
+.new-tab-page[data-new-tab-background="portrait"] .recent-local-note {
+  display: none;
+}
+.new-tab-page[data-new-tab-background="portrait"] .saved-card,
+.new-tab-page[data-new-tab-background="portrait"] .quick-link-symbol,
+.new-tab-page[data-new-tab-background="portrait"] .private-card {
+  background: var(--wallpaper-panel);
+  border-color: var(--wallpaper-line);
+}
+.new-tab-page[data-new-tab-background="portrait"] .saved-card:hover,
+.new-tab-page[data-new-tab-background="portrait"] .recent-page-row:hover,
+.new-tab-page[data-new-tab-background="portrait"] .quick-links button:hover {
+  background: var(--wallpaper-panel-hover);
+}
+.new-tab-page[data-new-tab-background="portrait"] .section-heading {
+  gap: 8px;
+}
+.new-tab-page[data-new-tab-background="portrait"] .section-heading .text-button {
+  font-size: 10px;
+}
+.new-tab-page[data-new-tab-background="portrait"] .section-heading h2 {
+  font-size: 12px;
+}
+.new-tab-page[data-new-tab-background="portrait"] .newtab-top-actions {
+  padding: 3px 7px 3px 10px;
+  border: 1px solid var(--wallpaper-line);
+  border-radius: 10px;
+  background: var(--wallpaper-panel);
+}
+.new-tab-page[data-new-tab-background="portrait"] .newtab-footer > span:last-child {
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--wallpaper-panel);
+}
+.new-tab-page[data-new-tab-background="portrait"].private-newtab .newtab-center {
+  padding-top: 48px;
+}
+.new-tab-page[data-new-tab-background="portrait"].private-newtab .privacy-facts {
+  grid-template-columns: .8fr 1fr 1fr;
+  gap: 16px;
+}
+[data-theme="dark"] .new-tab-page[data-new-tab-background="portrait"] {
+  background: #171b20;
+  --wallpaper-panel: rgb(23 27 32 / 91%);
+  --wallpaper-panel-hover: rgb(43 60 76 / 96%);
+  --wallpaper-line: rgb(169 177 188 / 24%);
+}
+[data-theme="dark"] .newtab-wallpaper::after {
+  background: linear-gradient(90deg, rgb(23 27 32 / 97%) 0%, rgb(23 27 32 / 95%) 32%, rgb(23 27 32 / 83%) 53%, rgb(23 27 32 / 35%) 76%, rgb(23 27 32 / 22%) 100%);
+}
+@media (min-width: 1700px) {
+  .new-tab-page[data-new-tab-background="portrait"] {
+    padding-left: 56px;
+    padding-right: 48px;
+  }
+  .new-tab-page[data-new-tab-background="portrait"] .newtab-center {
+    width: min(62%, 940px);
+    padding-top: 40px;
+  }
+}
+@media (max-width: 1150px) {
+  .new-tab-page[data-new-tab-background="portrait"] .newtab-center {
+    width: 100%;
+    max-width: 730px;
+    margin: 0 auto;
+  }
+  .newtab-wallpaper img {
+    object-position: 79% center;
+  }
+  .newtab-wallpaper::after {
+    background: linear-gradient(90deg, rgb(247 248 250 / 97%) 0%, rgb(247 248 250 / 95%) 35%, rgb(247 248 250 / 82%) 65%, rgb(247 248 250 / 66%) 100%);
+  }
+  [data-theme="dark"] .newtab-wallpaper::after {
+    background: linear-gradient(90deg, rgb(23 27 32 / 98%) 0%, rgb(23 27 32 / 96%) 35%, rgb(23 27 32 / 86%) 65%, rgb(23 27 32 / 72%) 100%);
+  }
+}
+@media (max-height: 780px) {
+  .new-tab-page[data-new-tab-background="portrait"] .newtab-center {
+    padding-top: 12px;
+  }
+  .new-tab-page[data-new-tab-background="portrait"].private-newtab .newtab-center {
+    padding-top: 26px;
+  }
+}

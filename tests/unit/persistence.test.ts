@@ -12,6 +12,33 @@ afterEach(() => {
 });
 
 describe('BrowserStores', () => {
+  it('updates a late document title without creating another visit or changing visit metadata', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-history-title-'));
+    temporaryDirectories.push(directory);
+    const stores = new BrowserStores(directory);
+    const first = stores.addHistory({ url: 'https://example.test/first', title: 'Loading' });
+    const second = stores.addHistory({ url: 'https://example.test/second', title: 'Second' });
+    expect(stores.updateHistoryTitle(first.url, 'Actual document title')).toBe(true);
+    expect(stores.history.get()).toEqual([second, { ...first, title: 'Actual document title' }]);
+    expect(new BrowserStores(directory).history.get()).toEqual(stores.history.get());
+    expect(stores.updateHistoryTitle(first.url, 'Actual document title')).toBe(false);
+  });
+
+  it('does not recreate removed or cleared history entries when a late title arrives', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-history-removed-title-'));
+    temporaryDirectories.push(directory);
+    const stores = new BrowserStores(directory);
+    const removed = stores.addHistory({ url: 'https://example.test/removed', title: 'Removed' });
+    const kept = stores.addHistory({ url: 'https://example.test/kept', title: 'Kept' });
+    stores.history.set([kept]);
+    expect(stores.updateHistoryTitle(removed.url, 'Late title')).toBe(false);
+    expect(stores.history.get()).toEqual([kept]);
+    stores.history.set([]);
+    expect(stores.updateHistoryTitle(kept.url, 'After clear')).toBe(false);
+    expect(stores.history.get()).toEqual([]);
+    expect(stores.updateHistoryTitle('javascript:alert(1)', 'Unsafe')).toBe(false);
+  });
+
   it('persists history and bookmarks across store instances', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'northstar-browser-'));
     temporaryDirectories.push(directory);
@@ -67,6 +94,39 @@ describe('BrowserStores', () => {
 
     const second = new BrowserStores(directory);
     expect(second.downloads.get()[0]).toMatchObject({ filename: 'photo.jpg', kind: 'image', state: 'completed' });
+  });
+
+  it('migrates Google/YouTube compatibility on and preserves an explicit opt-out', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-login-settings-'));
+    temporaryDirectories.push(directory);
+    const first = new BrowserStores(directory);
+    expect(first.settings.get().googleSignInCompatibility).toBe(true);
+    first.settings.set({ ...first.settings.get(), googleSignInCompatibility: false });
+    expect(new BrowserStores(directory).settings.get().googleSignInCompatibility).toBe(false);
+  });
+
+  it('edits bookmarks without changing identity or losing them after restart', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-bookmark-manager-'));
+    temporaryDirectories.push(directory);
+    const stores = new BrowserStores(directory);
+    const saved = stores.saveBookmark({title:' Original ',url:'https://example.test'});
+    const edited = stores.saveBookmark({id:saved.id,title:'Changed',url:'https://example.test/new'});
+    expect(edited).toMatchObject({id:saved.id,createdAt:saved.createdAt,title:'Changed',url:'https://example.test/new'});
+    expect(new BrowserStores(directory).bookmarks.get()).toEqual([edited]);
+    expect(()=>stores.saveBookmark({title:'Duplicate',url:edited.url})).toThrow('уже есть');
+    expect(()=>stores.saveBookmark({id:'missing',title:'Stale',url:'https://new.test'})).toThrow('уже удалена');
+    expect(stores.bookmarks.get()).toEqual([edited]);
+  });
+
+  it('rejects unsafe bookmark URLs and credentials while keeping existing records', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-bookmark-urls-'));
+    temporaryDirectories.push(directory);
+    const stores = new BrowserStores(directory);
+    const saved=stores.saveBookmark({title:'Safe',url:'https://safe.test/'});
+    for(const url of ['javascript:alert(1)','file:///etc/passwd','https://user:secret@host.test','not a url']) {
+      expect(()=>stores.saveBookmark({id:saved.id,title:'Bad',url})).toThrow();
+    }
+    expect(stores.bookmarks.get()).toEqual([saved]);
   });
 });
 
@@ -139,5 +199,85 @@ describe('defensive browser persistence', () => {
     stores.downloads.set([{ id: 'private', filename: 'secret', url: 'https://secret.test/', isPrivate: true, state: 'completed' } as never]);
     expect(new BrowserStores(root).downloads.get()).toEqual([]);
     expect(fs.readFileSync(path.join(root, 'browser-data/downloads.json'), 'utf8')).not.toContain('secret');
+  });
+});
+
+// Restoring a bounded session must not replace the page the user actually left
+// selected, even when private/invalid records precede it in an old session file.
+describe('bounded session active-tab retention', () => {
+  const ordinary = (index: number): TabSnapshot => ({
+    id: `ordinary-${index}`, url: `https://example.test/${index}`, title: `Ordinary ${index}`,
+    workspaceId: 'personal', isPrivate: false, isPinned: index === 130, isMuted: false,
+    isInternal: false, isLoading: false, canGoBack: false, canGoForward: false, lifecycle: 'background',
+  });
+  function root(): string {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-session-budget-'));
+    temporaryDirectories.push(directory);
+    fs.mkdirSync(path.join(directory, 'browser-data'));
+    return directory;
+  }
+
+  it('keeps the first 99 eligible tabs plus an active ordinary tab beyond the 100-tab budget', () => {
+    const tabs = Array.from({ length: 140 }, (_, index) => ordinary(index));
+    const privateTab = { ...ordinary(999), id: 'private', url: 'https://secret.test/', isPrivate: true };
+    const invalidTab = { ...ordinary(998), id: 'invalid', url: 'file:///private/local-file' };
+    const source = [privateTab, ...tabs.slice(0, 50), invalidTab, ...tabs.slice(50)];
+    const stored = buildStoredSession(source, tabs[130].id);
+    expect(stored.tabs.map(tab => tab.url)).toEqual([...tabs.slice(0, 99).map(tab => tab.url), tabs[130].url]);
+    expect(stored.activeIndex).toBe(99);
+    expect(stored.tabs[stored.activeIndex]).toMatchObject({ url: tabs[130].url, title: 'Ordinary 130', isPinned: true });
+    const stores = new BrowserStores(root());
+    stores.session.set(stored);
+    expect(stores.session.get()).toEqual(stored);
+    const newTab = { ...ordinary(999), id: 'selected-newtab', url: 'browser://newtab', isInternal: true };
+    const withNewTab = buildStoredSession([...tabs, newTab], newTab.id);
+    expect(withNewTab.tabs).toHaveLength(100);
+    expect(withNewTab.tabs[withNewTab.activeIndex].url).toBe('browser://newtab');
+  });
+
+  it('retains a valid active raw session entry beyond the budget while filtering private and unsafe records', () => {
+    const tabs = Array.from({ length: 140 }, (_, index) => ordinary(index));
+    const source = [
+      { ...ordinary(998), isPrivate: true, url: 'https://secret.test/' },
+      { ...ordinary(999), url: 'javascript:alert(1)' },
+      ...tabs,
+    ];
+    const directory = root();
+    fs.writeFileSync(path.join(directory, 'browser-data/session.json'), JSON.stringify({ tabs: source, activeIndex: source.indexOf(tabs[130]) }));
+    const restored = new BrowserStores(directory).session.get();
+    expect(restored.tabs.map(tab => tab.url)).toEqual([...tabs.slice(0, 99).map(tab => tab.url), tabs[130].url]);
+    expect(restored.activeIndex).toBe(99);
+    expect(restored.tabs[restored.activeIndex].title).toBe('Ordinary 130');
+    expect(JSON.stringify(restored)).not.toContain('secret.test');
+    expect(JSON.stringify(restored)).not.toContain('javascript:');
+  });
+
+  it.each([-1, 99999, 0.5, null, '130'])('uses the first eligible tab for invalid saved active index %s', (activeIndex) => {
+    const directory = root();
+    const tabs = Array.from({ length: 140 }, (_, index) => ordinary(index));
+    fs.writeFileSync(path.join(directory, 'browser-data/session.json'), JSON.stringify({ tabs, activeIndex }));
+    const restored = new BrowserStores(directory).session.get();
+    expect(restored.tabs).toHaveLength(100);
+    expect(restored.activeIndex).toBe(0);
+    expect(restored.tabs[0].url).toBe(tabs[0].url);
+  });
+
+  it.each([0, 1])('does not promote private/unsafe selected entry %s into the restored session', (activeIndex) => {
+    const directory = root();
+    const tabs = [
+      { ...ordinary(998), isPrivate: true, url: 'https://secret.test/' },
+      { ...ordinary(999), url: 'file:///private/local-file' },
+      ...Array.from({ length: 140 }, (_, index) => ordinary(index)),
+    ];
+    fs.writeFileSync(path.join(directory, 'browser-data/session.json'), JSON.stringify({ tabs, activeIndex }));
+    const restored = new BrowserStores(directory).session.get();
+    expect(restored.tabs).toHaveLength(100);
+    expect(restored.activeIndex).toBe(0);
+    expect(restored.tabs[0].url).toBe('https://example.test/0');
+    expect(JSON.stringify(restored)).not.toContain('secret.test');
+    expect(JSON.stringify(restored)).not.toContain('file:');
+    const saved = buildStoredSession(tabs, tabs[activeIndex].id);
+    expect(saved.activeIndex).toBe(0);
+    expect(saved.tabs[0].url).toBe('https://example.test/0');
   });
 });

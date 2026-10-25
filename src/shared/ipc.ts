@@ -40,6 +40,8 @@ export interface BrowserApi {
   setPrivateProxy(proxy: string): Promise<void>;
   closePrivateTabs(): Promise<void>;
   closeTab(tabId: string): Promise<void>;
+  showTabMenu(tabId: string): Promise<void>;
+  closeRelatedTabs(tabId: string, scope: 'others' | 'right'): Promise<void>;
   navigate(tabId: string, input: string): Promise<void>;
   goBack(tabId: string): Promise<void>;
   goForward(tabId: string): Promise<void>;
@@ -49,6 +51,11 @@ export interface BrowserApi {
   wakeTab(tabId: string): Promise<void>;
   samplePerformance(): Promise<BrowserSnapshot['performance']>;
   toggleBookmark(tabId: string): Promise<BookmarkEntry | null>;
+  saveBookmark(input: { id?: string; title: string; url: string }): Promise<BookmarkEntry>;
+  removeBookmark(id: string): Promise<void>;
+  removeHistoryEntry(id: string): Promise<void>;
+  clearBrowsingHistory(): Promise<void>;
+  clearFinishedDownloads(isPrivate?: boolean): Promise<void>;
   queryHistory(query?: string): Promise<HistoryEntry[]>;
   getDownloads(): Promise<DownloadEntry[]>;
   openDownload(downloadId: string): Promise<void>;
@@ -63,6 +70,8 @@ export interface BrowserApi {
   discoverImportProfiles(): Promise<ImportProfile[]>;
   importBrowserData(input: { profileId: string; data: ImportDataKind[] }): Promise<ImportReport>;
   getImportedPasswordSummaries(): Promise<ImportedPasswordSummary[]>;
+  deleteSavedPassword(passwordId: string): Promise<boolean>;
+  fillSavedPassword(tabId: string, passwordId: string): Promise<{ filled: boolean; reason?: string }>;
   setChromeBounds(bounds: ChromeBounds): Promise<void>;
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<void>;

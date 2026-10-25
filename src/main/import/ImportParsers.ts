@@ -47,7 +47,15 @@ function csvRows(source: string, delimiter: string): string[][] {
   let value = '';
   let quoted = false;
   let afterQuote = false;
-  const pushRow = () => { row.push(value); if (row.some((cell) => cell.length)) rows.push(row); row = []; value = ''; afterQuote = false; };
+  const pushRow = () => {
+    row.push(value);
+    if (row.some((cell) => cell.length)) {
+      rows.push(row);
+      // One header plus at most 20,000 data records, with or without final EOL.
+      if (rows.length > 20_001) throw new Error('В CSV-файле больше 20 000 записей. Разделите экспорт на несколько файлов.');
+    }
+    row = []; value = ''; afterQuote = false;
+  };
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index];
     if (quoted) {
@@ -59,18 +67,36 @@ function csvRows(source: string, delimiter: string): string[][] {
     else if (char === '\r' || char === '\n') { if (char === '\r' && source[index + 1] === '\n') index += 1; pushRow(); }
     else if (afterQuote && !/\s/.test(char)) throw new Error('Некорректный CSV: лишние символы после закрывающей кавычки.');
     else if (!afterQuote) value += char;
-    if (rows.length > 20_000) throw new Error('В CSV-файле больше 20 000 строк. Разделите экспорт на несколько файлов.');
   }
   if (quoted) throw new Error('Некорректный CSV: незакрытая кавычка.');
   if (row.length || value || afterQuote) pushRow();
   return rows;
 }
 
+function passwordCsvDelimiter(source: string): ',' | ';' {
+  let quoted = false;
+  let commas = 0;
+  let semicolons = 0;
+  // Inspect the header record only. Parsing all records in the wrong dialect
+  // corrupts quoted headers and can hit the row limit on valid multiline values.
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '"') {
+      if (quoted && source[index + 1] === '"') index += 1;
+      else quoted = !quoted;
+    } else if (!quoted) {
+      if (char === '\r' || char === '\n') break;
+      if (char === ',') commas += 1;
+      if (char === ';') semicolons += 1;
+    }
+  }
+  return semicolons > commas ? ';' : ',';
+}
+
 /** RFC4180 quoting, BOM, CRLF and multiline passwords from Chrome/Firefox exports. */
 export function parsePasswordsCsv(source: string): ParsedImport<PasswordCsvRecord> {
   const clean = source.replace(/^\uFEFF/, '');
-  let rows = csvRows(clean, ',');
-  if ((rows[0]?.length ?? 0) < 2 && clean.split(/[\r\n]/, 1)[0].includes(';')) rows = csvRows(clean, ';');
+  const rows = csvRows(clean, passwordCsvDelimiter(clean));
   if (!rows.length) throw new Error('CSV-файл пуст.');
   const headers = rows[0].map((value) => value.trim().toLowerCase().replace(/[\s_-]/g, ''));
   const column = (names: string[]) => headers.findIndex((header) => names.includes(header));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getExternalPageUrl, getGoogleAuthNotice, getSiteKey, normalizeCookieExceptions, shouldStripThirdPartyCookies } from '../../src/shared/sitePolicy';
+import { canRequestStorageAccess, getExternalPageUrl, getGoogleAuthNotice, getSiteKey, isGoogleYouTubeSignInRequest, normalizeCookieExceptions, shouldStripThirdPartyCookies } from '../../src/shared/sitePolicy';
 const policy = (requestUrl: string, topLevelUrl: string, extra = {}) => shouldStripThirdPartyCookies({ requestUrl, topLevelUrl, resourceType: 'xhr', isPrivate: false, enabled: true, ...extra });
 describe('site-aware cookie policy', () => {
   it('keeps search engine login subdomains same-site', () => {
@@ -26,11 +26,53 @@ describe('site-aware cookie policy', () => {
     expect(getSiteKey('http://127.0.0.1:8080/path')).toBe('http://127.0.0.1');
     expect(normalizeCookieExceptions(['https://www.youtube.com/path','https://youtube.com','javascript:alert(1)',42])).toEqual(['https://youtube.com']);
   });
+  it('preserves only the HTTPS Google/YouTube account hand-off in normal browsing', () => {
+    for (const [request, top] of [
+      ['https://accounts.google.com/RotateCookies', 'https://www.youtube.com/'],
+      ['https://accounts.youtube.com/CheckConnection', 'https://accounts.google.com/'],
+      ['https://www.youtube.com/accounts/SetSID', 'https://accounts.google.com/'],
+      ['https://accounts.google.com/ListAccounts', 'https://music.youtube.com/'],
+    ]) {
+      expect(isGoogleYouTubeSignInRequest(request, top)).toBe(true);
+      expect(policy(request, top)).toBe(false);
+      expect(policy(request, top, {googleSignInCompatibility: false})).toBe(true);
+      expect(policy(request, top, {isPrivate: true})).toBe(true);
+    }
+  });
+  it('does not widen sign-in compatibility to trackers, lookalikes or all YouTube content', () => {
+    for (const [request, top] of [
+      ['https://doubleclick.net/', 'https://www.youtube.com/'],
+      ['https://accounts.google.com/', 'https://attacker.test/'],
+      ['https://accounts.google.com.attacker.test/', 'https://www.youtube.com/'],
+      ['https://accounts.google.com/', 'https://youtube.com.attacker.test/'],
+      ['http://accounts.google.com/', 'https://www.youtube.com/'],
+      ['https://accounts.google.com:8443/', 'https://www.youtube.com/'],
+      ['https://user:pass@accounts.google.com/', 'https://www.youtube.com/'],
+      ['https://www.youtube.com/youtubei/v1/browse', 'https://www.google.com/'],
+      ['https://www.youtube.com/accounts-evil/SetSID', 'https://accounts.google.com/'],
+    ]) {
+      expect(isGoogleYouTubeSignInRequest(request, top)).toBe(false);
+      expect(policy(request, top)).toBe(true);
+    }
+  });
+  it('permits requesting storage access only in eligible secure normal contexts', () => {
+    const input = {requestUrl:'https://accounts.google.com/',topLevelUrl:'https://www.youtube.com/',isPrivate:false};
+    expect(canRequestStorageAccess(input)).toBe(true);
+    expect(canRequestStorageAccess({...input,isPrivate:true})).toBe(false);
+    expect(canRequestStorageAccess({...input,googleSignInCompatibility:false})).toBe(false);
+    expect(canRequestStorageAccess({...input,topLevelUrl:'https://attacker.test/'})).toBe(false);
+    expect(canRequestStorageAccess({...input,topLevelUrl:'https://custom.test/',exceptions:['https://custom.test']})).toBe(true);
+    expect(canRequestStorageAccess({...input,requestUrl:'data:text/html,test'})).toBe(false);
+  });
 });
 describe('Google auth help and explicit external navigation', () => {
-  it('recognizes rejected login versions and OAuth but not unrelated hosts', () => {
+  it('recognizes actual rejection routes but leaves normal sign-in flows unobstructed', () => {
     expect(getGoogleAuthNotice('https://accounts.google.com/v3/signin/rejected?continue=x')?.title).toContain('ограничил');
-    expect(getGoogleAuthNotice('https://accounts.google.com/o/oauth2/v2/auth?client_id=x')).not.toBeNull();
+    for (const path of ['/o/oauth2/v2/auth?client_id=x','/ServiceLogin?service=youtube','/AccountChooser?service=youtube','/v3/signin/identifier?service=youtube','/v3/signin/challenge/pwd']) {
+      expect(getGoogleAuthNotice(`https://accounts.google.com${path}`)).toBeNull();
+    }
+    expect(getGoogleAuthNotice('https://accounts.google.com/o/oauth2/error?error=disallowed_useragent')).not.toBeNull();
+    expect(getGoogleAuthNotice('https://accounts.google.com/ServiceLogin?error=not_disallowed_useragent')).toBeNull();
     expect(getGoogleAuthNotice('https://www.google.com/search?q=unsafe')).toBeNull();
     expect(getGoogleAuthNotice('https://accounts.google.com.evil.test/signin/rejected')).toBeNull();
   });
