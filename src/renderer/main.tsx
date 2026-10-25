@@ -2183,12 +2183,19 @@ function SettingsPanel({
     if (!file) return;
     try {
       const wallpaper = await imageAsWallpaper(file);
-      // Do not report success until both storage and the main-process setting succeed.
-      await window.browserApi.updateSettings({ newTabBackground: "portrait" });
+      // Keep the previous wallpaper if either local storage or settings fail.
+      // Storage is written first so a quota error cannot change browser settings.
+      const previous = customWallpaper;
       saveCustomWallpaper(wallpaper);
+      try {
+        await window.browserApi.updateSettings({ newTabBackground: "portrait" });
+      } catch (error) {
+        try { saveCustomWallpaper(previous); } catch { /* Preserve original error. */ }
+        throw error;
+      }
       setWallpaperMessage("Собственные обои сохранены на этом устройстве.");
     } catch (error) {
-      setWallpaperMessage(error instanceof Error ? error.message : "Не удалось установить обои.");
+      setWallpaperMessage(error instanceof DOMException && error.name === "QuotaExceededError" ? "Недостаточно места для обоев. Используйте файл меньшего размера." : error instanceof Error ? error.message : "Не удалось установить обои.");
     }
   };
   const workingSet = snapshot.performance
