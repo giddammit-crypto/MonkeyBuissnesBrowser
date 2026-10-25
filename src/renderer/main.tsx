@@ -2183,8 +2183,9 @@ function SettingsPanel({
     if (!file) return;
     try {
       const wallpaper = await imageAsWallpaper(file);
+      // Do not report success until both storage and the main-process setting succeed.
+      await window.browserApi.updateSettings({ newTabBackground: "portrait" });
       saveCustomWallpaper(wallpaper);
-      update({ newTabBackground: "portrait" });
       setWallpaperMessage("Собственные обои сохранены на этом устройстве.");
     } catch (error) {
       setWallpaperMessage(error instanceof Error ? error.message : "Не удалось установить обои.");
