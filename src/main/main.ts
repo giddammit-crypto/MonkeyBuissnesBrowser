@@ -115,6 +115,9 @@ function registerIpc(): void {
   ipcMain.handle('browser:update-settings', (event, patch: Partial<BrowserSettings>) => requireShell(event).updateSettings(patch));
   ipcMain.handle('browser:create-workspace', (event, name: string) => requireShell(event).createWorkspace(name));
   ipcMain.handle('browser:switch-workspace', (event, workspaceId: string) => requireShell(event).switchWorkspace(workspaceId));
+  ipcMain.handle('extensions:list', event => requireShell(event).listLocalExtensions());
+  ipcMain.handle('extensions:install', event => requireShell(event).installLocalExtension());
+  ipcMain.handle('extensions:remove', (event, id: string) => requireShell(event).removeLocalExtension(id));
   ipcMain.handle('vpn:get-snapshot', (event) => requireShell(event).getVpnSnapshot());
   ipcMain.handle('vpn:import', (event) => requireShell(event).importVpnConfig());
   ipcMain.handle('vpn:clear', (event) => requireShell(event).clearVpnConfig());
