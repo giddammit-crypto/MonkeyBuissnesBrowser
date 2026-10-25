@@ -162,3 +162,23 @@
 }
 .newtab-wallpaper::after { z-index: 2; }
 .settings-panel input[type="range"] { accent-color: var(--accent); max-width: 180px; }
+
+/* Detroit is an optional layout treatment layered onto the existing palette. */
+:root[data-appearance="detroit"] .app-shell {
+  --chrome-height: 144px;
+}
+:root[data-appearance="detroit"] .window-titlebar {
+  border-bottom: 1px solid var(--accent);
+}
+:root[data-appearance="detroit"] .new-tab-page[data-new-tab-background="portrait"] .hero-search {
+  border-width: 1px;
+  box-shadow: 0 10px 32px rgb(0 0 0 / 11%);
+}
+:root[data-appearance="detroit"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img {
+  object-position: 77% center;
+}
+@media (max-width: 1150px) {
+  :root[data-appearance="detroit"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img {
+    object-position: 82% center;
+  }
+}
