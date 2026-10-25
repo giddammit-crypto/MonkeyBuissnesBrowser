@@ -68,6 +68,15 @@ describe('BrowserStores', () => {
     const second = new BrowserStores(directory);
     expect(second.downloads.get()[0]).toMatchObject({ filename: 'photo.jpg', kind: 'image', state: 'completed' });
   });
+
+  it('migrates Google/YouTube compatibility on and preserves an explicit opt-out', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-login-settings-'));
+    temporaryDirectories.push(directory);
+    const first = new BrowserStores(directory);
+    expect(first.settings.get().googleSignInCompatibility).toBe(true);
+    first.settings.set({ ...first.settings.get(), googleSignInCompatibility: false });
+    expect(new BrowserStores(directory).settings.get().googleSignInCompatibility).toBe(false);
+  });
 });
 
 

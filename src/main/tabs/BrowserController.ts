@@ -16,7 +16,7 @@ import { MemoryManager } from '../../services/memory/MemoryManager';
 import { VpnConfigStore } from '../../services/vpn/VpnConfigStore';
 import { isLikelyMediaUrl, isSafeMediaUrl, mediaKindForMime, mediaKindForUrl } from '../../shared/media';
 import { isSafeWebUrl, parseOmniboxInput } from '../../shared/omnibox';
-import { getExternalPageUrl, getSiteKey, normalizeCookieExceptions, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
+import { canRequestStorageAccess, getExternalPageUrl, getSiteKey, normalizeCookieExceptions, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
 import type {
   BookmarkEntry,
   BrowserSettings,
@@ -85,6 +85,7 @@ export class BrowserController {
   private readonly sessionDownloadHandlers = new Map<Electron.Session, (event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents) => void>();
   private readonly liveDownloads = new Map<string, { item: Electron.DownloadItem; tabId?: string }>();
   private readonly closedTabs: Array<Pick<TabSnapshot, 'url' | 'workspaceId' | 'isPinned' | 'isMuted'>> = [];
+  private readonly popupOpeners = new Map<string, string>();
 
   constructor() {
     this.stores = new BrowserStores(app.getPath('userData'));
@@ -269,11 +270,12 @@ export class BrowserController {
   async closeTab(tabId: string): Promise<void> {
     const tab = this.tabs.get(tabId);
     if (!tab) return;
-    if (!tab.isPrivate) {
+    if (!tab.isPrivate && (tab.url === NEW_TAB_URL || isSafeWebUrl(tab.url))) {
       this.closedTabs.push({ url: tab.url, workspaceId: tab.workspaceId, isPinned: tab.isPinned, isMuted: tab.isMuted });
       if (this.closedTabs.length > 20) this.closedTabs.shift();
     }
     this.tabs.delete(tabId);
+    this.popupOpeners.delete(tabId);
     this.memoryManager.removeTab(tabId);
     this.detachView(tab);
     // Clearing is scoped to the whole private session: closing a popup must not
@@ -418,6 +420,9 @@ export class BrowserController {
 
   async hibernateTab(tabId: string): Promise<boolean> {
     const tab = this.tabs.get(tabId);
+    // OAuth popups need their original WebContents/WindowProxy until the flow
+    // finishes. Discarding either endpoint would silently break postMessage.
+    if (this.popupOpeners.has(tabId) || [...this.popupOpeners.values()].includes(tabId)) return false;
     if (!tab || tab.id === this.activeTabId || tab.isInternal || !tab.view) return false;
     const eligible = this.memoryManager.canHibernate(tabId, 0);
     if (!eligible.allowed) return false;
@@ -491,6 +496,7 @@ export class BrowserController {
         sleepAfterMinutes,
         adBlockEnabled: typeof patch.adBlockEnabled === 'boolean' ? patch.adBlockEnabled : current.adBlockEnabled ?? true,
         blockThirdPartyCookies: typeof patch.blockThirdPartyCookies === 'boolean' ? patch.blockThirdPartyCookies : current.blockThirdPartyCookies ?? true,
+        googleSignInCompatibility: typeof patch.googleSignInCompatibility === 'boolean' ? patch.googleSignInCompatibility : current.googleSignInCompatibility ?? true,
         thirdPartyCookieExceptions: patch.thirdPartyCookieExceptions === undefined ? current.thirdPartyCookieExceptions ?? [] : normalizeCookieExceptions(patch.thirdPartyCookieExceptions),
         restoreSession: typeof patch.restoreSession === 'boolean' ? patch.restoreSession : current.restoreSession ?? true,
       };
@@ -704,9 +710,33 @@ export class BrowserController {
     targetSession.setUserAgent(targetSession.getUserAgent().replace(/\s(?:Electron|monkeybuissnesbrowser|SOUL-M8TE)\/[^\s]+/gi, ''));
     const allowedPermissions = new Set<string>();
     const permissionKey = (origin: string, permission: string) => `${origin}:${permission}`;
-    targetSession.setPermissionCheckHandler((_contents, permission, origin) => permission === 'fullscreen' || permission === 'clipboard-sanitized-write' || allowedPermissions.has(permissionKey(origin, permission)));
+    const storageKey = (top: string, origin: string): string => {
+      try { return `storage-access:${new URL(top).origin}:${new URL(origin).origin}`; } catch { return ''; }
+    };
+    const storageEligible = (requestUrl: string, contents: Electron.WebContents | null): boolean => Boolean(contents && !contents.isDestroyed() && canRequestStorageAccess({
+      requestUrl, topLevelUrl: contents.getURL(), isPrivate,
+      exceptions: this.stores.settings.get().thirdPartyCookieExceptions,
+      googleSignInCompatibility: this.stores.settings.get().googleSignInCompatibility,
+    }));
+    targetSession.setPermissionCheckHandler((contents, permission, origin, details) => {
+      if (permission === 'storage-access') {
+        return storageEligible(details.requestingUrl || origin, contents) && Boolean(contents && allowedPermissions.has(storageKey(contents.getURL(), origin)));
+      }
+      return permission === 'fullscreen' || permission === 'clipboard-sanitized-write' || allowedPermissions.has(permissionKey(origin, permission));
+    });
     targetSession.setPermissionRequestHandler((contents, permission, callback, details) => {
       if (permission === 'fullscreen' || permission === 'clipboard-sanitized-write') { callback(true); return; }
+      if (permission === 'storage-access') {
+        if (!this.window || !storageEligible(details.requestingUrl, contents)) { callback(false); return; }
+        const topOrigin = new URL(contents.getURL()).origin;
+        const origin = new URL(details.requestingUrl).origin;
+        void dialog.showMessageBox(this.window, { type: 'question', title: 'Cookies для входа', message: `${origin} запрашивает доступ к своим cookies внутри ${topOrigin}.`, detail: 'Разрешение действует для этой пары сайтов до закрытия приложения. Оно может помочь завершить вход.', buttons: ['Запретить', 'Разрешить на эту сессию'], defaultId: 0, cancelId: 0, noLink: true }).then(({ response }) => {
+          const allowed = response === 1 && storageEligible(details.requestingUrl, contents) && new URL(contents.getURL()).origin === topOrigin;
+          if (allowed) allowedPermissions.add(storageKey(topOrigin, origin));
+          callback(allowed);
+        }).catch(() => callback(false));
+        return;
+      }
       let origin: string;
       try { origin = new URL(details.requestingUrl || contents.getURL()).origin; } catch { callback(false); return; }
       if (!origin.startsWith('https://') || !['media', 'geolocation', 'notifications'].includes(permission) || !this.window || contents.isDestroyed()) { callback(false); return; }
@@ -730,6 +760,7 @@ export class BrowserController {
         requestUrl: details.url, topLevelUrl, resourceType: details.resourceType, isPrivate,
         enabled: this.stores.settings.get().blockThirdPartyCookies !== false,
         exceptions: this.stores.settings.get().thirdPartyCookieExceptions,
+        googleSignInCompatibility: this.stores.settings.get().googleSignInCompatibility,
       });
     };
     targetSession.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
@@ -752,18 +783,25 @@ export class BrowserController {
     targetSession.on('will-download', onDownload);
   }
 
-  private attachWebContents(tab: TabRecord, initialUrl: string): void {
+  private attachWebContents(tab: TabRecord, initialUrl: string, popupOptions?: Electron.BrowserWindowConstructorOptions): Electron.WebContents | undefined {
     if (!this.window || this.disposed) return;
     const tabSession = tab.isPrivate ? this.ensurePrivateSession() : this.browserSession;
-    const view = new WebContentsView({ webPreferences: {
+    // Electron passes the already-created native popup WebContents in options
+    // (documented by setWindowOpenHandler, absent from BrowserWindow's typings).
+    // Adopting it is essential: constructing a replacement loses WindowProxy and
+    // can violate Chromium's pending window invariants.
+    const nativePopupContents = (popupOptions as Electron.WebContentsViewConstructorOptions | undefined)?.webContents;
+    const view = new WebContentsView({ ...(nativePopupContents ? { webContents: nativePopupContents } : {}), webPreferences: {
+      ...popupOptions?.webPreferences,
       session: tabSession, preload: pagePreloadPath, nodeIntegration: false,
       contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false,
+      nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false, webviewTag: false,
       backgroundThrottling: true, spellcheck: true,
     } });
     tab.view = view;
     tab.webContentsId = view.webContents.id;
-    tab.isLoading = true;
-    this.memoryManager.updateTab(tab.id, { loading: true, lifecycle: tab.lifecycle });
+    tab.isLoading = !popupOptions || initialUrl !== 'about:blank';
+    this.memoryManager.updateTab(tab.id, { loading: tab.isLoading, lifecycle: tab.lifecycle });
     view.webContents.setAudioMuted(tab.isMuted);
     if (tab.zoomFactor) view.webContents.setZoomFactor(tab.zoomFactor);
     this.window.contentView.addChildView(view);
@@ -771,10 +809,38 @@ export class BrowserController {
     this.installTabHandlers(tab);
     if (tab.id === this.activeTabId) this.applyBounds(tab);
     else view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    // Electron loads the requested popup URL after createWindow returns this
+    // WebContents. Loading it ourselves severs/competes with native opener setup.
+    if (nativePopupContents) return view.webContents;
     const ready = tab.isPrivate ? this.privateProxyReady : Promise.resolve();
     void ready.then(() => this.loadUrl(view.webContents, initialUrl)).catch((error) => {
       this.eventListener?.({ type: 'navigation-error', message: error instanceof Error ? error.message : 'Не удалось загрузить страницу.' });
     });
+    return view.webContents;
+  }
+
+  private createPopupTab(opener: TabRecord, url: string, active: boolean, options: Electron.BrowserWindowConstructorOptions): Electron.WebContents {
+    const id = crypto.randomUUID();
+    const tab: TabRecord = {
+      id, url, title: url === 'about:blank' ? 'Пустая страница' : 'Новая страница',
+      isLoading: url !== 'about:blank', ...emptyNavigation(url),
+      isMuted: false, isPinned: false, isPrivate: opener.isPrivate, isInternal: false,
+      lifecycle: active ? 'active' : 'background', workspaceId: opener.workspaceId,
+    };
+    this.tabs.set(id, tab);
+    this.popupOpeners.set(id, opener.id);
+    this.memoryManager.registerTab({ tabId: id, active: false, pinned: false, audible: false,
+      loading: tab.isLoading, downloading: false, lastInteractionAt: Date.now(), lifecycle: 'background' });
+    const contents = this.attachWebContents(tab, url, options);
+    if (!contents) {
+      this.tabs.delete(id);
+      this.popupOpeners.delete(id);
+      this.memoryManager.removeTab(id);
+      throw new Error('Окно браузера уже закрыто.');
+    }
+    if (active) this.activateTab(id);
+    this.emitSnapshot();
+    return contents;
   }
 
   private async loadUrl(contents: Electron.WebContents, url: string): Promise<void> {
@@ -787,12 +853,13 @@ export class BrowserController {
 
   private detachView(tab: TabRecord): void {
     const view = tab.view;
+    const contents = view?.webContents;
     if (this.htmlFullscreenTabId === tab.id) this.leaveHtmlFullscreen();
     tab.view = undefined;
     tab.webContentsId = undefined;
     if (!view) return;
     if (this.window && !this.window.isDestroyed()) this.window.contentView.removeChildView(view);
-    if (!view.webContents.isDestroyed()) view.webContents.close();
+    if (contents && !contents.isDestroyed()) contents.close();
   }
 
   private installTabHandlers(tab: TabRecord): void {
@@ -800,12 +867,24 @@ export class BrowserController {
     if (!contents) return;
     this.installShortcuts(contents);
     contents.setWindowOpenHandler(({ url, disposition }) => {
-      if (!isSafeWebUrl(url)) {
+      if (this.disposed || !this.window || this.window.isDestroyed()) return { action: 'deny' };
+      // A real about:blank popup is required by common login flows that open a
+      // WindowProxy synchronously and assign its HTTPS location afterwards.
+      const popupUrl = url || 'about:blank';
+      if (popupUrl !== 'about:blank' && !isSafeWebUrl(popupUrl)) {
         if (this.isAllowedExternalUrl(url)) void shell.openExternal(url).catch(() => undefined);
         return { action: 'deny' };
       }
-      void this.createTab({ url, isPrivate: tab.isPrivate, active: disposition !== 'background-tab' });
-      return { action: 'deny' };
+      return {
+        action: 'allow', outlivesOpener: true,
+        overrideBrowserWindowOptions: { webPreferences: {
+          session: contents.session, preload: pagePreloadPath, nodeIntegration: false,
+          nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false,
+          contextIsolation: true, sandbox: true, webSecurity: true,
+          allowRunningInsecureContent: false, webviewTag: false,
+        } },
+        createWindow: (options) => this.createPopupTab(tab, popupUrl, disposition !== 'background-tab', options),
+      };
     });
     contents.on('context-menu', (_event, params) => this.showContextMenu(contents, params));
     contents.on('will-navigate', (event, url) => {
@@ -862,7 +941,8 @@ export class BrowserController {
       this.emitSnapshot();
     });
     contents.on('destroyed', () => {
-      if (this.tabs.has(tab.id) && tab.view?.webContents === contents) {
+      if (this.tabs.has(tab.id) && tab.webContentsId === contents.id) {
+        if (this.popupOpeners.has(tab.id)) { void this.closeTab(tab.id); return; }
         tab.lifecycle = 'crashed';
         this.emitSnapshot();
       }

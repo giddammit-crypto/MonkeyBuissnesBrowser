@@ -64,6 +64,7 @@ export interface BrowserSettings {
   sleepAfterMinutes: 5 | 15 | 30 | 60 | 0;
   adBlockEnabled?: boolean;
   blockThirdPartyCookies?: boolean;
+  googleSignInCompatibility?: boolean;
   restoreSession?: boolean;
   thirdPartyCookieExceptions?: string[];
 }

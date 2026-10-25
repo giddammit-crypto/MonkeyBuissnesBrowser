@@ -681,6 +681,14 @@ function App(): React.JSX.Element {
                       ? "Сторонние cookies уже разрешены общей настройкой обычного профиля."
                       : "Исключение применяется к этому сайту и его поддоменам только в обычном профиле. После изменения обновите страницу. Оно не отменяет ограничения входа Google."}
                 </small>
+                {!isPrivate &&
+                  snapshot.settings.blockThirdPartyCookies !== false && (
+                    <small className="google-cookie-compatibility-status">
+                      {snapshot.settings.googleSignInCompatibility !== false
+                        ? "Совместимость входа Google / YouTube включена: cookies между узлами входа разрешены. Для остальных сайтов действуют общие настройки и ваши исключения."
+                        : "Совместимость входа Google / YouTube выключена. Для cookies действуют общие настройки и ваши исключения."}
+                    </small>
+                  )}
               </div>
             )}
             <p className="privacy-note">
@@ -2094,7 +2102,8 @@ function SettingsPanel({
             <span>
               <strong>Блокировать сторонние cookies</strong>
               <small>
-                Некоторые встроенные сервисы могут потребовать входа.
+                Учитываются ваши исключения и режим совместимости входа Google /
+                YouTube.
               </small>
             </span>
             <input
@@ -2102,6 +2111,23 @@ function SettingsPanel({
               checked={settings.blockThirdPartyCookies ?? true}
               onChange={(event) =>
                 update({ blockThirdPartyCookies: event.target.checked })
+              }
+            />
+          </label>
+          <label className="setting-row">
+            <span>
+              <strong>Совместимость входа Google / YouTube</strong>
+              <small>
+                В обычном профиле разрешает cookies только между узлами входа
+                Google и YouTube. После изменения обновите страницу. Настройка
+                не отменяет ограничения Google для Electron.
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.googleSignInCompatibility ?? true}
+              onChange={(event) =>
+                update({ googleSignInCompatibility: event.target.checked })
               }
             />
           </label>

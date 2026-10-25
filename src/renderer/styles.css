@@ -2093,3 +2093,6 @@ select {
     width: 100%;
   }
 }
+.site-cookie-control .google-cookie-compatibility-status {
+  margin-top: 10px;
+}
