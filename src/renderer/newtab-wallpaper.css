@@ -136,3 +136,15 @@
     padding-top: 26px;
   }
 }
+
+/* Local wallpaper chooser; the existing light/dark themes are untouched. */
+.custom-wallpaper-setting { flex-wrap: wrap; gap: 12px; }
+.custom-wallpaper-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.custom-wallpaper-upload {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  min-height: 36px; padding: 8px 14px; border: 1px solid var(--border, #8293a4);
+  border-radius: 9px; cursor: pointer; font-size: 13px; font-weight: 600;
+}
+.custom-wallpaper-upload:focus-within { outline: 2px solid currentColor; outline-offset: 2px; }
+.custom-wallpaper-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.custom-wallpaper-setting [role="status"] { flex-basis: 100%; }
