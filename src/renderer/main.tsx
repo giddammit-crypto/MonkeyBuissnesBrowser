@@ -270,7 +270,7 @@ function App(): React.JSX.Element {
     document.documentElement.dataset.appearance = snapshot?.settings.appearancePreset ?? "classic";
     document.documentElement.dataset.accent = snapshot?.settings.accentColor ?? "blue";
     document.documentElement.style.setProperty("--wallpaper-dim", String((snapshot?.settings.wallpaperDim ?? 0) / 100));
-  }, [snapshot?.settings.accentColor, snapshot?.settings.wallpaperDim]);
+  }, [snapshot?.settings.appearancePreset, snapshot?.settings.accentColor, snapshot?.settings.wallpaperDim]);
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
