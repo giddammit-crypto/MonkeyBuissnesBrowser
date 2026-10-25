@@ -377,7 +377,7 @@ export class BrowserController {
       { label: 'Дублировать вкладку', enabled: tab.url === NEW_TAB_URL || isSafeWebUrl(tab.url), click: safely(() => this.tabAction(tabId, 'duplicate')) },
       { label: 'Перезагрузить вкладку', enabled: isSafeWebUrl(tab.url), click: safely(() => this.reload(tabId)) },
       { label: 'Копировать адрес страницы', enabled: isSafeWebUrl(tab.url), click: safely(() => clipboard.writeText(tab.url)) },
-      { label: 'Добавить или убрать закладку', enabled: !tab.isPrivate && isSafeWebUrl(tab.url), click: safely(() => this.toggleBookmark(tabId)) },
+      { label: 'Добавить или убрать закладку', enabled: isSafeWebUrl(tab.url), click: safely(() => this.toggleBookmark(tabId)) },
       { label: 'Освободить память вкладки', enabled: tab.id !== this.activeTabId && !tab.isInternal && tab.lifecycle !== 'hibernated', click: safely(() => this.hibernateTab(tabId)) },
       { type: 'separator' },
       { label: 'Закрыть вкладку', click: safely(() => this.closeTab(tabId)) },
