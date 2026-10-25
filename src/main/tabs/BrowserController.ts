@@ -590,6 +590,7 @@ export class BrowserController {
         sidebarCollapsed: typeof patch.sidebarCollapsed === 'boolean' ? patch.sidebarCollapsed : current.sidebarCollapsed,
         searchEngine,
         newTabBackground: normalizeNewTabBackground(patch.newTabBackground === undefined ? current.newTabBackground : patch.newTabBackground),
+        appearancePreset: patch.appearancePreset === 'detroit' || patch.appearancePreset === 'classic' ? patch.appearancePreset : current.appearancePreset ?? 'classic',
         accentColor: ['blue', 'teal', 'violet', 'rose'].includes(patch.accentColor ?? '') ? patch.accentColor : current.accentColor ?? 'blue',
         wallpaperDim: typeof patch.wallpaperDim === 'number' && Number.isFinite(patch.wallpaperDim) ? Math.max(0, Math.min(75, Math.round(patch.wallpaperDim))) : current.wallpaperDim ?? 0,
         sleepAfterMinutes,
