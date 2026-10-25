@@ -14,6 +14,7 @@ import type { ChromeBounds, TabAction, DownloadAction } from '../../shared/ipc';
 import { FilterEngine, SessionAdBlock } from '../../services/adblock/FilterEngine';
 import { MemoryManager } from '../../services/memory/MemoryManager';
 import { VpnConfigStore } from '../../services/vpn/VpnConfigStore';
+import { LocalExtensionManager } from '../../services/extensions/LocalExtensionManager';
 import { isSafeMediaUrl, mediaKindForMime, mediaKindForUrl } from '../../shared/media';
 import { isSafeWebUrl, parseOmniboxInput } from '../../shared/omnibox';
 import { normalizeNewTabBackground } from '../../shared/background';
@@ -89,6 +90,7 @@ export class BrowserController {
   private readonly closedTabs: Array<Pick<TabSnapshot, 'url' | 'workspaceId' | 'isPinned' | 'isMuted'>> = [];
   private readonly popupOpeners = new Map<string, string>();
   private readonly findQueries = new Map<string, string>();
+  private readonly extensionsManager: LocalExtensionManager;
 
   constructor() {
     this.stores = new BrowserStores(app.getPath('userData'));
@@ -97,6 +99,7 @@ export class BrowserController {
     this.passwords = new PasswordStore(app.getPath('userData'));
     this.importer = new BrowserDataImporter(this.stores, this.passwords, (cookies) => this.setImportedCookies(cookies));
     this.browserSession = session.fromPartition('persist:northstar-default');
+    this.extensionsManager = new LocalExtensionManager(this.browserSession, app.getPath('userData'));
     this.configureSession(this.browserSession);
   }
 
@@ -138,6 +141,7 @@ export class BrowserController {
     this.window.contentView.addChildView(this.shellView);
     this.shellView.setBounds({ x: 0, y: 0, width: 1440, height: 900 });
     await this.shellView.webContents.loadURL('app://shell/index.html');
+    await this.extensionsManager.restore();
 
     this.restoring = true;
     const savedSession = this.stores.settings.get().restoreSession !== false ? this.stores.session.get() : { tabs: [], activeIndex: 0 };
@@ -636,6 +640,15 @@ export class BrowserController {
       return;
     }
     await this.createTab({ url: NEW_TAB_URL, isPrivate, active: true });
+  }
+
+  listLocalExtensions(): ReturnType<LocalExtensionManager['list']> { return this.extensionsManager.list(); }
+  async installLocalExtension(): Promise<ReturnType<LocalExtensionManager['list']>[number] | null> {
+    if (!this.window) throw new Error('Окно браузера не готово.');
+    return this.extensionsManager.install(this.window);
+  }
+  removeLocalExtension(id: string): void {
+    this.extensionsManager.remove(id);
   }
 
   getVpnSnapshot(): VpnSnapshot {
