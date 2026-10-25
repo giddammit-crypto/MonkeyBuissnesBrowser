@@ -377,6 +377,8 @@ export class BrowserController {
       { label: 'Дублировать вкладку', enabled: tab.url === NEW_TAB_URL || isSafeWebUrl(tab.url), click: safely(() => this.tabAction(tabId, 'duplicate')) },
       { label: 'Перезагрузить вкладку', enabled: isSafeWebUrl(tab.url), click: safely(() => this.reload(tabId)) },
       { label: 'Копировать адрес страницы', enabled: isSafeWebUrl(tab.url), click: safely(() => clipboard.writeText(tab.url)) },
+      { label: 'Добавить или убрать закладку', enabled: !tab.isPrivate && isSafeWebUrl(tab.url), click: safely(() => this.toggleBookmark(tabId)) },
+      { label: 'Освободить память вкладки', enabled: tab.id !== this.activeTabId && !tab.isInternal && tab.lifecycle !== 'hibernated', click: safely(() => this.hibernateTab(tabId)) },
       { type: 'separator' },
       { label: 'Закрыть вкладку', click: safely(() => this.closeTab(tabId)) },
       { label: 'Закрыть вкладки справа', enabled: peers.some((entry, peerIndex) => peerIndex > index && !entry.isPinned), click: safely(() => this.closeRelatedTabs(tabId, 'right')) },
@@ -1399,6 +1401,15 @@ export class BrowserController {
       else if ((modifier && key === 'r' || key === 'f5') && tab) run(() => { void this.reload(tab.id); });
       else if (modifier && key === 'p' && tab) run(() => { void this.tabAction(tab.id, 'print'); });
       else if (modifier && ['+', '=', '-', '0'].includes(key) && tab) run(() => { void this.tabAction(tab.id, key === '0' ? 'zoom-reset' : key === '-' ? 'zoom-out' : 'zoom-in'); });
+      // Familiar Chromium shortcuts: Ctrl/Cmd+1..8 selects a visible tab,
+      // Ctrl/Cmd+9 selects the last. Respect workspace and privacy boundaries.
+      else if (modifier && !input.alt && !input.shift && /^[1-9]$/.test(key) && tab) run(() => {
+        const visible = [...this.tabs.values()]
+          .filter(entry => entry.workspaceId === tab.workspaceId && entry.isPrivate === tab.isPrivate)
+          .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+        const selected = visible[key === '9' ? visible.length - 1 : Number(key) - 1];
+        if (selected) this.activateTab(selected.id);
+      });
       else if (modifier && key === 'tab') run(() => {
         const tabs = [...this.tabs.values()]
           .filter((entry) => entry.workspaceId === this.activeWorkspaceId && entry.isPrivate === tab?.isPrivate)
