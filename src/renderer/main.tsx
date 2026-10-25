@@ -50,7 +50,10 @@ import type {
   ImportDataKind,
   ImportProfile,
   ImportReport,
+  ImportFileKind,
+  ImportFileReport,
 } from "../shared/types";
+import { getGoogleAuthNotice, getSiteKey } from "../shared/sitePolicy";
 import logoLight from "./assets/soul/logo-light.png";
 import logoDark from "./assets/soul/logo-dark.png";
 import portrait from "./assets/soul/portrait.webp";
@@ -90,6 +93,8 @@ function App(): React.JSX.Element {
   const currentTab = snapshot?.tabs.find(
     (tab) => tab.id === snapshot.activeTabId,
   );
+  const authNotice = getGoogleAuthNotice(currentTab?.url ?? "");
+  const currentSite = getSiteKey(currentTab?.url ?? "");
   const sidebarCollapsed = snapshot?.settings.sidebarCollapsed ?? false;
   const showError = useCallback(
     (error: unknown) =>
@@ -574,6 +579,18 @@ function App(): React.JSX.Element {
                 setPopover(null);
               }}
             />
+            <MenuAction
+              icon={<ExternalLink size={16} />}
+              label="Открыть в системном браузере"
+              disabled={currentTab?.isInternal}
+              onClick={() => {
+                setPopover(null);
+                if (currentTab)
+                  run(
+                    window.browserApi.openCurrentPageExternally(currentTab.id),
+                  );
+              }}
+            />
             <div className="menu-divider" />
             <MenuAction
               icon={<Menu size={16} />}
@@ -617,6 +634,55 @@ function App(): React.JSX.Element {
               <span>Заблокировано запросов</span>
               <strong>{snapshot.adBlock.blockedTotal}</strong>
             </div>
+            {currentSite && (
+              <div className="site-cookie-control">
+                <strong>Cookies этого сайта</strong>
+                <small className="site-key">{currentSite}</small>
+                <label>
+                  <span>Разрешить сторонние cookies</span>
+                  <input
+                    type="checkbox"
+                    aria-label="Разрешить сторонние cookies для этого сайта"
+                    checked={
+                      !isPrivate &&
+                      Boolean(
+                        snapshot.settings.thirdPartyCookieExceptions?.includes(
+                          currentSite,
+                        ),
+                      )
+                    }
+                    disabled={
+                      isPrivate ||
+                      snapshot.settings.blockThirdPartyCookies === false
+                    }
+                    onChange={(event) => {
+                      if (currentTab)
+                        run(
+                          window.browserApi
+                            .setSiteCookieException(
+                              currentTab.id,
+                              event.target.checked,
+                            )
+                            .then(() => {
+                              setToast({
+                                tone: "info",
+                                message:
+                                  "Настройка cookies сохранена. Обновите страницу, чтобы повторить вход.",
+                              });
+                            }),
+                        );
+                    }}
+                  />
+                </label>
+                <small>
+                  {isPrivate
+                    ? "Исключения действуют только в обычном профиле. Приватная сессия сохраняет блокировку сторонних cookies."
+                    : snapshot.settings.blockThirdPartyCookies === false
+                      ? "Сторонние cookies уже разрешены общей настройкой обычного профиля."
+                      : "Исключение применяется к этому сайту и его поддоменам только в обычном профиле. После изменения обновите страницу. Оно не отменяет ограничения входа Google."}
+                </small>
+              </div>
+            )}
             <p className="privacy-note">
               {snapshot.privacy?.proxy
                 ? "Для приватных вкладок задан прокси. Проверьте внешний IP на доверенном сервисе."
@@ -831,6 +897,35 @@ function App(): React.JSX.Element {
         </div>
       </aside>
       <main className="content-area">
+        {panel === "home" &&
+          authNotice &&
+          currentTab &&
+          !currentTab.isInternal && (
+            <section
+              className="auth-help-banner"
+              aria-label="Помощь со входом Google"
+            >
+              <LockKeyhole size={20} />
+              <div>
+                <strong>{authNotice.title}</strong>
+                <p>{authNotice.message}</p>
+                <small>
+                  Откроется внешнее приложение со своим профилем. Cookies и
+                  настройки приватности SOUL-M8TE в нём не действуют.
+                </small>
+              </div>
+              <button
+                className="plain-button"
+                onClick={() =>
+                  run(
+                    window.browserApi.openCurrentPageExternally(currentTab.id),
+                  )
+                }
+              >
+                <ExternalLink size={16} /> Открыть в системном браузере
+              </button>
+            </section>
+          )}
         <div
           ref={viewportRef}
           className={`page-viewport ${panel !== "home" ? "panel-visible" : ""}`}
@@ -1510,16 +1605,19 @@ function ImportDataCard(): React.JSX.Element {
   const [selectedKinds, setSelectedKinds] = useState<ImportDataKind[]>([
     "history",
     "bookmarks",
-    "cookies",
-    "passwords",
   ]);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<
+    "discover" | "profile" | ImportFileKind | null
+  >(null);
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
   const [report, setReport] = useState<ImportReport | null>(null);
+  const [fileReport, setFileReport] = useState<ImportFileReport | null>(null);
 
   const refreshProfiles = async () => {
-    setBusy(true);
+    setBusy("discover");
     setMessage("");
+    setError("");
     try {
       const next = await window.browserApi.discoverImportProfiles();
       setProfiles(next);
@@ -1529,18 +1627,19 @@ function ImportDataCard(): React.JSX.Element {
           : (next[0]?.id ?? ""),
       );
       if (next.length === 0)
-        setMessage("Профили Chrome, Яндекс Браузера или Firefox не найдены.");
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
+        setMessage(
+          "Профили не найдены. Можно импортировать закладки из HTML или пароли из CSV ниже.",
+        );
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
           : "Не удалось найти профили браузеров.",
       );
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
-
   useEffect(() => {
     void refreshProfiles();
   }, []);
@@ -1548,6 +1647,12 @@ function ImportDataCard(): React.JSX.Element {
   const selectedProfile = profiles.find(
     (profile) => profile.id === selectedProfileId,
   );
+  const effectiveKinds = selectedKinds.filter((kind) =>
+    selectedProfile?.available.includes(kind),
+  );
+  const browserGroups = [
+    ...new Set(profiles.map((profile) => profile.browserLabel)),
+  ];
   const toggleKind = (kind: ImportDataKind) =>
     setSelectedKinds((current) =>
       current.includes(kind)
@@ -1555,124 +1660,314 @@ function ImportDataCard(): React.JSX.Element {
         : [...current, kind],
     );
   const importData = async () => {
-    if (!selectedProfileId || selectedKinds.length === 0) return;
-    setBusy(true);
+    if (busy || !selectedProfile || effectiveKinds.length === 0) return;
+    setBusy("profile");
     setMessage("");
+    setError("");
     setReport(null);
+    setFileReport(null);
     try {
       const next = await window.browserApi.importBrowserData({
-        profileId: selectedProfileId,
-        data: selectedKinds,
+        profileId: selectedProfile.id,
+        data: effectiveKinds,
       });
       setReport(next);
-      setMessage("Импорт завершён.");
-    } catch (error) {
       setMessage(
-        error instanceof Error ? error.message : "Импорт не выполнен.",
+        next.errors.length
+          ? "Импорт завершён с ошибками. Проверьте результат ниже."
+          : next.warnings.length
+            ? "Импорт завершён. Есть замечания к отдельным записям."
+            : "Импорт завершён.",
+      );
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Импорт не выполнен.",
       );
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
+  const importFile = async (kind: ImportFileKind) => {
+    if (busy) return;
+    setBusy(kind);
+    setMessage("");
+    setError("");
+    setReport(null);
+    setFileReport(null);
+    try {
+      const next = await window.browserApi.importBrowserFile(kind);
+      if (next) {
+        setFileReport(next);
+        setMessage(
+          next.errors.length
+            ? "Файл обработан с ошибками. Проверьте результат ниже."
+            : "Файл обработан.",
+        );
+      } else setMessage("Выбор файла отменён. Данные не изменены.");
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Не удалось импортировать файл.",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+  const busyLabel =
+    busy === "discover"
+      ? "Ищем локальные профили…"
+      : busy === "profile"
+        ? "Читаем выбранные данные и сохраняем доступные записи…"
+        : busy === "bookmarks"
+          ? "Выберите HTML-файл. Затем проверим и импортируем закладки…"
+          : "Выберите CSV-файл. Затем проверим записи и защищённое хранилище…";
+  const warnings = report?.warnings ?? fileReport?.warnings ?? [];
+  const errors = report?.errors ?? fileReport?.errors ?? [];
 
   return (
-    <div className="import-card">
+    <div className="import-card" aria-busy={Boolean(busy)}>
       <div className="import-card-heading">
         <div className="vpn-title">
-          <div className="panel-icon">
-            <Database size={19} />
-          </div>
+          <Database size={21} />
           <span>
-            <strong>Импорт данных браузера</strong>
+            <strong>Из другого браузера</strong>
             <small>
-              Локальный импорт из Google Chrome, Яндекс Браузера или Firefox без
-              отправки данных наружу.
+              Chrome, Яндекс Браузер, Firefox, Edge, Brave, Opera и Vivaldi.
+              Данные обрабатываются локально.
             </small>
           </span>
         </div>
         <button
-          className="icon-button subtle"
+          className="icon-button"
           aria-label="Обновить список профилей"
+          title="Обновить список профилей"
           onClick={() => void refreshProfiles()}
-          disabled={busy}
+          disabled={Boolean(busy)}
         >
-          <RefreshCw size={16} className={busy ? "spin" : ""} />
+          <RefreshCw size={16} className={busy === "discover" ? "spin" : ""} />
         </button>
       </div>
+      <p className="import-guidance">
+        Перед переносом закройте исходный браузер, чтобы его данные не менялись
+        во время чтения. Существующие записи SOUL-M8TE сохраняются.
+      </p>
       <div className="import-controls">
         <label className="import-field">
-          <span>Профиль</span>
+          <span>Профиль браузера</span>
           <select
             value={selectedProfileId}
-            onChange={(event) => setSelectedProfileId(event.target.value)}
-            disabled={busy || profiles.length === 0}
+            onChange={(event) => {
+              setSelectedProfileId(event.target.value);
+              setReport(null);
+              setMessage("");
+            }}
+            disabled={Boolean(busy) || profiles.length === 0}
           >
-            <option value="">Профиль не выбран</option>
-            {profiles.map((profile) => (
-              <option key={profile.id} value={profile.id}>
-                {profile.browserLabel} · {profile.profileName}
-              </option>
+            <option value="">
+              {profiles.length === 0
+                ? "Доступных профилей нет"
+                : "Выберите профиль"}
+            </option>
+            {browserGroups.map((label) => (
+              <optgroup key={label} label={label}>
+                {profiles
+                  .filter((profile) => profile.browserLabel === label)
+                  .map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.profileName}
+                    </option>
+                  ))}
+              </optgroup>
             ))}
           </select>
         </label>
-        <div className="import-field">
-          <span>Что импортировать</span>
+        <fieldset className="import-field import-kinds">
+          <legend>Что перенести</legend>
           <div className="import-checks">
-            {importKinds.map((kind) => (
-              <label key={kind.value} className="import-check">
-                <input
-                  type="checkbox"
-                  checked={selectedKinds.includes(kind.value)}
-                  onChange={() => toggleKind(kind.value)}
-                  disabled={
-                    busy || !selectedProfile?.available.includes(kind.value)
+            {importKinds.map((kind) => {
+              const available =
+                selectedProfile?.available.includes(kind.value) ?? false;
+              return (
+                <label
+                  key={kind.value}
+                  className={`import-check ${available ? "" : "unavailable"}`}
+                  title={
+                    available
+                      ? kind.label
+                      : "Эти данные не обнаружены в выбранном профиле"
                   }
-                />
-                <span>{kind.label}</span>
-              </label>
-            ))}
+                >
+                  <input
+                    type="checkbox"
+                    checked={available && selectedKinds.includes(kind.value)}
+                    onChange={() => toggleKind(kind.value)}
+                    disabled={Boolean(busy) || !available}
+                  />
+                  <span>{kind.label}</span>
+                </label>
+              );
+            })}
           </div>
-        </div>
+        </fieldset>
       </div>
+      {selectedProfile && (
+        <p className="import-source">
+          Источник: <span>{selectedProfile.path}</span>
+        </p>
+      )}
       <div className="import-actions">
         <button
-          className="vpn-primary"
-          disabled={busy || !selectedProfileId || selectedKinds.length === 0}
+          className="primary-button"
+          disabled={
+            Boolean(busy) || !selectedProfile || effectiveKinds.length === 0
+          }
           onClick={() => void importData()}
         >
-          <Database size={15} />{" "}
-          {busy ? "Импортируем…" : "Импортировать выбранное"}
-        </button>
-        {selectedProfile && <small>Источник: {selectedProfile.path}</small>}
-      </div>
-      <div className="import-note">
-        <KeyRound size={14} /> Пароли сохраняются только в зашифрованное
-        хранилище приложения. На Linux поддерживается системный keyring
-        Chromium; для Firefox используйте официальный CSV-экспорт, если профиль
-        защищён NSS.
-      </div>
-      {message && <div className="setting-status ready">{message}</div>}
-      {report && (
-        <div className="import-report">
-          <strong>Результат импорта</strong>
-          <span>
-            История: {report.imported.history} · Закладки:{" "}
-            {report.imported.bookmarks} · Cookies: {report.imported.cookies} ·
-            Пароли: {report.imported.passwords}
-          </span>
-          {report.skipped.cookies + report.skipped.passwords > 0 && (
-            <span>
-              Пропущено защищённых записей:{" "}
-              {report.skipped.cookies + report.skipped.passwords}
-            </span>
+          {busy === "profile" ? (
+            <LoaderCircle size={16} className="spin" />
+          ) : (
+            <Database size={16} />
           )}
-          {report.warnings.map((warning) => (
-            <span key={warning}>{warning}</span>
-          ))}
-          {report.errors.map((error) => (
-            <span key={error}>{error}</span>
-          ))}
+          {busy === "profile" ? "Переносим данные…" : "Импортировать выбранное"}
+        </button>
+        {selectedProfile && effectiveKinds.length === 0 && (
+          <small>Выберите хотя бы один доступный тип данных.</small>
+        )}
+      </div>
+      <div className="import-file-section">
+        <div>
+          <h4>Из файла экспорта</h4>
+          <p>
+            Подходит, если профиль не найден или браузер защищает свои данные.
+          </p>
         </div>
+        <div className="import-file-actions">
+          <button
+            className="plain-button"
+            disabled={Boolean(busy)}
+            onClick={() => void importFile("bookmarks")}
+          >
+            {busy === "bookmarks" ? (
+              <LoaderCircle size={16} className="spin" />
+            ) : (
+              <Bookmark size={16} />
+            )}
+            Закладки из HTML
+          </button>
+          <button
+            className="plain-button"
+            disabled={Boolean(busy)}
+            onClick={() => void importFile("passwords")}
+          >
+            {busy === "passwords" ? (
+              <LoaderCircle size={16} className="spin" />
+            ) : (
+              <KeyRound size={16} />
+            )}
+            Пароли из CSV
+          </button>
+        </div>
+      </div>
+      <div className="import-sensitive-note">
+        <LockKeyhole size={17} />
+        <div>
+          <strong>CSV содержит пароли в открытом виде</strong>
+          <p>
+            Не отправляйте этот файл другим людям и не храните в общих папках.
+            После переноса удалите ненужный CSV из места экспорта. SOUL-M8TE
+            сохраняет пароли только при доступном системном шифровании.
+            Автозаполнение паролей пока не поддерживается.
+          </p>
+        </div>
+      </div>
+      <p className="import-compatibility-note">
+        Cookies и защищённые пароли могут быть недоступны для переноса. Импорт
+        cookies не гарантирует сохранение входа: сайт может потребовать
+        повторную авторизацию, а Google — отклонить вход во встроенном браузере.
+      </p>
+      {busy && (
+        <div className="import-progress" role="status">
+          <LoaderCircle size={17} className="spin" />
+          <span>{busyLabel}</span>
+        </div>
+      )}
+      {message && (
+        <p className="setting-status" role="status">
+          {message}
+        </p>
+      )}
+      {error && (
+        <p className="import-error" role="alert">
+          <AlertTriangle size={16} />
+          {error}
+        </p>
+      )}
+      {(report || fileReport) && (
+        <section className="import-report" aria-label="Результат импорта">
+          <strong>Результат импорта</strong>
+          {report && (
+            <>
+              <p>{report.profileName}</p>
+              <table className="import-result-table">
+                <thead>
+                  <tr>
+                    <th>Данные</th>
+                    <th>Добавлено</th>
+                    <th>Пропущено</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importKinds.map((kind) => (
+                    <tr key={kind.value}>
+                      <th>{kind.label}</th>
+                      <td>{report.imported[kind.value]}</td>
+                      <td>{report.skipped[kind.value]}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+          {fileReport && (
+            <div className="import-file-result">
+              <span>
+                {fileReport.kind === "bookmarks" ? "Закладки" : "Пароли"}
+              </span>
+              <span>
+                Добавлено: <strong>{fileReport.imported}</strong>
+              </span>
+              <span>
+                Пропущено: <strong>{fileReport.skipped}</strong>
+              </span>
+            </div>
+          )}
+          <small>
+            «Добавлено» — только новые записи. В «Пропущено» входят дубли,
+            неподдерживаемые или недоступные записи. Причины указаны в
+            замечаниях.
+          </small>
+          {warnings.length > 0 && (
+            <div className="import-report-notes">
+              <strong>Замечания</strong>
+              <ul>
+                {warnings.map((warning, index) => (
+                  <li key={index}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {errors.length > 0 && (
+            <div className="import-report-errors" role="alert">
+              <strong>Не удалось перенести</strong>
+              <ul>
+                {errors.map((item, index) => (
+                  <li key={index}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
       )}
     </div>
   );
@@ -1810,6 +2105,43 @@ function SettingsPanel({
               }
             />
           </label>
+          <div className="cookie-exceptions-settings">
+            <div className="small-heading">
+              <Globe2 size={18} />
+              <strong>Исключения для сторонних cookies</strong>
+            </div>
+            <p>
+              Разрешения выдаются отдельным сайтам через значок защиты рядом с
+              адресной строкой. Они действуют только в обычном профиле. После
+              изменения обновите открытые страницы.
+            </p>
+            {(settings.thirdPartyCookieExceptions?.length ?? 0) === 0 ? (
+              <small>Исключений пока нет.</small>
+            ) : (
+              <ul className="cookie-exception-list">
+                {settings.thirdPartyCookieExceptions?.map((site) => (
+                  <li key={site}>
+                    <span>{site}</span>
+                    <button
+                      className="icon-button"
+                      aria-label={`Удалить исключение ${site}`}
+                      title="Удалить исключение"
+                      onClick={() =>
+                        update({
+                          thirdPartyCookieExceptions:
+                            settings.thirdPartyCookieExceptions?.filter(
+                              (value) => value !== site,
+                            ),
+                        })
+                      }
+                    >
+                      <X size={15} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <div className="setting-row">
             <span>
               <strong>Очистить данные сайтов</strong>

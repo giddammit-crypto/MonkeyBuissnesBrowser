@@ -1786,3 +1786,310 @@ select {
     margin-bottom: 10px;
   }
 }
+/* Authentication help stays in the shell layout above native WebContents. */
+.content-area {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.page-viewport {
+  position: relative;
+  inset: auto;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+.auth-help-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-soft);
+  flex-shrink: 0;
+}
+.auth-help-banner > svg {
+  color: var(--accent);
+  margin-top: 2px;
+}
+.auth-help-banner > div {
+  flex: 1;
+  min-width: 0;
+}
+.auth-help-banner strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.auth-help-banner p {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+  margin: 6px 0;
+}
+.auth-help-banner small {
+  display: block;
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+.auth-help-banner > .plain-button {
+  max-width: 230px;
+  white-space: normal;
+  flex-shrink: 0;
+  font-size: 11px;
+  align-self: center;
+  line-height: 1.5;
+}
+.site-cookie-control {
+  padding: 12px 10px;
+  border-top: 1px solid var(--border);
+}
+.site-cookie-control > strong {
+  display: block;
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+.site-cookie-control > small {
+  display: block;
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+.site-cookie-control .site-key {
+  overflow-wrap: anywhere;
+  margin-bottom: 10px;
+  color: var(--accent);
+}
+.site-cookie-control > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  margin: 12px 0;
+}
+.cookie-exceptions-settings {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+.cookie-exceptions-settings p {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  margin: 12px 0;
+}
+.cookie-exceptions-settings > small {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cookie-exception-list {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cookie-exception-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  padding: 4px 8px 4px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.import-guidance,
+.import-compatibility-note {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  margin: 0 0 20px;
+}
+.import-kinds {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.import-kinds legend {
+  padding: 0;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.import-kinds .import-checks {
+  min-height: 36px;
+}
+.import-check.unavailable {
+  color: var(--text-muted);
+  opacity: 0.65;
+}
+.import-source {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  margin: 14px 0 0;
+}
+.import-source span {
+  color: var(--text-secondary);
+}
+.import-file-section {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  padding: 22px 0;
+  margin-top: 22px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.import-file-section h4 {
+  font-size: 12px;
+  font-weight: 500;
+  margin: 0 0 6px;
+}
+.import-file-section p {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.import-file-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.import-sensitive-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 20px;
+}
+.import-sensitive-note > svg {
+  color: var(--accent);
+  margin-top: 1px;
+}
+.import-sensitive-note strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+.import-sensitive-note p {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  margin: 7px 0 0;
+}
+.import-compatibility-note {
+  font-size: 10px;
+  margin: 16px 0 0;
+}
+.import-progress {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 11px;
+  padding: 14px 0;
+  color: var(--accent);
+}
+.import-error {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  color: #a53642;
+  font-size: 11px;
+  line-height: 1.7;
+  margin: 14px 0 0;
+}
+[data-theme="dark"] .import-error,
+[data-theme="dark"] .import-report-errors {
+  color: #ed9ca7;
+}
+.import-report {
+  gap: 12px;
+}
+.import-report > p {
+  font-size: 11px;
+  margin: 0;
+}
+.import-report > small {
+  font-size: 10px;
+  line-height: 1.7;
+}
+.import-result-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+.import-result-table th,
+.import-result-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.import-result-table thead th {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.import-result-table tbody th {
+  font-weight: 400;
+}
+.import-result-table td {
+  width: 110px;
+}
+.import-file-result {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.import-report-notes,
+.import-report-errors {
+  font-size: 11px;
+  line-height: 1.7;
+}
+.import-report-notes ul,
+.import-report-errors ul {
+  margin: 7px 0 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+.import-report-notes li + li,
+.import-report-errors li + li {
+  margin-top: 7px;
+}
+.import-report-errors {
+  color: #a53642;
+}
+@media (max-width: 1100px) {
+  .auth-help-banner {
+    flex-wrap: wrap;
+    padding: 14px 20px;
+    gap: 10px;
+  }
+  .auth-help-banner > div {
+    flex-basis: calc(100% - 34px);
+  }
+  .auth-help-banner > .plain-button {
+    margin-left: 30px;
+    max-width: none;
+  }
+  .import-file-section {
+    align-items: flex-start;
+  }
+  .import-file-actions {
+    width: 100%;
+  }
+}

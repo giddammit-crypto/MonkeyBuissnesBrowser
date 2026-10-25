@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { BrowserSettings, BookmarkEntry, DownloadEntry, HistoryEntry, TabSnapshot, WorkspaceEntry } from '../../shared/types';
 import { isSafeWebUrl } from '../../shared/omnibox';
 import { JsonStore } from './JsonStore';
+import { normalizeCookieExceptions } from '../../shared/sitePolicy';
 
 const defaultSettings: BrowserSettings = {
   theme: 'system',
@@ -44,6 +45,7 @@ function normalizeSettings(value: unknown): BrowserSettings {
     sleepAfterMinutes: [0, 5, 15, 30, 60].includes(Number(raw.sleepAfterMinutes)) && typeof raw.sleepAfterMinutes === 'number' ? raw.sleepAfterMinutes as BrowserSettings['sleepAfterMinutes'] : defaultSettings.sleepAfterMinutes,
     adBlockEnabled: typeof raw.adBlockEnabled === 'boolean' ? raw.adBlockEnabled : true,
     blockThirdPartyCookies: typeof raw.blockThirdPartyCookies === 'boolean' ? raw.blockThirdPartyCookies : true,
+    thirdPartyCookieExceptions: normalizeCookieExceptions(raw.thirdPartyCookieExceptions),
     restoreSession: typeof raw.restoreSession === 'boolean' ? raw.restoreSession : true,
   };
 }

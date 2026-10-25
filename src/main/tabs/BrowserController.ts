@@ -16,6 +16,7 @@ import { MemoryManager } from '../../services/memory/MemoryManager';
 import { VpnConfigStore } from '../../services/vpn/VpnConfigStore';
 import { isLikelyMediaUrl, isSafeMediaUrl, mediaKindForMime, mediaKindForUrl } from '../../shared/media';
 import { isSafeWebUrl, parseOmniboxInput } from '../../shared/omnibox';
+import { getExternalPageUrl, getSiteKey, normalizeCookieExceptions, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
 import type {
   BookmarkEntry,
   BrowserSettings,
@@ -26,6 +27,8 @@ import type {
   VpnSnapshot,
   WorkspaceEntry,
   ImportDataKind,
+  ImportFileKind,
+  ImportFileReport,
   ImportProfile,
   ImportReport,
   ImportedPasswordSummary,
@@ -488,6 +491,7 @@ export class BrowserController {
         sleepAfterMinutes,
         adBlockEnabled: typeof patch.adBlockEnabled === 'boolean' ? patch.adBlockEnabled : current.adBlockEnabled ?? true,
         blockThirdPartyCookies: typeof patch.blockThirdPartyCookies === 'boolean' ? patch.blockThirdPartyCookies : current.blockThirdPartyCookies ?? true,
+        thirdPartyCookieExceptions: patch.thirdPartyCookieExceptions === undefined ? current.thirdPartyCookieExceptions ?? [] : normalizeCookieExceptions(patch.thirdPartyCookieExceptions),
         restoreSession: typeof patch.restoreSession === 'boolean' ? patch.restoreSession : current.restoreSession ?? true,
       };
     });
@@ -554,6 +558,44 @@ export class BrowserController {
       tab.canGoForward = false;
     }
     this.emitSnapshot();
+  }
+
+  async openCurrentPageExternally(tabId: string): Promise<void> {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.isInternal || !this.window) return;
+    const url = getExternalPageUrl(tab.url);
+    if (!url) throw new Error('Этот адрес нельзя открыть во внешнем браузере.');
+    const result = await dialog.showMessageBox(this.window, {
+      type: 'question', title: 'Открыть системный браузер',
+      message: `Открыть ${new URL(url).hostname} в системном браузере?`,
+      detail: tab.isPrivate
+        ? 'Адрес будет передан обычному системному браузеру. Приватная сессия и её прокси не распространяются на него. Выполненный там вход не переносится в SOUL-M8TE.'
+        : 'Авторизация будет выполнена в системном браузере и не перенесётся в SOUL-M8TE автоматически.',
+      buttons: ['Отмена', 'Открыть'], defaultId: 0, cancelId: 0, noLink: true,
+    });
+    if (result.response === 1) await shell.openExternal(url);
+  }
+
+  async setSiteCookieException(tabId: string, allow: boolean): Promise<void> {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.isPrivate || tab.isInternal || typeof allow !== 'boolean') throw new Error('Исключения cookies доступны только для обычных сайтов.');
+    const site = getSiteKey(tab.url);
+    if (!site) throw new Error('Некорректный адрес сайта.');
+    const current = this.stores.settings.get().thirdPartyCookieExceptions ?? [];
+    this.updateSettings({ thirdPartyCookieExceptions: allow ? [...current, site] : current.filter((item) => item !== site) });
+  }
+
+  async importBrowserFile(kind: ImportFileKind): Promise<ImportFileReport | null> {
+    if (!this.window || !['bookmarks', 'passwords'].includes(kind)) throw new Error('Неподдерживаемый тип импорта.');
+    const result = await dialog.showOpenDialog(this.window, {
+      title: kind === 'bookmarks' ? 'Импорт закладок HTML' : 'Импорт паролей CSV',
+      properties: ['openFile'],
+      filters: kind === 'bookmarks' ? [{ name: 'Закладки браузера', extensions: ['html', 'htm'] }] : [{ name: 'Экспорт паролей', extensions: ['csv'] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const report = await this.importer.importFile(result.filePaths[0], kind);
+    this.emitSnapshot();
+    return report;
   }
 
   discoverImportProfiles(): ImportProfile[] {
@@ -681,20 +723,26 @@ export class BrowserController {
         callback(allowed);
       }).catch(() => callback(false));
     });
-    const isCrossHost = (url: string, referrer: string): boolean => {
-      try { return Boolean(referrer) && new URL(url).hostname !== new URL(referrer).hostname; } catch { return false; }
+    const stripCookies = (details: Electron.OnBeforeSendHeadersListenerDetails | Electron.OnHeadersReceivedListenerDetails): boolean => {
+      const topLevelUrl = details.webContents && !details.webContents.isDestroyed()
+        ? details.webContents.getURL() : details.initiatorOrigin || details.referrer;
+      return shouldStripThirdPartyCookies({
+        requestUrl: details.url, topLevelUrl, resourceType: details.resourceType, isPrivate,
+        enabled: this.stores.settings.get().blockThirdPartyCookies !== false,
+        exceptions: this.stores.settings.get().thirdPartyCookieExceptions,
+      });
     };
     targetSession.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
       const headers = { ...details.requestHeaders };
       if (isPrivate) { headers.DNT = '1'; headers['Sec-GPC'] = '1'; }
-      if ((isPrivate || this.stores.settings.get().blockThirdPartyCookies !== false) && details.resourceType !== 'mainFrame' && isCrossHost(details.url, details.webContents && !details.webContents.isDestroyed() ? details.webContents.getURL() : details.initiatorOrigin || details.referrer)) {
+      if (stripCookies(details)) {
         for (const key of Object.keys(headers)) if (key.toLowerCase() === 'cookie') delete headers[key];
       }
       callback({ requestHeaders: headers });
     });
     targetSession.webRequest.onHeadersReceived({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
       const headers = { ...details.responseHeaders };
-      if ((isPrivate || this.stores.settings.get().blockThirdPartyCookies !== false) && details.resourceType !== 'mainFrame' && isCrossHost(details.url, details.webContents && !details.webContents.isDestroyed() ? details.webContents.getURL() : details.initiatorOrigin || details.referrer)) {
+      if (stripCookies(details)) {
         for (const key of Object.keys(headers)) if (key.toLowerCase() === 'set-cookie') delete headers[key];
       }
       callback({ responseHeaders: headers });
@@ -982,12 +1030,21 @@ export class BrowserController {
     let imported = 0;
     for (const cookie of cookies) {
       try {
+        const host = new URL(cookie.url).hostname;
+        const domain = (cookie.domain || host).replace(/^\./, '');
+        const existing = (await this.browserSession.cookies.get({ url: cookie.url, name: cookie.name })).find((item) =>
+          (item.domain || host).replace(/^\./, '') === domain && item.path === cookie.path && item.hostOnly === !cookie.domain,
+        );
+        if (existing && existing.value === cookie.value && existing.secure === cookie.secure && existing.httpOnly === cookie.httpOnly &&
+          (!cookie.sameSite || existing.sameSite === cookie.sameSite) &&
+          ((cookie.expirationDate === undefined && existing.session) || Math.abs((existing.expirationDate || 0) - (cookie.expirationDate || 0)) < 1)) continue;
         await this.browserSession.cookies.set(cookie);
         imported += 1;
       } catch {
-        // Invalid or expired cookies are ignored without exposing their values.
+        // Invalid or expired cookies are counted as skipped by the importer.
       }
     }
+    if (imported) await this.browserSession.cookies.flushStore();
     return imported;
   }
 

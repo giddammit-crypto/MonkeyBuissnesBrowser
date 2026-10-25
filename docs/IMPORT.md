@@ -1,20 +1,24 @@
-# Browser profile import
+# Перенос данных в SOUL-M8TE
 
-The Settings page includes a local import wizard for detected profiles of:
+В настройках доступны локальные профили Google Chrome, Яндекс Браузера, Firefox, Microsoft Edge, Brave, Opera/Opera GX и Vivaldi. Отображаются доступные типы данных и название профиля. Перед импортом рекомендуется закрыть исходный браузер.
 
-- Google Chrome;
-- Яндекс Браузер;
-- Firefox.
+История и закладки объединяются с существующими, дубли не заменяют записи. Отчёт показывает действительно добавленные/обновлённые записи и пропущенные записи отдельно для каждого типа. Текущие коллекции истории и закладок ограничены 500 записями; лишние записи отражаются как пропущенные. Закладки сохраняются плоским списком без дерева папок.
 
-The wizard imports history, bookmarks, cookies and passwords from a selected profile without uploading profile files or secrets to a server.
+## Импорт из файлов
 
-## Storage details
+- **HTML закладок**: Netscape-экспорт из Chrome, Edge, Firefox и других браузеров; безопасные HTTP/HTTPS-ссылки, декодирование названий и дат.
+- **CSV паролей**: столбцы URL/username/password из экспорта браузера; поддерживаются кавычки, переносы строк и BOM. Исходный файл выбирается через системный диалог. Произвольный путь из страницы не принимается.
 
-- Chromium history/bookmarks are read from the profile's SQLite/JSON files.
-- Firefox history/bookmarks are read from `places.sqlite`.
-- Firefox cookies are imported from `cookies.sqlite` when they are readable.
-- Chromium cookies and passwords are decrypted only when the browser's Linux keyring entry is available through `secret-tool` and the value uses a supported `v10`/`v11` format.
-- Imported passwords are stored only in an Electron `safeStorage`-encrypted local vault. Password values are never sent to the renderer or returned through IPC.
-- Firefox NSS-encrypted passwords and platform-specific Windows/macOS browser secrets are reported as skipped until a native OS decryption adapter is added. The wizard does not guess or silently import unusable encrypted blobs.
+Файлы ограничены 20 МБ и 20 000 записей. HTML не исполняется. CSV содержит незашифрованные пароли: приложение не создаёт его копий и не удаляет оригинал. После использования пользователь может удалить ненужный экспорт. Если защищённое системное хранилище недоступно, файл паролей не читается.
 
-The importer is intentionally local and conservative: locked databases, unavailable keyrings and unsupported encryption result in a warning rather than data loss or fake success.
+Пароли сохраняются в зашифрованный локальный vault. Автозаполнение пока не реализовано: импорт не означает автоматический вход на сайты. Повреждённое существующее хранилище не перезаписывается новым импортом.
+
+## Cookies и ограничения
+
+Импортируются корректные доступные cookies с сохранением host-only/domain scope, пути, срока, Secure/HttpOnly и SameSite. Просроченные, некорректные `__Host-`/`__Secure-`, partitioned и Firefox container cookies пропускаются. Повторный импорт одинаковой cookie не увеличивает число добавленных записей.
+
+Современные Chromium-профили читаются из Network/Cookies, старые — из Cookies. SQLite открывается только для чтения в согласованной транзакции, включая committed WAL; исходные файлы не копируются и не изменяются. Linux/macOS форматы v10/v11 CBC поддерживаются при доступном системном ключе; cookie schema 24 проверяет привязку значения к host_key. Запросы keyring выполняются асинхронно с timeout и не блокируют интерфейс ожиданием команды.
+
+Windows DPAPI/App-Bound и Firefox NSS не расшифровываются. Для паролей этих профилей используется официальный CSV-экспорт. Отказы keyring и неподдерживаемые записи показываются как предупреждения/пропуски. Профили Windows/macOS обнаруживаются по стандартным путям; локальная проверка импорта выполнена на Linux и синтетических профилях.
+
+Google может ограничивать вход в Electron независимо от перенесённых данных. Перенос cookies не гарантирует рабочую сессию и не обходит политику поставщика. Открытие входа в системном браузере авторизует только тот браузер; данные входа не возвращаются автоматически в SOUL-M8TE.

@@ -65,9 +65,18 @@ export interface BrowserSettings {
   adBlockEnabled?: boolean;
   blockThirdPartyCookies?: boolean;
   restoreSession?: boolean;
+  thirdPartyCookieExceptions?: string[];
 }
 
-export type ImportBrowser = 'chrome' | 'yandex' | 'firefox';
+export type ImportBrowser = 'chrome' | 'yandex' | 'firefox' | 'edge' | 'brave' | 'opera' | 'vivaldi' | 'file';
+export type ImportFileKind = 'bookmarks' | 'passwords';
+export interface ImportFileReport {
+  kind: ImportFileKind;
+  imported: number;
+  skipped: number;
+  warnings: string[];
+  errors: string[];
+}
 export type ImportDataKind = 'history' | 'bookmarks' | 'cookies' | 'passwords';
 
 export interface ImportProfile {
