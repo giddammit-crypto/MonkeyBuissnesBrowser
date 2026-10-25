@@ -375,6 +375,8 @@ export class BrowserController {
       { label: tab.isPinned ? 'Открепить вкладку' : 'Закрепить вкладку', type: 'checkbox', checked: tab.isPinned, click: safely(() => this.tabAction(tabId, 'pin')) },
       { label: tab.isMuted ? 'Включить звук' : 'Отключить звук', type: 'checkbox', checked: tab.isMuted, click: safely(() => this.tabAction(tabId, 'mute')) },
       { label: 'Дублировать вкладку', enabled: tab.url === NEW_TAB_URL || isSafeWebUrl(tab.url), click: safely(() => this.tabAction(tabId, 'duplicate')) },
+      { label: 'Перезагрузить вкладку', enabled: isSafeWebUrl(tab.url), click: safely(() => this.reload(tabId)) },
+      { label: 'Копировать адрес страницы', enabled: isSafeWebUrl(tab.url), click: safely(() => clipboard.writeText(tab.url)) },
       { type: 'separator' },
       { label: 'Закрыть вкладку', click: safely(() => this.closeTab(tabId)) },
       { label: 'Закрыть вкладки справа', enabled: peers.some((entry, peerIndex) => peerIndex > index && !entry.isPinned), click: safely(() => this.closeRelatedTabs(tabId, 'right')) },
