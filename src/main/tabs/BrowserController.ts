@@ -344,16 +344,16 @@ export class BrowserController {
     this.emitSnapshot();
   }
 
-  async closeRelatedTabs(tabId: string, scope: 'others' | 'right'): Promise<void> {
+  async closeRelatedTabs(tabId: string, scope: 'others' | 'right' | 'left'): Promise<void> {
     const reference = this.tabs.get(tabId);
-    if (!reference || (scope !== 'others' && scope !== 'right')) return;
+    if (!reference || (scope !== 'others' && scope !== 'right' && scope !== 'left')) return;
     // Match the visible strip order. Bulk actions never cross workspaces or
     // normal/private boundaries, and pinned tabs remain protected.
     const ordered = [...this.tabs.values()]
       .filter((tab) => tab.workspaceId === reference.workspaceId && tab.isPrivate === reference.isPrivate)
       .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
     const referenceIndex = ordered.findIndex((tab) => tab.id === tabId);
-    const closing = ordered.filter((tab, index) => tab.id !== tabId && !tab.isPinned && (scope === 'others' || index > referenceIndex));
+    const closing = ordered.filter((tab, index) => tab.id !== tabId && !tab.isPinned && (scope === 'others' || (scope === 'right' ? index > referenceIndex : index < referenceIndex)));
     if (closing.some((tab) => tab.id === this.activeTabId)) this.activateTab(reference.id);
     for (const tab of closing) await this.closeTab(tab.id);
   }
@@ -381,6 +381,7 @@ export class BrowserController {
       { label: 'Освободить память вкладки', enabled: tab.id !== this.activeTabId && !tab.isInternal && tab.lifecycle !== 'hibernated', click: safely(() => this.hibernateTab(tabId)) },
       { type: 'separator' },
       { label: 'Закрыть вкладку', click: safely(() => this.closeTab(tabId)) },
+      { label: 'Закрыть вкладки слева', enabled: peers.some((entry, peerIndex) => peerIndex < index && !entry.isPinned), click: safely(() => this.closeRelatedTabs(tabId, 'left')) },
       { label: 'Закрыть вкладки справа', enabled: peers.some((entry, peerIndex) => peerIndex > index && !entry.isPinned), click: safely(() => this.closeRelatedTabs(tabId, 'right')) },
       { label: 'Закрыть другие вкладки', enabled: peers.some((entry) => entry.id !== tabId && !entry.isPinned), click: safely(() => this.closeRelatedTabs(tabId, 'others')) },
       { type: 'separator' },
