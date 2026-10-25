@@ -27,6 +27,33 @@ describe('local new-tab background choices', () => {
     restarted.settings.update(current=>({...current,newTabBackground:'portrait'}));
     expect(new BrowserStores(directory).settings.get().newTabBackground).toBe('portrait');
   });
+
+  it('preserves Detroit appearance, accent and dimming across restart', () => {
+    const directory = root();
+    const stores = new BrowserStores(directory);
+    stores.settings.set({
+      ...stores.settings.get(),
+      appearancePreset: 'detroit',
+      accentColor: 'violet',
+      wallpaperDim: 35,
+    });
+    expect(new BrowserStores(directory).settings.get()).toMatchObject({
+      appearancePreset: 'detroit', accentColor: 'violet', wallpaperDim: 35,
+    });
+  });
+  it('normalizes malformed persisted appearance settings', () => {
+    const directory = root();
+    fs.mkdirSync(path.join(directory, 'browser-data'));
+    fs.writeFileSync(path.join(directory, 'browser-data/settings.json'), JSON.stringify({
+      appearancePreset: 'unknown',
+      accentColor: 'url(javascript:alert(1))',
+      wallpaperDim: 500,
+    }));
+    expect(new BrowserStores(directory).settings.get()).toMatchObject({
+      appearancePreset: 'classic', accentColor: 'blue', wallpaperDim: 75,
+    });
+  });
+
   it('never accepts arbitrary URLs, CSS fragments, objects or malformed values as background resources', () => {
     const directory=root();const stores=new BrowserStores(directory);
     const malicious=['https://external.test/track.png','file:///secret','data:image/svg+xml,<svg/>','url(https://external.test)','PLAIN','plain ',42,{toString:()=> 'plain'},true];
