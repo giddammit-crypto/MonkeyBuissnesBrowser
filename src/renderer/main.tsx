@@ -1351,7 +1351,7 @@ function NewTabPage({
   const [customWallpaper] = useCustomWallpaper();
   return (
     <div className={`new-tab-page ${privateMode ? "private-newtab" : ""}`} data-new-tab-background={background} data-background={background}>
-      {background === "portrait" && <div className="newtab-wallpaper" data-newtab-wallpaper aria-hidden="true"><img src={customWallpaper ?? chloeWallpaper} alt="" decoding="async" draggable={false} /></div>}
+      {background === "portrait" && <div className="newtab-wallpaper" data-newtab-wallpaper aria-hidden="true"><img src={customWallpaper ?? (snapshot.settings.appearancePreset === "detroit" ? chloeWallpaper : portrait)} alt="" decoding="async" draggable={false} /></div>}
       <div className="newtab-topline">
         <span>
           {new Intl.DateTimeFormat("ru-RU", {
@@ -2289,7 +2289,7 @@ function SettingsPanel({
               value={settings.newTabBackground}
               onChange={event => update({ newTabBackground: normalizeNewTabBackground(event.target.value) })}
             >
-              <option value="portrait">Девушка SOUL-M8TE</option>
+              <option value="portrait">Фирменный портрет / Detroit</option>
               <option value="plain">Однотонный</option>
             </select>
           </label>
