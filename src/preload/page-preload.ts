@@ -410,27 +410,63 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           targetContainer.appendChild(audioBtn);
         }
 
-        // Shorts vertical target
-        const shortsActions = document.querySelector('ytd-reel-video-renderer[is-active] #actions, ytd-reel-player-overlay-renderer #actions, ytd-shorts #actions, #actions.ytd-reel-player-overlay-renderer');
-        if (shortsActions && !shortsActions.querySelector('.soul-yt-shorts-dl-btn')) {
-          const shortsBtn = document.createElement('button');
-          shortsBtn.className = 'soul-yt-shorts-dl-btn';
-          shortsBtn.textContent = '⬇ MP4';
-          shortsBtn.title = 'Скачать Shorts в высоком качестве';
-          shortsBtn.style.cssText = 'background:#065fd4;color:#ffffff;border:none;border-radius:18px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;margin:6px 0;display:inline-flex;align-items:center;justify-content:center;gap:4px;box-shadow:0 2px 8px rgba(6,95,212,0.3);';
-          shortsBtn.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            ipcRenderer.send('page:download-media', {
-              url: window.location.href,
-              filename: (document.title.replace(/[\\/:*?"<>|]/g, '') || 'youtube-shorts') + '.mp4',
-              isAudio: false,
-            });
-            shortsBtn.textContent = '✓ Загрузка';
-            setTimeout(() => { shortsBtn.textContent = '⬇ MP4'; }, 3000);
-          };
-          shortsActions.appendChild(shortsBtn);
-        }
+        // Shorts vertical target: dynamically inspect active reel renderers
+        const reelRenderers = document.querySelectorAll('ytd-reel-video-renderer[is-active], ytd-reel-video-renderer');
+        reelRenderers.forEach((reel) => {
+          const reelActions = reel.querySelector('#actions, ytd-reel-player-overlay-renderer #actions, #button-bar, #actions.ytd-reel-player-overlay-renderer') ||
+            (reel.matches('[is-active]') ? document.querySelector('ytd-shorts #actions, ytd-reel-player-overlay-renderer #actions') : null);
+          if (reelActions && !reelActions.querySelector('.soul-yt-shorts-dl-btn')) {
+            const shortsBtn = document.createElement('button');
+            shortsBtn.className = 'soul-yt-shorts-dl-btn';
+            shortsBtn.textContent = '⬇ MP4';
+            shortsBtn.title = 'Скачать Shorts в высоком качестве (MP4)';
+            shortsBtn.style.cssText = 'background:#065fd4;color:#ffffff;border:none;border-radius:18px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;margin:4px 0;display:inline-flex;align-items:center;justify-content:center;gap:4px;box-shadow:0 2px 8px rgba(6,95,212,0.4);transition:transform 0.15s ease;';
+            shortsBtn.onmouseenter = () => { shortsBtn.style.transform = 'scale(1.05)'; };
+            shortsBtn.onmouseleave = () => { shortsBtn.style.transform = 'scale(1)'; };
+            shortsBtn.onclick = (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const reelLink = reel.querySelector('a[href*="/shorts/"], a[href*="/watch?v="]') as HTMLAnchorElement | null;
+              const targetUrl = reelLink?.href || window.location.href;
+              const titleEl = reel.querySelector('h2.title, #headline, .title.ytd-reel-player-header-renderer, ytd-reel-player-header-renderer h2, #title-and-metadata');
+              const shortTitle = (titleEl?.textContent?.trim() || document.title.replace(/[\\/:*?"<>|]/g, '').trim() || 'youtube-shorts');
+              ipcRenderer.send('page:download-media', {
+                url: targetUrl,
+                filename: shortTitle + '.mp4',
+                isAudio: false,
+              });
+              shortsBtn.textContent = '✓ Загрузка';
+              setTimeout(() => { shortsBtn.textContent = '⬇ MP4'; }, 3000);
+            };
+            reelActions.appendChild(shortsBtn);
+          }
+
+          if (reelActions && !reelActions.querySelector('.soul-yt-shorts-audio-btn')) {
+            const shortsAudioBtn = document.createElement('button');
+            shortsAudioBtn.className = 'soul-yt-shorts-audio-btn';
+            shortsAudioBtn.textContent = '♫ MP3';
+            shortsAudioBtn.title = 'Скачать звук Shorts в MP3';
+            shortsAudioBtn.style.cssText = 'background:rgba(255,255,255,0.18);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#ffffff;border:1px solid rgba(255,255,255,0.3);border-radius:18px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;margin:4px 0;display:inline-flex;align-items:center;justify-content:center;gap:4px;transition:transform 0.15s ease;';
+            shortsAudioBtn.onmouseenter = () => { shortsAudioBtn.style.transform = 'scale(1.05)'; };
+            shortsAudioBtn.onmouseleave = () => { shortsAudioBtn.style.transform = 'scale(1)'; };
+            shortsAudioBtn.onclick = (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const reelLink = reel.querySelector('a[href*="/shorts/"], a[href*="/watch?v="]') as HTMLAnchorElement | null;
+              const targetUrl = reelLink?.href || window.location.href;
+              const titleEl = reel.querySelector('h2.title, #headline, .title.ytd-reel-player-header-renderer, ytd-reel-player-header-renderer h2, #title-and-metadata');
+              const shortTitle = (titleEl?.textContent?.trim() || document.title.replace(/[\\/:*?"<>|]/g, '').trim() || 'youtube-shorts');
+              ipcRenderer.send('page:download-media', {
+                url: targetUrl,
+                filename: shortTitle + '.mp3',
+                isAudio: true,
+              });
+              shortsAudioBtn.textContent = '✓ Загрузка';
+              setTimeout(() => { shortsAudioBtn.textContent = '♫ MP3'; }, 3000);
+            };
+            reelActions.appendChild(shortsAudioBtn);
+          }
+        });
       };
       injectors.push(injectYtButton);
       window.addEventListener('yt-navigate-finish', scheduleInjection);
@@ -438,6 +474,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       window.addEventListener('yt-action', scheduleInjection);
       window.addEventListener('yt-visibility-refresh', scheduleInjection);
       window.addEventListener('yt-page-data-updated', scheduleInjection);
+      window.addEventListener('popstate', scheduleInjection);
+      window.addEventListener('scroll', scheduleInjection, { passive: true });
     }
 
     // Rutube does not expose a stable action toolbar across its player layouts.

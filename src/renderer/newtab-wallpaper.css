@@ -713,7 +713,19 @@
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
 }
 
-.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-delete-btn,
+.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-delete-btn {
+  background: #ef4444;
+  border-color: rgba(255, 255, 255, 0.9);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-delete-btn:hover {
+  background: #dc2626;
+  border-color: #ffffff;
+  box-shadow: 0 3px 12px rgba(220, 38, 38, 0.6);
+}
+
 .new-tab-page:not([data-new-tab-background="plain"]) .saved-card-delete-btn {
   background: rgba(30, 30, 35, 0.85);
   border-color: rgba(255, 255, 255, 0.2);
@@ -722,7 +734,6 @@
   -webkit-backdrop-filter: blur(8px);
 }
 
-.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-delete-btn:hover,
 .new-tab-page:not([data-new-tab-background="plain"]) .saved-card-delete-btn:hover {
   background: #ef4444;
   border-color: #ef4444;
@@ -730,9 +741,43 @@
 }
 
 .new-tab-page:not([data-new-tab-background="plain"]) .newtab-modal {
-  background: rgba(24, 24, 28, 0.92);
+  background: rgba(22, 23, 29, 0.9);
   border-color: rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .newtab-modal-preview {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .newtab-modal-preview-icon {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .newtab-modal-input-wrap input {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .newtab-modal-input-wrap input:focus {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--signal, #3b82f6);
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .modal-cancel-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .modal-cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.25);
 }
 

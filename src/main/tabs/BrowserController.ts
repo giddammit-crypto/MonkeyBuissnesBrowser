@@ -1287,9 +1287,11 @@ export class BrowserController {
       const isVk = host === 'vk.com' || host.endsWith('.vk.com') || host === 'vkvideo.ru' || host.endsWith('.vkvideo.ru') || host.includes('vkuser');
 
       if (isYoutube) {
-        const ytCookies = await sourceSession.cookies.get({ domain: '.youtube.com' });
-        const googleCookies = await sourceSession.cookies.get({ domain: '.google.com' });
-        cookies = [...ytCookies, ...googleCookies];
+        const ytCookiesDot = await sourceSession.cookies.get({ domain: '.youtube.com' });
+        const ytCookiesBare = await sourceSession.cookies.get({ domain: 'youtube.com' });
+        const googleCookiesDot = await sourceSession.cookies.get({ domain: '.google.com' });
+        const googleCookiesBare = await sourceSession.cookies.get({ domain: 'google.com' });
+        cookies = [...ytCookiesDot, ...ytCookiesBare, ...googleCookiesDot, ...googleCookiesBare];
       } else if (isVk) {
         const vkDot = await sourceSession.cookies.get({ domain: '.vk.com' });
         const vkDirect = await sourceSession.cookies.get({ domain: 'vk.com' });
@@ -1471,12 +1473,14 @@ export class BrowserController {
     } catch {}
     const sourceSession = isPrivate && this.privateSession ? this.privateSession : this.browserSession;
     const outputFilename = this.mediaOutputFilename(customFilename, isAudio);
-    const expectedOutputPath = outputFilename ? path.join(downloadDir, outputFilename) : undefined;
+    const isGenericName = !customFilename || /^(?:youtube[-_]?(?:video|shorts|audio)|youtube|shorts|video|audio|untitled|stream)(?:\.(?:mp[34]|mkv|webm|m4a))?$/i.test(customFilename.trim());
+    const effectiveOutputName = isGenericName ? undefined : outputFilename;
+    const expectedOutputPath = effectiveOutputName ? path.join(downloadDir, effectiveOutputName) : undefined;
 
     const entry: DownloadEntry = {
       id,
       url,
-      filename: outputFilename || (isAudio ? 'audio.mp3' : 'video.mp4'),
+      filename: effectiveOutputName || (isAudio ? 'audio.mp3' : 'video.mp4'),
       path: expectedOutputPath,
       kind: isAudio ? 'audio' : 'video',
       isPrivate,
@@ -1494,10 +1498,12 @@ export class BrowserController {
       '--newline',
       '--no-playlist',
       '--socket-timeout', '25',
-      '--retries', '5',
-      '--fragment-retries', '5',
+      '--retries', '10',
+      '--fragment-retries', '10',
+      '--file-access-retries', '5',
       '--concurrent-fragments', '4',
       '--js-runtimes', 'node',
+      '--remote-components', 'ejs:github',
       '-P', downloadDir,
     ];
 
@@ -1508,8 +1514,7 @@ export class BrowserController {
       args.push('--referer', url.includes('vkvideo.ru') ? 'https://vkvideo.ru/' : 'https://vk.com/');
       args.push('--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36');
     } else if (targetSite === 'youtube') {
-      args.push('--extractor-args', 'youtube:player_client=web,android,ios');
-      args.push('--add-header', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36');
+      args.push('--http-chunk-size', '10M');
     }
 
     const cookieInfo = await this.getCookieArgsForUrl(url, sourceSession);
@@ -1520,7 +1525,7 @@ export class BrowserController {
     if (isAudio) {
       args.push('-x', '--audio-format', 'mp3');
     } else {
-      args.push('--merge-output-format', 'mp4', '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best');
+      args.push('--merge-output-format', 'mp4', '-f', 'bestvideo+bestaudio/bestvideo*+bestaudio*/best');
     }
     args.push(url);
 
