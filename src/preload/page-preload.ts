@@ -174,167 +174,20 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
 // Submitting a form does not guarantee data was saved (SPA handlers may cancel
 // navigation or receive a server error). Keep the guard until document navigation.
 
-// In-page media downloader helper for Pinterest, VK, and YouTube
+// In-page media downloader helper for VK and YouTube
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   const initMediaHelper = () => {
     const host = window.location.hostname;
 
-    // 1. Pinterest photo & video downloader
-    if (host.includes('pinterest.')) {
-      document.addEventListener('mouseover', (e) => {
-        const target = e.target as HTMLElement | null;
-        if (!target) return;
-        const pin = target.closest('[data-test-id="pin"], [data-test-id="pin-visual-wrapper"], .pinWrapper') as HTMLElement | null;
-        if (!pin || pin.querySelector('.soul-pin-dl')) return;
-
-        const btn = document.createElement('button');
-        btn.className = 'soul-pin-dl';
-        btn.textContent = '⬇ Скачать';
-        btn.title = 'Скачать в оригинальном качестве';
-        btn.style.cssText = 'position:absolute;top:10px;right:10px;z-index:9999;background:rgba(230,0,35,0.92);color:#fff;border:none;border-radius:20px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.35);transition:transform 0.15s ease,opacity 0.15s ease;';
-        btn.onmouseenter = () => { btn.style.transform = 'scale(1.05)'; };
-        btn.onmouseleave = () => { btn.style.transform = 'scale(1)'; };
-        btn.onclick = (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          const img = pin.querySelector('img[src*="pinimg.com"]') as HTMLImageElement | null;
-          if (img && img.src) {
-            const orig = img.src.replace(/\/(?:236|474|736)x\//, '/originals/');
-            ipcRenderer.send('page:download-media', { url: orig, filename: 'pinterest-photo.jpg' });
-            btn.textContent = '✓ Скачивается';
-            setTimeout(() => { btn.textContent = '⬇ Скачать'; }, 2000);
-            return;
-          }
-          const vid = pin.querySelector('video') as HTMLVideoElement | null;
-          if (vid && vid.src && vid.src.startsWith('http')) {
-            ipcRenderer.send('page:download-media', { url: vid.src, filename: 'pinterest-video.mp4' });
-            btn.textContent = '✓ Скачивается';
-            setTimeout(() => { btn.textContent = '⬇ Скачать'; }, 2000);
-          }
-        };
-        const pos = window.getComputedStyle(pin).position;
-        if (pos === 'static') pin.style.position = 'relative';
-        pin.appendChild(btn);
-      }, { passive: true });
-    }
-
-    // Dynamic theme colors matching soulm8te browser wallpaper & appearance
-    let currentThemeInfo = {
-      theme: 'dark',
-      wallpaper: 'portrait',
-      appearance: 'detroit',
-      accent: 'blue',
-    };
-    try {
-      const resp = ipcRenderer.sendSync('page:get-theme');
-      if (resp && typeof resp === 'object') {
-        currentThemeInfo = resp;
-      }
-    } catch {}
-
-    const getThemeColors = () => {
-      const app = currentThemeInfo.appearance;
-      const wall = currentThemeInfo.wallpaper;
-      if (app === 'cyberpink' || wall === 'cyberpink') {
-        return {
-          accent: '#ff4081',
-          signal: '#ff2a85',
-          soft: 'rgba(255, 64, 129, 0.16)',
-          bg: '#0a0b10',
-          surface: '#12131b',
-          subtle: '#191b26',
-          border: '#2c2538',
-          borderStrong: '#ff4081',
-        };
-      } else if (app === 'cyberpink-fuji' || wall === 'cyberpink-fuji') {
-        return {
-          accent: '#c084fc',
-          signal: '#d946ef',
-          soft: 'rgba(192, 132, 252, 0.18)',
-          bg: '#0b0914',
-          surface: '#130f24',
-          subtle: '#1c1635',
-          border: '#31214d',
-          borderStrong: '#c084fc',
-        };
-      } else if (app === 'cyber-butterfly' || wall === 'cyber-butterfly') {
-        return {
-          accent: '#818cf8',
-          signal: '#a78bfa',
-          soft: 'rgba(129, 140, 248, 0.18)',
-          bg: '#0b0d18',
-          surface: '#121526',
-          subtle: '#191c33',
-          border: '#272c4e',
-          borderStrong: '#818cf8',
-        };
-      } else if (app === 'tokyo-night' || wall === 'tokyo-night') {
-        return {
-          accent: '#00f0ff',
-          signal: '#38bdf8',
-          soft: 'rgba(0, 240, 255, 0.18)',
-          bg: '#06070a',
-          surface: '#0c0e15',
-          subtle: '#131622',
-          border: '#1c2233',
-          borderStrong: '#00f0ff',
-        };
-      } else if (app === 'celestial-palace' || wall === 'celestial-palace') {
-        return {
-          accent: '#38bdf8',
-          signal: '#60a5fa',
-          soft: 'rgba(56, 189, 248, 0.18)',
-          bg: '#0a0e17',
-          surface: '#101624',
-          subtle: '#182033',
-          border: '#222d45',
-          borderStrong: '#38bdf8',
-        };
-      } else if (app === 'detroit' || wall === 'portrait') {
-        return {
-          accent: '#00d2ff',
-          signal: '#38bdf8',
-          soft: 'rgba(0, 210, 255, 0.15)',
-          bg: '#0c1017',
-          surface: '#121824',
-          subtle: '#192233',
-          border: '#233145',
-          borderStrong: '#00d2ff',
-        };
-      }
-      return {
-        accent: '#8cbce8',
-        signal: '#35678f',
-        soft: 'rgba(140, 188, 232, 0.15)',
-        bg: '#171b20',
-        surface: '#20262d',
-        subtle: '#252d35',
-        border: '#39434d',
-        borderStrong: '#8cbce8',
-      };
-    };
-
-    let updateVkTheme: ((force?: boolean) => void) | undefined;
-    let updateYtTheme: ((force?: boolean) => void) | undefined;
-
-    ipcRenderer.on('page:theme-updated', (_event, payload) => {
-      if (payload && typeof payload === 'object') {
-        currentThemeInfo = payload;
-        updateVkTheme?.(true);
-        updateYtTheme?.(true);
-      }
-    });
-
-    // 2. VK video, music & photo downloader & Soulm8te Theme
+    // VK video, music & photo downloader
     if (host.includes('vk.com') || host.includes('vkvideo.ru')) {
       const injectVkButton = () => {
-        const colors = getThemeColors();
         const pvBottom = document.getElementById('pv_bottom_info');
         if (pvBottom && !pvBottom.querySelector('.soul-vk-dl')) {
           const btn = document.createElement('a');
           btn.className = 'soul-vk-dl pv_bottom_action';
           btn.textContent = '⬇ Скачать оригинал';
-          btn.style.cssText = `color:${colors.accent};margin-left:14px;cursor:pointer;font-weight:500;`;
+          btn.style.cssText = 'color:#2563eb;margin-left:14px;cursor:pointer;font-weight:500;';
           btn.onclick = (e) => {
             e.preventDefault();
             const pvImg = document.querySelector('#pv_photo img') as HTMLImageElement | null;
@@ -351,7 +204,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           const btn = document.createElement('a');
           btn.className = 'soul-vk-vid-btn';
           btn.textContent = '⬇ Скачать видео (MP4)';
-          btn.style.cssText = `color:${colors.accent};margin-left:12px;cursor:pointer;font-weight:600;font-size:13px;display:inline-flex;align-items:center;background:${colors.soft};padding:6px 12px;border-radius:12px;border:1px solid ${colors.accent};`;
+          btn.style.cssText = 'color:#2563eb;margin-left:12px;cursor:pointer;font-weight:600;font-size:13px;display:inline-flex;align-items:center;background:rgba(37,99,235,0.12);padding:6px 12px;border-radius:12px;border:1px solid #2563eb;';
           btn.onclick = (e) => {
             e.preventDefault();
             let targetVideoUrl = window.location.href;
@@ -387,7 +240,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           btn.className = 'soul-vk-top-audio-dl';
           btn.textContent = '⬇ MP3';
           btn.title = 'Скачать текущий трек MP3';
-          btn.style.cssText = `background:${colors.soft};color:${colors.accent};border:1px solid ${colors.accent};border-radius:12px;padding:3px 9px;font-size:12px;font-weight:600;cursor:pointer;margin-left:10px;display:inline-flex;align-items:center;vertical-align:middle;`;
+          btn.style.cssText = 'background:rgba(37,99,235,0.12);color:#2563eb;border:1px solid #2563eb;border-radius:12px;padding:3px 9px;font-size:12px;font-weight:600;cursor:pointer;margin-left:10px;display:inline-flex;align-items:center;vertical-align:middle;';
           btn.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -417,7 +270,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           dl.className = 'soul-vk-row-dl';
           dl.textContent = '⬇';
           dl.title = 'Скачать MP3';
-          dl.style.cssText = `background:${colors.soft};color:${colors.accent};border:none;border-radius:8px;padding:2px 6px;font-size:12px;font-weight:bold;cursor:pointer;margin-left:6px;vertical-align:middle;`;
+          dl.style.cssText = 'background:rgba(37,99,235,0.12);color:#2563eb;border:none;border-radius:8px;padding:2px 6px;font-size:12px;font-weight:bold;cursor:pointer;margin-left:6px;vertical-align:middle;';
           dl.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -453,70 +306,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       };
       setInterval(injectVkButton, 1000);
       window.addEventListener('popstate', () => setTimeout(injectVkButton, 300));
-
-      // Inject Soulm8te theme for VK matching browser wallpaper
-      function injectVkTheme(forceUpdate = false) {
-        let style = document.getElementById('soulm8te-vk-theme') as HTMLStyleElement | null;
-        if (!style) {
-          style = document.createElement('style');
-          style.id = 'soulm8te-vk-theme';
-          document.head?.appendChild(style);
-        } else if (!forceUpdate) {
-          return;
-        }
-        const colors = getThemeColors();
-        style.textContent = `
-          body, #page_wrap, #page_body {
-            background: ${colors.bg} !important;
-            color: #f7f8fa !important;
-          }
-          #page_header_wrap, #page_header {
-            background: ${colors.surface} !important;
-            border-bottom: 1px solid ${colors.border} !important;
-          }
-          .page_block, .post, .feed_row, .im-page {
-            background: ${colors.surface} !important;
-            border: 1px solid ${colors.border} !important;
-            border-radius: 14px !important;
-            color: #f7f8fa !important;
-            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.22) !important;
-          }
-          .side_bar_inner .left_row {
-            border-radius: 10px !important;
-            color: #bdc6d0 !important;
-            transition: all 0.15s ease !important;
-          }
-          .side_bar_inner .left_row:hover {
-            background: ${colors.subtle} !important;
-            color: ${colors.accent} !important;
-          }
-          a {
-            color: ${colors.accent} !important;
-          }
-          .submit_post_box, .post_field {
-            background: ${colors.subtle} !important;
-            border: 1px solid ${colors.border} !important;
-            border-radius: 12px !important;
-            color: #f7f8fa !important;
-          }
-        `;
-      };
-      updateVkTheme = injectVkTheme;
-      injectVkTheme();
-      setInterval(() => injectVkTheme(false), 2000);
     }
 
-    // 3. YouTube native stream downloader & Soulm8te Theme
+    // YouTube native stream downloader
     if (host.includes('youtube.com')) {
       const injectYtButton = () => {
-        const colors = getThemeColors();
         const targetContainer = document.querySelector('#owner, #actions #top-level-buttons-computed, ytd-watch-metadata #actions');
         if (targetContainer && !document.querySelector('.soul-yt-dl-btn')) {
           const btn = document.createElement('button');
           btn.className = 'soul-yt-dl-btn';
           btn.textContent = '⬇ Скачать MP4';
           btn.title = 'Прямое скачивание видео в высоком качестве';
-          btn.style.cssText = `background:linear-gradient(135deg, ${colors.surface} 0%, ${colors.bg} 100%);color:${colors.accent};border:1px solid ${colors.accent};border-radius:18px;padding:0 16px;height:36px;font-size:13px;font-weight:600;cursor:pointer;margin-left:8px;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 12px ${colors.soft};transition:all 0.2s ease;`;
+          btn.style.cssText = 'background:#065fd4;color:#ffffff;border:none;border-radius:18px;padding:0 16px;height:36px;font-size:13px;font-weight:600;cursor:pointer;margin-left:8px;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(6,95,212,0.3);transition:transform 0.2s ease;';
           btn.onmouseenter = () => { btn.style.transform = 'scale(1.04)'; };
           btn.onmouseleave = () => { btn.style.transform = 'scale(1)'; };
           btn.onclick = (e) => {
@@ -535,98 +336,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       setInterval(injectYtButton, 1200);
       window.addEventListener('yt-navigate-finish', () => setTimeout(injectYtButton, 400));
       window.addEventListener('spfdone', () => setTimeout(injectYtButton, 400));
-
-      // Inject Soulm8te Theme for YouTube matching browser wallpaper
-      function injectYtTheme(forceUpdate = false) {
-        let style = document.getElementById('soulm8te-yt-theme') as HTMLStyleElement | null;
-        if (!style) {
-          style = document.createElement('style');
-          style.id = 'soulm8te-yt-theme';
-          document.head?.appendChild(style);
-        } else if (!forceUpdate) {
-          return;
-        }
-        const colors = getThemeColors();
-        style.textContent = `
-          :root {
-            --yt-spec-base-background: ${colors.bg} !important;
-            --yt-spec-raised-background: ${colors.surface} !important;
-            --yt-spec-menu-background: ${colors.surface} !important;
-            --yt-spec-brand-background-primary: ${colors.bg} !important;
-            --yt-spec-general-background-a: ${colors.bg} !important;
-            --yt-spec-general-background-b: ${colors.surface} !important;
-            --yt-spec-badge-chip-background: ${colors.subtle} !important;
-            --yt-spec-button-chip-background-hover: ${colors.soft} !important;
-            --yt-spec-touch-response: ${colors.signal} !important;
-            --yt-spec-text-primary: #f7f8fa !important;
-            --yt-spec-text-secondary: #bdc6d0 !important;
-            --yt-spec-icon-active-other: ${colors.accent} !important;
-          }
-          html[dark], [dark] {
-            background-color: ${colors.bg} !important;
-          }
-          #page-manager.ytd-app,
-          ytd-app,
-          ytd-watch-flexy,
-          #primary.ytd-watch-flexy,
-          #secondary.ytd-watch-flexy,
-          #columns.ytd-watch-flexy {
-            background: ${colors.bg} !important;
-          }
-          #masthead-container.ytd-app,
-          ytd-masthead {
-            background: ${colors.surface} !important;
-            border-bottom: 1px solid ${colors.border} !important;
-          }
-          #container.ytd-searchbox {
-            background: ${colors.subtle} !important;
-            border: 1px solid ${colors.border} !important;
-            border-radius: 20px 0 0 20px !important;
-          }
-          #search-icon-legacy.ytd-searchbox {
-            background: ${colors.surface} !important;
-            border: 1px solid ${colors.border} !important;
-            border-left: 0 !important;
-            border-radius: 0 20px 20px 0 !important;
-          }
-          ytd-rich-item-renderer,
-          ytd-compact-video-renderer {
-            background: ${colors.surface} !important;
-            border: 1px solid ${colors.border} !important;
-            border-radius: 12px !important;
-            padding: 8px !important;
-            transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease !important;
-          }
-          ytd-rich-item-renderer:hover,
-          ytd-compact-video-renderer:hover {
-            border-color: ${colors.accent} !important;
-            transform: translateY(-2px) !important;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;
-          }
-          ytd-thumbnail img,
-          #thumbnail.ytd-thumbnail {
-            border-radius: 9px !important;
-          }
-          yt-chip-cloud-chip-renderer {
-            background: ${colors.subtle} !important;
-            border: 1px solid ${colors.border} !important;
-            border-radius: 16px !important;
-          }
-          yt-chip-cloud-chip-renderer[selected] {
-            background: ${colors.soft} !important;
-            border-color: ${colors.accent} !important;
-            color: ${colors.accent} !important;
-          }
-          ytd-guide-renderer,
-          ytd-mini-guide-renderer {
-            background: ${colors.surface} !important;
-            border-right: 1px solid ${colors.border} !important;
-          }
-        `;
-      };
-      updateYtTheme = injectYtTheme;
-      injectYtTheme();
-      setInterval(() => injectYtTheme(false), 2000);
     }
 
     // 4. Video & Audio media detection for download button checkmark

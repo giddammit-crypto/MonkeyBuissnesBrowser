@@ -159,8 +159,30 @@ export const BrowsecModal: React.FC<BrowsecModalProps> = ({
 
   const activeRulesCount = state.smartRules.filter((r) => r.enabled).length;
 
+  const popoverRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const handlePointer = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        const target = e.target as HTMLElement | null;
+        if (!target?.closest(".browsec-toolbar-btn")) {
+          onClose();
+        }
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [onClose]);
+
   return (
-    <div className="browsec-popover" role="dialog" aria-label="soulm8te VPN">
+    <div ref={popoverRef} className="browsec-popover" role="dialog" aria-label="soulm8te VPN">
       {/* Popover Header */}
       <div className="browsec-header">
         <div className="browsec-brand">

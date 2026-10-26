@@ -21,7 +21,10 @@ if (!app.commandLine.hasSwitch('user-data-dir')) {
 app.setName('soulm8te');
 app.setAppUserModelId('soulm8te');
 app.userAgentFallback = getChromeUserAgent();
-nativeTheme.themeSource = 'dark';
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('disable-features', 'Vulkan');
+  app.commandLine.appendSwitch('use-webgpu-adapter', 'opengles');
+}
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
 
@@ -154,6 +157,10 @@ function registerIpc(): void {
   ipcMain.handle('browser:reorder-tab', (event, tabId: string, targetTabId: string) => requireShell(event).reorderTab(tabId, targetTabId));
   ipcMain.handle('browser:download-media-url', (event, url: string, filename?: string, isAudio?: boolean) => requireShell(event).downloadMediaUrl(url, filename, isAudio));
   ipcMain.handle('browser:delete-download', (event, downloadId: string, deleteFile?: boolean) => requireShell(event).deleteDownload(downloadId, deleteFile));
+  ipcMain.handle('browser:retry-download', (event, downloadId: string) => requireShell(event).retryDownload(downloadId));
+  ipcMain.on('browser:start-download-drag', (event, downloadId: string) => {
+    controller?.startDownloadDrag(downloadId, event.sender);
+  });
   ipcMain.handle('browser:add-google-account', (event, email: string, name?: string) => requireShell(event).addGoogleAccount(email, name));
   ipcMain.handle('browser:switch-google-account', (event, accountId: string) => requireShell(event).switchGoogleAccount(accountId));
   ipcMain.handle('browser:remove-google-account', (event, accountId: string) => requireShell(event).removeGoogleAccount(accountId));
@@ -174,32 +181,6 @@ function registerIpc(): void {
     if (data?.email) {
       controller?.registerGoogleAccount(data.email, data.name, data.avatar);
     }
-  });
-  ipcMain.on('page:get-theme', (event) => {
-    const settings = controller?.stores.settings.get();
-    const bg = settings?.newTabBackground ?? 'portrait';
-    let appearance = settings?.appearancePreset ?? 'classic';
-    if (!appearance || appearance === 'classic') {
-      if (bg === 'cyberpink') appearance = 'cyberpink';
-      else if (bg === 'cyberpink-fuji') appearance = 'cyberpink-fuji';
-      else if (bg === 'cyber-butterfly') appearance = 'cyber-butterfly';
-      else if (bg === 'tokyo-night') appearance = 'tokyo-night';
-      else if (bg === 'celestial-palace') appearance = 'celestial-palace';
-      else if (bg === 'portrait') appearance = 'detroit';
-    }
-    event.returnValue = {
-      theme: settings?.theme ?? 'dark',
-      wallpaper: bg,
-      appearance,
-      accent: settings?.accentColor ?? (
-        bg === 'cyberpink' ? 'pink'
-        : bg === 'cyberpink-fuji' ? 'violet'
-        : bg === 'cyber-butterfly' ? 'violet'
-        : bg === 'tokyo-night' ? 'blue'
-        : bg === 'celestial-palace' ? 'teal'
-        : 'blue'
-      ),
-    };
   });
   ipcMain.handle('window:minimize', (event) => requireShell(event).minimizeWindow());
   ipcMain.handle('window:toggle-maximize', (event) => requireShell(event).toggleMaximizeWindow());

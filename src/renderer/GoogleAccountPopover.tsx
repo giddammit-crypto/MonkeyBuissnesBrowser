@@ -29,6 +29,27 @@ export function GoogleAccountPopover({
   const [showAddForm, setShowAddForm] = useState(false);
   const [addEmail, setAddEmail] = useState("");
   const [addName, setAddName] = useState("");
+  const popoverRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    const handlePointer = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        const target = e.target as HTMLElement | null;
+        if (!target?.closest(".account-toolbar-btn")) {
+          onClose();
+        }
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [onClose]);
 
   const handleAddAccount = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,6 +65,7 @@ export function GoogleAccountPopover({
 
   return (
     <div
+      ref={popoverRef}
       className="google-popover"
       role="dialog"
       aria-label="Аккаунт Google"

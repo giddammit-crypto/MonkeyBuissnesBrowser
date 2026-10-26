@@ -681,10 +681,6 @@ export const BROWSEC_COUNTRIES: Record<string, BrowsecCountry> = {
       {
         "host": "nl45.cdnbridge.org",
         "port": 443
-      },
-      {
-        "host": "nl140.rapidstaticserve.cc",
-        "port": 443
       }
     ],
     "flag": "🇳🇱",

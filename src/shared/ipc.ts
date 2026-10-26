@@ -41,6 +41,8 @@ export interface BrowserApi {
   stopFindInPage(tabId: string): Promise<void>;
   controlDownload(downloadId: string, action: DownloadAction): Promise<void>;
   deleteDownload(downloadId: string, deleteFile?: boolean): Promise<void>;
+  retryDownload(downloadId: string): Promise<void>;
+  startDownloadDrag(downloadId: string): void;
   setPrivateProxy(proxy: string): Promise<void>;
   closePrivateTabs(): Promise<void>;
   closeTab(tabId: string): Promise<void>;

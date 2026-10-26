@@ -83,6 +83,7 @@ export class BrowserController {
   private activeTabId = '';
   private activeWorkspaceId = 'personal';
   private chromeBounds: ChromeBounds = { x: 176, y: 112, width: 1200, height: 700 };
+  private lastValidBounds: ChromeBounds = { x: 200, y: 144, width: 1240, height: 756 };
   private snapshotListener?: (snapshot: BrowserSnapshot) => void;
   private eventListener?: (event: { type: string; tab?: TabSnapshot; message?: string }) => void;
   private shellContentsId?: number;
@@ -112,6 +113,8 @@ export class BrowserController {
 
   constructor() {
     this.stores = new BrowserStores(app.getPath('userData'));
+    const initialSettings = this.stores.settings.get();
+    nativeTheme.themeSource = initialSettings.theme || 'system';
     this.downloads = this.stores.downloads.get();
     this.normalizeDownloads();
     this.passwords = new PasswordStore(app.getPath('userData'));
@@ -695,6 +698,42 @@ export class BrowserController {
     if (download?.path) shell.showItemInFolder(download.path);
   }
 
+  retryDownload(downloadId: string): void {
+    const download = this.downloads.find((entry) => entry.id === downloadId);
+    if (!download?.url) return;
+    if (download.kind === 'video' || download.kind === 'audio') {
+      this.downloadMediaUrl(download.url, download.filename, download.kind === 'audio');
+    } else {
+      const activeTab = this.tabs.get(this.activeTabId);
+      if (activeTab?.view?.webContents && !activeTab.view.webContents.isDestroyed()) {
+        this.downloadMedia(activeTab.view.webContents, download.url);
+      } else {
+        this.browserSession.downloadURL(download.url);
+      }
+    }
+  }
+
+  startDownloadDrag(downloadId: string, sender: Electron.WebContents): void {
+    const download = this.downloads.find((entry) => entry.id === downloadId);
+    if (!download?.path || download.state !== 'completed') return;
+    if (!fs.existsSync(download.path)) return;
+
+    let iconPath = path.join(__dirname, '../../assets/icons/png/32x32.png');
+    if (!fs.existsSync(iconPath)) {
+      iconPath = path.join(app.getAppPath(), 'assets/icons/png/32x32.png');
+    }
+    const icon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+
+    try {
+      sender.startDrag({
+        file: download.path,
+        icon,
+      });
+    } catch (err) {
+      console.error('[startDownloadDrag] Failed to start drag:', err);
+    }
+  }
+
   saveBookmark(input: { id?: string; title: string; url: string }): BookmarkEntry {
     const bookmark = this.stores.saveBookmark(input);
     this.emitSnapshot();
@@ -746,7 +785,7 @@ export class BrowserController {
         searchEngine,
         newTabBackground: normalizeNewTabBackground(patch.newTabBackground === undefined ? current.newTabBackground : patch.newTabBackground),
         appearancePreset: patch.appearancePreset === 'detroit' || patch.appearancePreset === 'classic' || patch.appearancePreset === 'cyberpink' || patch.appearancePreset === 'cyberpink-fuji' ? patch.appearancePreset : current.appearancePreset ?? 'classic',
-        accentColor: ['blue', 'teal', 'violet', 'rose', 'pink'].includes(patch.accentColor ?? '') ? patch.accentColor : current.accentColor ?? 'blue',
+        accentColor: ['blue', 'teal', 'violet', 'rose', 'pink', 'white', 'milk', 'graphite'].includes(patch.accentColor ?? '') ? patch.accentColor as BrowserSettings['accentColor'] : current.accentColor ?? 'blue',
         wallpaperDim: typeof patch.wallpaperDim === 'number' && Number.isFinite(patch.wallpaperDim) ? Math.max(0, Math.min(75, Math.round(patch.wallpaperDim))) : current.wallpaperDim ?? 0,
         sleepAfterMinutes,
         adBlockEnabled: typeof patch.adBlockEnabled === 'boolean' ? patch.adBlockEnabled : current.adBlockEnabled ?? true,
@@ -757,30 +796,13 @@ export class BrowserController {
         restoreSession: typeof patch.restoreSession === 'boolean' ? patch.restoreSession : current.restoreSession ?? true,
       };
     });
+    if (next.theme) {
+      nativeTheme.themeSource = next.theme;
+    }
     this.adBlock.engine.setEnabled(next.adBlockEnabled !== false);
     this.privateAdBlock.engine.setEnabled(next.adBlockEnabled !== false);
     this.adBlock.engine.setExceptions(next.adBlockExceptions ?? []);
     this.privateAdBlock.engine.setExceptions(next.adBlockExceptions ?? []);
-    const bg = next.newTabBackground ?? 'portrait';
-    let appearance = next.appearancePreset ?? 'classic';
-    if (!appearance || appearance === 'classic') {
-      if (bg === 'cyberpink') appearance = 'cyberpink';
-      else if (bg === 'cyberpink-fuji') appearance = 'cyberpink-fuji';
-      else if (bg === 'portrait') appearance = 'detroit';
-    }
-    const themePayload = {
-      theme: next.theme ?? 'dark',
-      wallpaper: bg,
-      appearance,
-      accent: next.accentColor ?? (bg === 'cyberpink' ? 'pink' : bg === 'cyberpink-fuji' ? 'violet' : 'blue'),
-    };
-    for (const tab of this.tabs.values()) {
-      if (tab.view?.webContents && !tab.view.webContents.isDestroyed()) {
-        try {
-          tab.view.webContents.send('page:theme-updated', themePayload);
-        } catch {}
-      }
-    }
     this.emitSnapshot();
     return next;
   }
@@ -986,30 +1008,40 @@ export class BrowserController {
 
   setChromeBounds(bounds: ChromeBounds): void {
     const safeNumber = (value: number, fallback: number): number => Number.isFinite(value) ? Math.round(value) : fallback;
-    this.chromeBounds = {
-      x: Math.max(0, safeNumber(bounds.x, 0)),
-      y: Math.max(0, safeNumber(bounds.y, 0)),
-      width: Math.max(0, safeNumber(bounds.width, 0)),
-      height: Math.max(0, safeNumber(bounds.height, 0)),
-    };
+    const w = safeNumber(bounds.width, 0);
+    const h = safeNumber(bounds.height, 0);
+    if (w > 0 && h > 0) {
+      this.chromeBounds = {
+        x: Math.max(0, safeNumber(bounds.x, 0)),
+        y: Math.max(0, safeNumber(bounds.y, 0)),
+        width: w,
+        height: h,
+      };
+      this.lastValidBounds = { ...this.chromeBounds };
+    }
     this.refreshViewBounds();
   }
 
   setPopoverOpen(open: boolean): void {
     if (!this.window || this.window.isDestroyed() || this.disposed) return;
     const activeTab = this.tabs.get(this.activeTabId);
+    const children = this.window.contentView.children;
+    const isShellTop = children.length > 0 && children[children.length - 1] === this.shellView;
+
     if (open) {
-      if (this.shellView && !this.shellView.webContents.isDestroyed()) {
-        this.window.contentView.removeChildView(this.shellView);
+      if (this.shellView && !this.shellView.webContents.isDestroyed() && !isShellTop) {
+        try { this.window.contentView.removeChildView(this.shellView); } catch {}
         this.window.contentView.addChildView(this.shellView);
-        this.shellView.webContents.focus();
       }
     } else {
       if (activeTab?.view && !activeTab.view.webContents.isDestroyed() && !activeTab.isInternal && activeTab.lifecycle !== 'crashed') {
-        try { this.window.contentView.removeChildView(activeTab.view); } catch {}
-        this.window.contentView.addChildView(activeTab.view);
-        this.applyBounds(activeTab);
-        activeTab.view.webContents.focus();
+        const isTabTop = children.length > 0 && children[children.length - 1] === activeTab.view;
+        if (!isTabTop) {
+          try { this.window.contentView.removeChildView(activeTab.view); } catch {}
+          this.window.contentView.addChildView(activeTab.view);
+          this.applyBounds(activeTab);
+          activeTab.view.webContents.focus();
+        }
       }
     }
   }
@@ -1095,7 +1127,89 @@ export class BrowserController {
       }
     }
 
-    // 2. Normalize VK modal URLs (feed, im, wall with z=video... or z=clip...)
+    // 2. Pinterest photo & video intelligent extraction
+    if (url.includes('pinterest.') || url.includes('pin.it') || url.includes('pinimg.com')) {
+      if (url.includes('pinimg.com')) {
+        const origUrl = url.replace(/\/(?:236|474|564|736)x\//, '/originals/');
+        if (activeTab?.view?.webContents && !activeTab.view.webContents.isDestroyed()) {
+          this.downloadMedia(activeTab.view.webContents, origUrl);
+        } else {
+          this.browserSession.downloadURL(origUrl);
+        }
+        return;
+      }
+
+      if (activeTab?.view?.webContents && !activeTab.view.webContents.isDestroyed()) {
+        const contents = activeTab.view.webContents;
+        contents.executeJavaScript(`
+          (function() {
+            try {
+              // A. Parse __PWS_DATA__ for highest quality direct MP4 video or original image
+              const pwsScript = document.getElementById('__PWS_DATA__');
+              if (pwsScript && pwsScript.textContent) {
+                try {
+                  const pwsStr = pwsScript.textContent;
+                  const mp4Matches = pwsStr.match(/https:\\/\\/[^"'\\s]+\\.mp4/g);
+                  if (mp4Matches && mp4Matches.length > 0) {
+                    const bestMp4 = mp4Matches.find(u => u.includes('720p') || u.includes('1080p') || u.includes('V_720P')) || mp4Matches[0];
+                    return { type: 'video', url: bestMp4 };
+                  }
+                  const origMatches = pwsStr.match(/https:\\/\\/i\\.pinimg\\.com\\/originals\\/[^"'\\s]+(?:\\.jpg|\\.png|\\.webp)/g);
+                  if (origMatches && origMatches.length > 0) {
+                    return { type: 'image', url: origMatches[0] };
+                  }
+                } catch {}
+              }
+
+              // B. Direct video element
+              const video = document.querySelector('video');
+              if (video && video.src && video.src.startsWith('http')) return { type: 'video', url: video.src };
+              const source = video?.querySelector('source');
+              if (source && source.src && source.src.startsWith('http')) return { type: 'video', url: source.src };
+
+              // C. Main pin image - pick largest on page
+              const candidates = Array.from(document.querySelectorAll('img[src*="pinimg.com"]'));
+              if (candidates.length > 0) {
+                candidates.sort((a, b) => {
+                  const areaA = (a.naturalWidth || a.clientWidth || 0) * (a.naturalHeight || a.clientHeight || 0);
+                  const areaB = (b.naturalWidth || b.clientWidth || 0) * (b.naturalHeight || b.clientHeight || 0);
+                  return areaB - areaA;
+                });
+                const best = candidates[0];
+                if (best && best.src) {
+                  return { type: 'image', url: best.src.replace(/\\/(?:236|474|564|736)x\\//, '/originals/') };
+                }
+              }
+
+              // D. OpenGraph fallbacks
+              const ogVideo = document.querySelector('meta[property="og:video"]')?.getAttribute('content');
+              if (ogVideo && ogVideo.startsWith('http')) return { type: 'video', url: ogVideo };
+
+              const ogImg = document.querySelector('meta[property="og:image"]')?.getAttribute('content');
+              if (ogImg && ogImg.startsWith('http')) {
+                return { type: 'image', url: ogImg.replace(/\\/(?:236|474|564|736)x\\//, '/originals/') };
+              }
+            } catch {}
+            return null;
+          })()
+        `).then((res: { type: string; url: string } | null) => {
+          if (res?.url && isSafeWebUrl(res.url)) {
+            if (res.type === 'video' && res.url.includes('.m3u8')) {
+              void this.downloadWithYtDlp(res.url, filename, false);
+            } else {
+              this.downloadMedia(contents, res.url);
+            }
+          } else {
+            void this.downloadWithYtDlp(url, filename, isAudio);
+          }
+        }).catch(() => {
+          void this.downloadWithYtDlp(url, filename, isAudio);
+        });
+        return;
+      }
+    }
+
+    // 3. Normalize VK modal URLs (feed, im, wall with z=video... or z=clip...)
     let normalizedUrl = url;
     if (url.includes('vk.com') || url.includes('vkvideo.ru')) {
       const videoMatch = url.match(/(?:z=)?video(-?\d+_\d+)/);
@@ -1113,8 +1227,7 @@ export class BrowserController {
       normalizedUrl.includes('vk.com/video') ||
       normalizedUrl.includes('vkvideo.ru') ||
       normalizedUrl.includes('vk.com/clip') ||
-      normalizedUrl.includes('rutube.ru') ||
-      normalizedUrl.includes('pinterest.com');
+      normalizedUrl.includes('rutube.ru');
 
     if (isVideoSite) {
       void this.downloadWithYtDlp(normalizedUrl, filename, isAudio);
@@ -1574,6 +1687,7 @@ export class BrowserController {
       nodeIntegrationInSubFrames: true, nodeIntegrationInWorker: false, webviewTag: false,
       backgroundThrottling: true, spellcheck: true,
     } });
+    view.setBackgroundColor('#171C23');
     tab.view = view;
     tab.webContentsId = view.webContents.id;
     tab.isLoading = !popupOptions || initialUrl !== 'about:blank';
@@ -1997,9 +2111,14 @@ export class BrowserController {
     const bounds = this.window?.getContentBounds();
     if (!bounds) return;
     if (this.htmlFullscreenTabId === tab.id) { tab.view.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height }); return; }
-    const x = Math.min(this.chromeBounds.x, bounds.width);
-    const y = Math.min(this.chromeBounds.y, bounds.height);
-    tab.view.setBounds({ x, y, width: Math.min(this.chromeBounds.width, bounds.width - x), height: Math.min(this.chromeBounds.height, bounds.height - y) });
+    const chrome = (this.chromeBounds.width > 0 && this.chromeBounds.height > 0)
+      ? this.chromeBounds
+      : (this.lastValidBounds.width > 0 && this.lastValidBounds.height > 0)
+        ? this.lastValidBounds
+        : { x: 200, y: 144, width: Math.max(0, bounds.width - 200), height: Math.max(0, bounds.height - 144) };
+    const x = Math.min(chrome.x, bounds.width);
+    const y = Math.min(chrome.y, bounds.height);
+    tab.view.setBounds({ x, y, width: Math.min(chrome.width, bounds.width - x), height: Math.min(chrome.height, bounds.height - y) });
   }
 
   private exitPageFullscreen(): void {
@@ -2221,18 +2340,22 @@ export class BrowserController {
           }).catch(() => undefined);
         },
       });
-    } else if (currentUrl.includes('pinterest.com') || (params.srcURL && params.srcURL.includes('pinimg.com'))) {
+    } else if (currentUrl.includes('pinterest.') || currentUrl.includes('pin.it') || (params.srcURL && params.srcURL.includes('pinimg.com'))) {
       template.push({
         label: 'Скачать фото Pinterest (в максимальном качестве)',
         click: () => {
           void contents.executeJavaScript(`
             (function(x, y) {
               try {
-                const el = document.elementFromPoint(x, y);
-                if (!el) return null;
-                const img = el.querySelector('img[src*="pinimg.com"]') || el.closest('[data-test-id="pin"]')?.querySelector('img') || (el.tagName === 'IMG' && el.src.includes('pinimg.com') ? el : null);
-                if (img && img.src) {
-                  return img.src.replace(/\\/(?:236|474|736)x\\//, '/originals/');
+                const elements = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [document.elementFromPoint(x, y)];
+                for (const el of elements) {
+                  if (!el) continue;
+                  const img = (el.tagName === 'IMG' && el.src && el.src.includes('pinimg.com'))
+                    ? el
+                    : el.querySelector('img[src*="pinimg.com"]') || el.closest('[data-test-id*="pin"], [role="listitem"]')?.querySelector('img[src*="pinimg.com"]');
+                  if (img && img.src) {
+                    return img.src.replace(/\\/(?:236|474|564|736)x\\//, '/originals/');
+                  }
                 }
               } catch {}
               return null;
@@ -2241,7 +2364,7 @@ export class BrowserController {
             if (typeof pinPhotoUrl === 'string' && isSafeWebUrl(pinPhotoUrl)) {
               this.downloadMedia(contents, pinPhotoUrl);
             } else if (params.srcURL && isSafeWebUrl(params.srcURL)) {
-              const orig = params.srcURL.replace(/\/(?:236|474|736)x\//, '/originals/');
+              const orig = params.srcURL.replace(/\/(?:236|474|564|736)x\//, '/originals/');
               this.downloadMedia(contents, orig);
             }
           }).catch(() => undefined);
@@ -2253,10 +2376,16 @@ export class BrowserController {
           void contents.executeJavaScript(`
             (function(x, y) {
               try {
-                const el = document.elementFromPoint(x, y);
-                if (!el) return null;
-                const vid = el.querySelector('video') || el.closest('[data-test-id="pin"]')?.querySelector('video') || (el.tagName === 'VIDEO' ? el : null);
-                if (vid && vid.src && vid.src.startsWith('http')) return vid.src;
+                const elements = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [document.elementFromPoint(x, y)];
+                for (const el of elements) {
+                  if (!el) continue;
+                  const vid = (el.tagName === 'VIDEO')
+                    ? el
+                    : el.querySelector('video') || el.closest('[data-test-id*="pin"], [role="listitem"]')?.querySelector('video');
+                  if (vid && vid.src && vid.src.startsWith('http')) return vid.src;
+                  const source = vid?.querySelector('source');
+                  if (source && source.src && source.src.startsWith('http')) return source.src;
+                }
               } catch {}
               return null;
             })(${params.x}, ${params.y})
@@ -2363,7 +2492,8 @@ export class BrowserController {
         (url.includes('vk.com') && url.includes('z=video')) ||
         (url.includes('vk.com') && url.includes('z=clip')) ||
         url.includes('rutube.ru/video') ||
-        (url.includes('pinterest.') && url.includes('/pin/'))
+        (url.includes('pinterest.') && url.includes('/pin/')) ||
+        url.includes('pin.it/')
       )
     );
     const canDownloadMedia = Boolean(tab.hasDownloadableMedia || isVideoSite || Boolean(stream?.video) || Boolean(stream?.audio));

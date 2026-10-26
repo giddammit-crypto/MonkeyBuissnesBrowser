@@ -52,10 +52,11 @@ function readSnapshot<T>(databasePath: string, read: (database: DatabaseSync) =>
     database.exec('COMMIT');
     return result;
   } catch {
-    database?.close();
+    try { database?.close(); } catch {}
     database = undefined;
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-import-'));
     const tempPath = path.join(tempDir, path.basename(databasePath));
+    let tempDb: DatabaseSync | undefined;
     try {
       fs.copyFileSync(databasePath, tempPath);
       for (const ext of ['-wal', '-shm', '-journal']) {
@@ -64,18 +65,20 @@ function readSnapshot<T>(databasePath: string, read: (database: DatabaseSync) =>
           try { fs.copyFileSync(extra, `${tempPath}${ext}`); } catch {}
         }
       }
-      database = new DatabaseSync(tempPath, { readOnly: true });
-      database.exec('PRAGMA busy_timeout = 2000; PRAGMA query_only = ON; BEGIN DEFERRED');
-      const result = read(database);
-      database.exec('COMMIT');
+      tempDb = new DatabaseSync(tempPath, { readOnly: true });
+      tempDb.exec('PRAGMA busy_timeout = 2000; PRAGMA query_only = ON; BEGIN DEFERRED');
+      const result = read(tempDb);
+      tempDb.exec('COMMIT');
       return result;
     } catch {
       throw new Error('Не удалось прочитать SQLite-профиль. Закройте исходный браузер и повторите импорт; исходные файлы не изменены.');
     } finally {
-      database?.close();
+      try { tempDb?.close(); } catch {}
       try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
     }
-  } finally { database?.close(); }
+  } finally {
+    try { database?.close(); } catch {}
+  }
 }
 
 export class BrowserDataImporter {
@@ -155,7 +158,7 @@ export class BrowserDataImporter {
       if (fs.existsSync(path.join(profilePath, 'History'))) available.push('history');
       if (fs.existsSync(path.join(profilePath, 'Bookmarks')) || fs.existsSync(path.join(profilePath, 'AccountBookmarks'))) available.push('bookmarks');
       if (fs.existsSync(this.chromiumCookiePath(profilePath))) available.push('cookies');
-      if (fs.existsSync(path.join(profilePath, 'Login Data')) || fs.existsSync(path.join(profilePath, 'Login Data For Account'))) available.push('passwords');
+      if (fs.existsSync(path.join(profilePath, 'Login Data')) || fs.existsSync(path.join(profilePath, 'Login Data For Account')) || fs.existsSync(path.join(profilePath, 'Ya Passman Data'))) available.push('passwords');
       if (!available.length) continue;
       const preferences = safeReadJson(path.join(profilePath, 'Preferences')) as { profile?: { name?: string } } | undefined;
       const name = text(state?.profile?.info_cache?.[path.basename(profilePath)]?.name) || text(preferences?.profile?.name) || (profilePath === root ? 'Основной профиль' : path.basename(profilePath));
@@ -185,14 +188,63 @@ export class BrowserDataImporter {
       return roots[browser].map((root) => path.join(support, root));
     }
     const config = process.env.XDG_CONFIG_HOME ?? path.join(home, '.config');
-    const roots: Record<ChromiumBrowser, string[]> = { chrome: ['google-chrome', 'chromium'], yandex: ['yandex-browser', 'Yandex/YandexBrowser'], edge: ['microsoft-edge', 'microsoft-edge-beta'], brave: ['BraveSoftware/Brave-Browser'], vivaldi: ['vivaldi'], opera: ['opera', 'opera-gx'] };
-    return roots[browser].map((root) => path.join(config, root));
+    const isCustomConfig = Boolean(process.env.XDG_CONFIG_HOME);
+    const roots: Record<ChromiumBrowser, string[]> = {
+      chrome: [
+        path.join(config, 'google-chrome'),
+        path.join(config, 'google-chrome-beta'),
+        path.join(config, 'google-chrome-unstable'),
+        path.join(config, 'chromium'),
+        ...(isCustomConfig ? [] : [
+          path.join(home, 'snap', 'chromium', 'common', 'chromium'),
+          path.join(home, 'snap', 'chromium', 'current', '.config', 'chromium'),
+          path.join(home, '.var', 'app', 'com.google.Chrome', 'config', 'google-chrome'),
+          path.join(home, '.var', 'app', 'org.chromium.Chromium', 'config', 'chromium'),
+        ]),
+      ],
+      yandex: [
+        path.join(config, 'yandex-browser'),
+        path.join(config, 'yandex-browser-beta'),
+        path.join(config, 'Yandex', 'YandexBrowser'),
+      ],
+      edge: [
+        path.join(config, 'microsoft-edge'),
+        path.join(config, 'microsoft-edge-beta'),
+        path.join(config, 'microsoft-edge-dev'),
+      ],
+      brave: [
+        path.join(config, 'BraveSoftware', 'Brave-Browser'),
+        ...(isCustomConfig ? [] : [
+          path.join(home, 'snap', 'brave', 'current', '.config', 'BraveSoftware', 'Brave-Browser'),
+          path.join(home, '.var', 'app', 'com.brave.Browser', 'config', 'BraveSoftware', 'Brave-Browser'),
+        ]),
+      ],
+      vivaldi: [
+        path.join(config, 'vivaldi'),
+        path.join(config, 'vivaldi-snapshot'),
+      ],
+      opera: [
+        path.join(config, 'opera'),
+        path.join(config, 'opera-beta'),
+        path.join(config, 'opera-developer'),
+        path.join(config, 'opera-gx'),
+        ...(isCustomConfig ? [] : [
+          path.join(home, 'snap', 'opera', 'current', '.config', 'opera'),
+        ]),
+      ],
+    };
+    return roots[browser];
   }
   private firefoxRoots(): string[] {
     const home = os.homedir();
     if (process.platform === 'win32') return [path.join(process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming'), 'Mozilla', 'Firefox', 'Profiles')];
     if (process.platform === 'darwin') return [path.join(home, 'Library', 'Application Support', 'Firefox', 'Profiles')];
-    return [path.join(home, '.mozilla', 'firefox'), path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'mozilla', 'firefox'), path.join(home, 'snap', 'firefox', 'common', '.mozilla', 'firefox')];
+    const isCustomConfig = Boolean(process.env.XDG_CONFIG_HOME);
+    return [
+      path.join(home, '.mozilla', 'firefox'),
+      path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'mozilla', 'firefox'),
+      ...(isCustomConfig ? [] : [path.join(home, 'snap', 'firefox', 'common', '.mozilla', 'firefox')]),
+    ];
   }
 
   private importHistory(profile: ImportProfile): ImportResult {
@@ -310,7 +362,7 @@ export class BrowserDataImporter {
       const total = Array.isArray(document?.logins) ? document.logins.length : 0;
       return { imported: 0, skipped: total, warnings: ['Пароли Firefox защищены NSS. Используйте официальный экспорт паролей Firefox в CSV и кнопку импорта CSV; NSS-защита не обходится.'] };
     }
-    const loginFiles = ['Login Data', 'Login Data For Account'].filter((name) => fs.existsSync(path.join(profile.path, name)));
+    const loginFiles = ['Login Data', 'Login Data For Account', 'Ya Passman Data'].filter((name) => fs.existsSync(path.join(profile.path, name)));
     const source: Row[] = [];
     for (const file of loginFiles) {
       try {
@@ -331,16 +383,54 @@ export class BrowserDataImporter {
     const keys: ChromiumKeys = {};
     if (process.platform === 'linux' && versions.has('v10')) keys.v10 = deriveChromiumKey('peanuts', 'linux');
     if (process.platform !== 'linux' && process.platform !== 'darwin' || !versions.has(process.platform === 'darwin' ? 'v10' : 'v11')) return keys;
-    const labels: Record<ChromiumBrowser, string[]> = { chrome: ['Chrome', 'Chromium'], yandex: ['Yandex'], edge: ['Microsoft Edge', 'Microsoft Edge Safe Storage'], brave: ['Brave', 'Brave Browser'], vivaldi: ['Vivaldi'], opera: ['Opera', 'Opera Safe Storage'] };
-    const applications: Record<ChromiumBrowser, string[]> = { chrome: ['chrome', 'chromium'], yandex: ['yandex', 'yandex_browser'], edge: ['microsoft-edge'], brave: ['brave', 'brave-browser'], vivaldi: ['vivaldi'], opera: ['opera'] };
+    const labels: Record<ChromiumBrowser, string[]> = {
+      chrome: ['Chrome', 'Chromium', 'Google Chrome'],
+      yandex: ['Yandex', 'Chromium', 'Chrome'],
+      edge: ['Microsoft Edge', 'Microsoft Edge Safe Storage'],
+      brave: ['Brave', 'Brave Browser'],
+      vivaldi: ['Vivaldi'],
+      opera: ['Opera', 'Opera Safe Storage'],
+    };
+    const applications: Record<ChromiumBrowser, string[]> = {
+      chrome: ['chromium', 'chrome', 'google-chrome'],
+      yandex: ['yandex', 'yandex_browser', 'yandex-browser', 'chromium', 'chrome'],
+      edge: ['microsoft-edge', 'edge'],
+      brave: ['brave', 'brave-browser'],
+      vivaldi: ['vivaldi'],
+      opera: ['opera'],
+    };
     if (process.platform === 'darwin') {
       for (const label of labels[browser]) {
         const secret = await this.keyringSecret('security', ['find-generic-password', '-w', '-s', label.endsWith('Safe Storage') ? label : `${label} Safe Storage`]);
         if (secret) { keys.v10 = deriveChromiumKey(secret, 'darwin'); break; }
       }
     } else {
-      const attempts = [...applications[browser].map((application) => ['lookup', 'application', application]), ...labels[browser].map((label) => ['lookup', 'service', label.endsWith('Safe Storage') ? label : `${label} Safe Storage`, 'user', label])];
-      for (const args of attempts) { const secret = await this.keyringSecret('secret-tool', args); if (secret) { keys.v11 = deriveChromiumKey(secret, 'linux'); break; } }
+      const candidates: Buffer[] = [];
+      const attempts = [
+        ...applications[browser].map((application) => ['lookup', 'application', application]),
+        ...labels[browser].map((label) => ['lookup', 'service', label.endsWith('Safe Storage') ? label : `${label} Safe Storage`, 'user', label]),
+      ];
+      for (const args of attempts) {
+        const secret = await this.keyringSecret('secret-tool', args);
+        if (secret) {
+          const derived = deriveChromiumKey(secret, 'linux');
+          if (!keys.v11) keys.v11 = derived;
+          candidates.push(derived);
+        }
+      }
+      // Fallback search across all schema passwords
+      const dump = await this.keyringSecret('secret-tool', ['search', '--all', 'xdg:schema', 'chrome_libsecret_os_crypt_password_v2']);
+      if (dump) {
+        for (const match of dump.matchAll(/secret\s*=\s*(.+)/g)) {
+          const secret = match[1]?.trim();
+          if (secret) {
+            const derived = deriveChromiumKey(secret, 'linux');
+            if (!keys.v11) keys.v11 = derived;
+            candidates.push(derived);
+          }
+        }
+      }
+      if (candidates.length) keys.v11Candidates = candidates;
     }
     return keys;
   }

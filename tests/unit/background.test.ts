@@ -50,6 +50,16 @@ describe('local new-tab background choices', () => {
     expect(new BrowserStores(directory).settings.get()).toMatchObject({
       appearancePreset: 'cyberpink', accentColor: 'pink', newTabBackground: 'cyberpink',
     });
+
+    for (const accent of ['white', 'milk', 'graphite'] as const) {
+      stores.settings.set({
+        ...stores.settings.get(),
+        accentColor: accent,
+      });
+      expect(new BrowserStores(directory).settings.get()).toMatchObject({
+        accentColor: accent,
+      });
+    }
   });
   it('normalizes malformed persisted appearance settings', () => {
     const directory = root();

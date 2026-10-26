@@ -168,55 +168,104 @@
   --accent: #087f7c;
   --signal: #14b8a6;
   --accent-soft: rgba(8, 127, 124, 0.16);
+  --accent-contrast: #ffffff;
 }
 :root[data-theme="dark"][data-accent="teal"], :root[data-theme="dark"][data-wallpaper][data-accent="teal"], :root[data-theme="dark"][data-appearance][data-accent="teal"] {
   --accent: #2dd4bf;
   --signal: #14b8a6;
   --accent-soft: rgba(45, 212, 191, 0.22);
+  --accent-contrast: #0f172a;
 }
 
 :root[data-accent="violet"], :root[data-wallpaper][data-accent="violet"], :root[data-appearance][data-accent="violet"] {
   --accent: #7654b2;
   --signal: #a855f7;
   --accent-soft: rgba(118, 84, 178, 0.16);
+  --accent-contrast: #ffffff;
 }
 :root[data-theme="dark"][data-accent="violet"], :root[data-theme="dark"][data-wallpaper][data-accent="violet"], :root[data-theme="dark"][data-appearance][data-accent="violet"] {
   --accent: #c084fc;
   --signal: #a855f7;
   --accent-soft: rgba(192, 132, 252, 0.22);
+  --accent-contrast: #0f172a;
 }
 
 :root[data-accent="rose"], :root[data-wallpaper][data-accent="rose"], :root[data-appearance][data-accent="rose"] {
   --accent: #ab4568;
   --signal: #f43f5e;
   --accent-soft: rgba(171, 69, 104, 0.16);
+  --accent-contrast: #ffffff;
 }
 :root[data-theme="dark"][data-accent="rose"], :root[data-theme="dark"][data-wallpaper][data-accent="rose"], :root[data-theme="dark"][data-appearance][data-accent="rose"] {
   --accent: #fb7185;
   --signal: #f43f5e;
   --accent-soft: rgba(251, 113, 133, 0.22);
+  --accent-contrast: #0f172a;
 }
 
 :root[data-accent="pink"], :root[data-wallpaper][data-accent="pink"], :root[data-appearance][data-accent="pink"] {
   --accent: #ff2a85;
   --signal: #ff4081;
   --accent-soft: rgba(255, 42, 133, 0.16);
+  --accent-contrast: #ffffff;
 }
 :root[data-theme="dark"][data-accent="pink"], :root[data-theme="dark"][data-wallpaper][data-accent="pink"], :root[data-theme="dark"][data-appearance][data-accent="pink"] {
   --accent: #ff4081;
   --signal: #ff2a85;
   --accent-soft: rgba(255, 64, 129, 0.24);
+  --accent-contrast: #ffffff;
 }
 
 :root[data-accent="blue"], :root[data-wallpaper][data-accent="blue"], :root[data-appearance][data-accent="blue"] {
   --accent: #0284c7;
   --signal: #00d2ff;
   --accent-soft: rgba(2, 132, 199, 0.16);
+  --accent-contrast: #ffffff;
 }
 :root[data-theme="dark"][data-accent="blue"], :root[data-theme="dark"][data-wallpaper][data-accent="blue"], :root[data-theme="dark"][data-appearance][data-accent="blue"] {
   --accent: #00d2ff;
   --signal: #38bdf8;
   --accent-soft: rgba(0, 210, 255, 0.2);
+  --accent-contrast: #0f172a;
+}
+
+:root[data-accent="white"], :root[data-wallpaper][data-accent="white"], :root[data-appearance][data-accent="white"] {
+  --accent: #1e2229;
+  --signal: #3f4756;
+  --accent-soft: rgba(0, 0, 0, 0.08);
+  --accent-contrast: #ffffff;
+}
+:root[data-theme="dark"][data-accent="white"], :root[data-theme="dark"][data-wallpaper][data-accent="white"], :root[data-theme="dark"][data-appearance][data-accent="white"] {
+  --accent: #ffffff;
+  --signal: #f1f5f9;
+  --accent-soft: rgba(255, 255, 255, 0.2);
+  --accent-contrast: #0f172a;
+}
+
+:root[data-accent="milk"], :root[data-wallpaper][data-accent="milk"], :root[data-appearance][data-accent="milk"] {
+  --accent: #6b553e;
+  --signal: #8b6e50;
+  --accent-soft: rgba(107, 85, 62, 0.12);
+  --accent-contrast: #ffffff;
+}
+:root[data-theme="dark"][data-accent="milk"], :root[data-theme="dark"][data-wallpaper][data-accent="milk"], :root[data-theme="dark"][data-appearance][data-accent="milk"] {
+  --accent: #f7eed7;
+  --signal: #ede2c5;
+  --accent-soft: rgba(247, 238, 215, 0.22);
+  --accent-contrast: #291e14;
+}
+
+:root[data-accent="graphite"], :root[data-wallpaper][data-accent="graphite"], :root[data-appearance][data-accent="graphite"] {
+  --accent: #334155;
+  --signal: #1e293b;
+  --accent-soft: rgba(51, 65, 85, 0.12);
+  --accent-contrast: #ffffff;
+}
+:root[data-theme="dark"][data-accent="graphite"], :root[data-theme="dark"][data-wallpaper][data-accent="graphite"], :root[data-theme="dark"][data-appearance][data-accent="graphite"] {
+  --accent: #94a3b8;
+  --signal: #cbd5e1;
+  --accent-soft: rgba(148, 163, 184, 0.22);
+  --accent-contrast: #0f172a;
 }
 .newtab-wallpaper::before {
   content: ""; position: absolute; inset: 0; z-index: 1;

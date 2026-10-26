@@ -152,7 +152,7 @@ function normalizeSettings(value: unknown): BrowserSettings {
     searchEngine: typeof raw.searchEngine === 'string' && raw.searchEngine.length <= 2000 && isSafeWebUrl(raw.searchEngine) ? raw.searchEngine : defaultSettings.searchEngine,
     newTabBackground: normalizeNewTabBackground(raw.newTabBackground),
     appearancePreset: ['detroit', 'cyberpink', 'cyberpink-fuji', 'cyber-butterfly', 'tokyo-night', 'celestial-palace'].includes(text(raw.appearancePreset)) ? raw.appearancePreset as BrowserSettings['appearancePreset'] : 'classic',
-    accentColor: raw.accentColor === 'teal' || raw.accentColor === 'violet' || raw.accentColor === 'rose' || raw.accentColor === 'pink' ? raw.accentColor : 'blue',
+    accentColor: ['blue', 'teal', 'violet', 'rose', 'pink', 'white', 'milk', 'graphite'].includes(text(raw.accentColor)) ? raw.accentColor as BrowserSettings['accentColor'] : 'blue',
     wallpaperDim: finite(raw.wallpaperDim) ? Math.max(0, Math.min(75, Math.round(raw.wallpaperDim))) : 0,
     sleepAfterMinutes: [0, 5, 15, 30, 60].includes(Number(raw.sleepAfterMinutes)) && typeof raw.sleepAfterMinutes === 'number' ? raw.sleepAfterMinutes as BrowserSettings['sleepAfterMinutes'] : defaultSettings.sleepAfterMinutes,
     adBlockEnabled: typeof raw.adBlockEnabled === 'boolean' ? raw.adBlockEnabled : true,

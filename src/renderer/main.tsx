@@ -78,6 +78,7 @@ import "./newtab-wallpaper.css";
 import { userFacingError } from "./userFacingError";
 import BrowsecModal from "./BrowsecModal";
 import GoogleAccountPopover from "./GoogleAccountPopover";
+import DownloadsPopover from "./DownloadsPopover";
 import TabSearch from "./TabSearch";
 import SiteFavicon from "./SiteFavicon";
 import SiteErrorPage from "./SiteErrorPage";
@@ -162,7 +163,7 @@ function App(): React.JSX.Element {
   const [panel, setPanel] = useState<Panel>("home");
   const [address, setAddress] = useState("");
   const [editingAddress, setEditingAddress] = useState(false);
-  const [popover, setPopover] = useState<"menu" | "protection" | "browsec" | "google-account" | null>(null);
+  const [popover, setPopover] = useState<"menu" | "protection" | "browsec" | "google-account" | "downloads" | null>(null);
   const [browsecCountries, setBrowsecCountries] = useState<BrowsecCountry[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   const [findOpen, setFindOpen] = useState(false);
@@ -180,6 +181,11 @@ function App(): React.JSX.Element {
     (tab) => tab.id === snapshot.activeTabId,
   );
   const canDownloadVideo = Boolean(currentTab?.canDownloadMedia);
+  const hasActiveDownloads = Boolean(
+    snapshot?.downloads?.some(
+      (d) => d.state === "progressing" || d.state === "queued" || d.isPaused,
+    ),
+  );
   const authNotice = getGoogleAuthNotice(currentTab?.url ?? "");
   useEffect(() => setAuthNoticeDismissed(false), [currentTab?.id, currentTab?.url]);
   const currentSite = getSiteKey(currentTab?.url ?? "");
@@ -242,7 +248,7 @@ function App(): React.JSX.Element {
     [showError],
   );
   const openPanel = useCallback((next: Panel) => {
-    setPanel(next);
+    setPanel((current) => (current === next && next !== "home" ? "home" : next));
     setPopover(null);
   }, []);
 
@@ -291,14 +297,6 @@ function App(): React.JSX.Element {
         setFindResult(event.message ?? "");
         return;
       }
-      if (event.type === "navigation-error" || event.type === "renderer-gone")
-        setToast({
-          tone: "error",
-          message:
-            event.message ?? "Страница недоступна. Попробуйте обновить её.",
-        });
-      if (event.type === "download-started")
-        setToast({ tone: "info", message: "Файл добавлен в загрузки." });
     });
     return remove;
   }, [openPanel]);
@@ -375,10 +373,7 @@ function App(): React.JSX.Element {
     if (!viewport) return;
     const update = () => {
       const b = viewport.getBoundingClientRect();
-      const hidden =
-        panel !== "home" ||
-        Boolean(currentTab?.isInternal) ||
-        currentTab?.lifecycle === "crashed";
+      const hidden = panel !== "home";
       run(
         window.browserApi.setChromeBounds(
           hidden
@@ -402,18 +397,17 @@ function App(): React.JSX.Element {
     };
   }, [
     panel,
-    popover,
-    toast,
-    sidebarCollapsed,
-    findOpen,
-    Boolean(snapshot),
+    currentTab?.id,
+    currentTab?.isInternal,
+    currentTab?.url,
     currentTab?.lifecycle,
-    run,
+    snapshot?.activeTabId,
+    toast,
   ]);
+  const isPopoverOpen = Boolean(popover) || tabSearchOpen || editingAddress;
   useEffect(() => {
-    const isPopoverOpen = Boolean(popover) || tabSearchOpen;
-    void window.browserApi.setPopoverOpen(isPopoverOpen);
-  }, [popover, tabSearchOpen]);
+    void window.browserApi.setPopoverOpen(isPopoverOpen || panel !== "home");
+  }, [isPopoverOpen, panel]);
   const isPrivate = currentTab?.isPrivate ?? false;
   const bookmarked = snapshot?.bookmarks.some(
     (bookmark) => bookmark.url === currentTab?.url,
@@ -530,7 +524,7 @@ function App(): React.JSX.Element {
 
   return (
     <div
-      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${findOpen ? "find-open" : ""} ${isPrivate ? "private-mode" : ""}`}
+      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${findOpen ? "find-open" : ""} ${isPrivate ? "private-mode" : ""} ${isPopoverOpen ? "popover-open" : ""}`}
     >
       <div className="window-titlebar">
         <div className="title-brand">
@@ -664,8 +658,15 @@ function App(): React.JSX.Element {
               setEditingAddress(true);
               setSelectedSuggestionIndex(-1);
             }}
-            onBlur={() => {
-              setTimeout(() => setEditingAddress(false), 140);
+            onBlur={(event) => {
+              const related = event.relatedTarget as HTMLElement | null;
+              if (related?.closest(".omnibox")) return;
+              setTimeout(() => {
+                if (document.activeElement !== addressRef.current) {
+                  setEditingAddress(false);
+                  setSelectedSuggestionIndex(-1);
+                }
+              }, 200);
             }}
             onKeyDown={(event) => {
               if (omniboxSuggestions.length > 0) {
@@ -767,16 +768,21 @@ function App(): React.JSX.Element {
         </form>
         <div className="toolbar-actions">
           <button
-            className={`icon-button download-header-btn ${canDownloadVideo ? "has-video-available" : ""}`}
-            title={canDownloadVideo ? "Доступно видео для скачивания с текущего сайта!" : "Загрузки · Ctrl+J"}
+            className={`icon-button download-header-btn ${popover === "downloads" ? "selected" : ""} ${hasActiveDownloads ? "is-downloading" : ""}`}
+            title={
+              hasActiveDownloads
+                ? "Загрузка в процессе · Кликните для списка"
+                : "Загрузки · Кликните для списка"
+            }
             aria-label="Загрузки"
-            onClick={() => openPanel("downloads")}
+            aria-expanded={popover === "downloads"}
+            onClick={() =>
+              setPopover((val) => (val === "downloads" ? null : "downloads"))
+            }
           >
             <Download size={18} />
-            {canDownloadVideo && (
-              <span className="download-video-badge" title="Видео готово к скачиванию">
-                <CheckCircle2 size={11} strokeWidth={2.8} />
-              </span>
+            {hasActiveDownloads && (
+              <span className="download-active-dot" title="Идёт загрузка" />
             )}
           </button>
           <button
@@ -956,18 +962,6 @@ function App(): React.JSX.Element {
               onClick={() => {
                 action("print");
                 setPopover(null);
-              }}
-            />
-            <MenuAction
-              icon={<ExternalLink size={16} />}
-              label="Открыть в системном браузере"
-              disabled={currentTab?.isInternal}
-              onClick={() => {
-                setPopover(null);
-                if (currentTab)
-                  run(
-                    window.browserApi.openCurrentPageExternally(currentTab.id),
-                  );
               }}
             />
             <div className="menu-divider" />
@@ -1160,6 +1154,16 @@ function App(): React.JSX.Element {
             }}
           />
         )}
+        {popover === "downloads" && (
+          <DownloadsPopover
+            snapshot={snapshot}
+            onClose={() => setPopover(null)}
+            onOpenAllDownloads={() => {
+              setPopover(null);
+              openPanel("downloads");
+            }}
+          />
+        )}
       </header>
       {findOpen && (
         <form
@@ -1258,7 +1262,6 @@ function App(): React.JSX.Element {
             onClick={() => openPanel("downloads")}
             isDownloading={isDownloading}
             downloadProgress={downloadProgress}
-            hasVideoBadge={canDownloadVideo}
           />
         </nav>
         <div className="sidebar-divider" />
@@ -1395,17 +1398,7 @@ function App(): React.JSX.Element {
                 <strong>{authNotice.title}</strong>
                 <p>{authNotice.message}</p>
               </div>
-              <button
-                className="plain-button"
-                onClick={() =>
-                  run(
-                    window.browserApi.openCurrentPageExternally(currentTab.id),
-                  )
-                }
-              >
-                <ExternalLink size={16} /> Открыть в системном браузере
-              </button>
-              <button className="icon-button" aria-label="Скрыть помощь со входом Google" title="Скрыть помощь" onClick={() => setAuthNoticeDismissed(true)}><X size={16}/></button>
+              <button className="icon-button" aria-label="Скрыть подсказку со входом" title="Скрыть" onClick={() => setAuthNoticeDismissed(true)}><X size={16}/></button>
             </section>
           )}
         <div
@@ -1758,7 +1751,6 @@ function NavItem({
   onClick,
   isDownloading,
   downloadProgress,
-  hasVideoBadge,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -1767,7 +1759,6 @@ function NavItem({
   onClick: () => void;
   isDownloading?: boolean;
   downloadProgress?: number;
-  hasVideoBadge?: boolean;
 }): React.JSX.Element {
   return (
     <button
@@ -1779,11 +1770,6 @@ function NavItem({
     >
       <span className="nav-icon" style={{ position: "relative" }}>
         {icon}
-        {hasVideoBadge && (
-          <span className="nav-video-badge" title="Видео готово к скачиванию">
-            <CheckCircle2 size={11} strokeWidth={2.8} />
-          </span>
-        )}
       </span>
       {!collapsed && <span>{label}</span>}
       {!collapsed && isDownloading && (
@@ -2256,7 +2242,21 @@ function DownloadsPanel({
                   interrupted: "Прервано",
                 }[download.state];
             return (
-              <article className="download-row" key={download.id}>
+              <article
+                className={`download-row ${download.state === "completed" && Boolean(download.path) ? "is-draggable" : ""}`}
+                key={download.id}
+                draggable={download.state === "completed" && Boolean(download.path)}
+                onDragStart={(e) => {
+                  if (download.state !== "completed" || !download.path) return;
+                  e.preventDefault();
+                  window.browserApi.startDownloadDrag(download.id);
+                }}
+                title={
+                  download.state === "completed"
+                    ? "Кликните, чтобы открыть · Перетащите в поле ввода на любом сайте"
+                    : undefined
+                }
+              >
                 <div className="download-preview">
                   {download.thumbnail ? (
                     <img src={download.thumbnail} alt="" />
@@ -2294,6 +2294,11 @@ function DownloadsPanel({
                           ? `${formatBytes(download.receivedBytes)} / ${formatBytes(download.totalBytes)}`
                           : formatBytes(download.receivedBytes)}
                     </span>
+                    {download.state === "completed" && (
+                      <span className="downloads-drag-hint">
+                        ✥ Перетащите на сайт
+                      </span>
+                    )}
                   </div>
                   {active && (
                     <div
@@ -2366,6 +2371,16 @@ function DownloadsPanel({
                     <>
                       <button
                         className="icon-button"
+                        aria-label="Повторить загрузку"
+                        title="Скачать заново"
+                        onClick={() =>
+                          run(window.browserApi.retryDownload(download.id))
+                        }
+                      >
+                        <RotateCcw size={17} />
+                      </button>
+                      <button
+                        className="icon-button"
                         aria-label="Открыть файл"
                         title="Открыть файл"
                         onClick={() =>
@@ -2399,16 +2414,28 @@ function DownloadsPanel({
                     </>
                   )}
                   {!active && download.state !== "completed" && (
-                    <button
-                      className="icon-button danger-hover"
-                      aria-label="Удалить запись"
-                      title="Удалить из списка"
-                      onClick={() =>
-                        run(window.browserApi.deleteDownload(download.id, false))
-                      }
-                    >
-                      <Trash2 size={17} />
-                    </button>
+                    <>
+                      <button
+                        className="icon-button"
+                        aria-label="Повторить загрузку"
+                        title="Повторить попытку скачивания"
+                        onClick={() =>
+                          run(window.browserApi.retryDownload(download.id))
+                        }
+                      >
+                        <RotateCcw size={17} />
+                      </button>
+                      <button
+                        className="icon-button danger-hover"
+                        aria-label="Удалить запись"
+                        title="Удалить из списка"
+                        onClick={() =>
+                          run(window.browserApi.deleteDownload(download.id, false))
+                        }
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    </>
                   )}
                 </div>
               </article>
@@ -2964,7 +2991,7 @@ function SettingsPanel({
               <strong>Установленная версия</strong>
               <small>Если здесь нет новых настроек, запущена старая сборка. После обновления GitHub приложение нужно пересобрать и переустановить.</small>
             </span>
-            <strong>soulm8te 0.5.0</strong>
+            <strong>soulm8te 0.7.1</strong>
           </div>
           <label className="setting-row">
             <span><strong>Стиль оформления</strong><small>Отдельный стиль Detroit · Хлоя или Cyberpunk. Исходные темы не изменяются.</small></span>
@@ -3001,12 +3028,15 @@ function SettingsPanel({
           </label>
           <label className="setting-row">
             <span><strong>Акцентный цвет</strong><small>Отдельная персонализация; светлая и тёмная темы остаются прежними.</small></span>
-            <select aria-label="Акцентный цвет" value={settings.accentColor ?? "blue"} onChange={event => update({ accentColor: event.target.value as "blue" | "teal" | "violet" | "rose" | "pink" })}>
+            <select aria-label="Акцентный цвет" value={settings.accentColor ?? "blue"} onChange={event => update({ accentColor: event.target.value as "blue" | "teal" | "violet" | "rose" | "pink" | "white" | "milk" | "graphite" })}>
               <option value="blue">Классический синий</option>
               <option value="teal">Бирюзовый</option>
               <option value="violet">Фиолетовый</option>
               <option value="rose">Розовый</option>
               <option value="pink">Розовый / Неон</option>
+              <option value="white">Белый</option>
+              <option value="milk">Молочный</option>
+              <option value="graphite">Графитовый</option>
             </select>
           </label>
           <label className="setting-row">
@@ -3403,7 +3433,7 @@ function SettingsPanel({
           <div>
             <strong>soulm8te Browser</strong>
             <p>Ваш цифровой союзник · Detroit: Become Human</p>
-            <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.5.0</small>
+            <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.7.1</small>
           </div>
         </div>
       </div>

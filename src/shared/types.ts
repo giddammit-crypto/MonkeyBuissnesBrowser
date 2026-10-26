@@ -68,13 +68,15 @@ export interface WorkspaceEntry {
 
 export type NewTabBackground = 'portrait' | 'plain' | 'cyberpink' | 'cyberpink-fuji' | 'cyber-butterfly' | 'tokyo-night' | 'celestial-palace';
 
+export type AccentColor = 'blue' | 'teal' | 'violet' | 'rose' | 'pink' | 'white' | 'milk' | 'graphite';
+
 export interface BrowserSettings {
   theme: 'light' | 'dark' | 'system';
   sidebarCollapsed: boolean;
   searchEngine: string;
   newTabBackground: NewTabBackground;
   appearancePreset?: 'classic' | 'detroit' | 'cyberpink' | 'cyberpink-fuji' | 'cyber-butterfly' | 'tokyo-night' | 'celestial-palace';
-  accentColor?: 'blue' | 'teal' | 'violet' | 'rose' | 'pink';
+  accentColor?: AccentColor;
   wallpaperDim?: number;
   sleepAfterMinutes: 5 | 15 | 30 | 60 | 0;
   adBlockEnabled?: boolean;
