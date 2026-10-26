@@ -16,6 +16,47 @@ export function normalizeCookieExceptions(value: unknown): string[] {
   return [...new Set(value.filter((entry): entry is string => typeof entry === 'string' && entry.length <= 2048).map(getSiteKey).filter((entry): entry is string => Boolean(entry)))].slice(0, 100);
 }
 
+/** Normalize arbitrary input (domain, host, or full URL) into canonical domain key (e.g. "youtube.com") */
+export function normalizeSiteKey(rawUrl: string): string | null {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  const withScheme = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(withScheme);
+    if (!['https:', 'http:'].includes(url.protocol) || !url.hostname) return null;
+    const host = url.hostname.toLowerCase().replace(/\.$/, '');
+    const domain = getDomain(host, { allowPrivateDomains: true, extractHostname: false });
+    if (domain) return domain;
+    if (host === 'localhost' || /^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.includes(':')) {
+      return host;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeSiteExceptions(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(
+    value
+      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0 && entry.length <= 2048)
+      .map(normalizeSiteKey)
+      .filter((entry): entry is string => Boolean(entry))
+  )].slice(0, 500);
+}
+
+export function isAdBlockDisabledForSite(pageUrl: string, exceptions?: string[]): boolean {
+  if (!pageUrl || !exceptions || exceptions.length === 0) return false;
+  const pageSiteKey = normalizeSiteKey(pageUrl);
+  if (!pageSiteKey) return false;
+  return exceptions.some((exception) => {
+    const excSiteKey = normalizeSiteKey(exception);
+    return excSiteKey === pageSiteKey;
+  });
+}
+
 /** Google and YouTube exchange auth state across registrable domains during sign-in. */
 export function isGoogleYouTubeSignInRequest(requestUrl: string, topLevelUrl: string): boolean {
   try {

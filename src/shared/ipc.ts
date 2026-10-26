@@ -33,6 +33,7 @@ export interface BrowserApi {
   activateTab(tabId: string): Promise<void>;
   openCurrentPageExternally(tabId: string): Promise<void>;
   setSiteCookieException(tabId: string, allow: boolean): Promise<void>;
+  setSiteAdBlockEnabled(tabId: string, enabled: boolean): Promise<void>;
   importBrowserFile(kind: ImportFileKind): Promise<ImportFileReport | null>;
   tabAction(tabId: string, action: TabAction): Promise<void>;
   reopenClosedTab(): Promise<void>;

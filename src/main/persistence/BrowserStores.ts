@@ -13,7 +13,7 @@ import type {
 } from '../../shared/types';
 import { isSafeWebUrl } from '../../shared/omnibox';
 import { JsonStore } from './JsonStore';
-import { normalizeCookieExceptions } from '../../shared/sitePolicy';
+import { normalizeCookieExceptions, normalizeSiteExceptions } from '../../shared/sitePolicy';
 import { normalizeNewTabBackground } from '../../shared/background';
 
 const defaultSettings: BrowserSettings = {
@@ -23,6 +23,7 @@ const defaultSettings: BrowserSettings = {
   newTabBackground: 'portrait',
   sleepAfterMinutes: 15,
   adBlockEnabled: true,
+  adBlockExceptions: [],
   blockThirdPartyCookies: true,
   googleSignInCompatibility: true,
   restoreSession: true,
@@ -155,6 +156,7 @@ function normalizeSettings(value: unknown): BrowserSettings {
     wallpaperDim: finite(raw.wallpaperDim) ? Math.max(0, Math.min(75, Math.round(raw.wallpaperDim))) : 0,
     sleepAfterMinutes: [0, 5, 15, 30, 60].includes(Number(raw.sleepAfterMinutes)) && typeof raw.sleepAfterMinutes === 'number' ? raw.sleepAfterMinutes as BrowserSettings['sleepAfterMinutes'] : defaultSettings.sleepAfterMinutes,
     adBlockEnabled: typeof raw.adBlockEnabled === 'boolean' ? raw.adBlockEnabled : true,
+    adBlockExceptions: normalizeSiteExceptions(raw.adBlockExceptions),
     blockThirdPartyCookies: typeof raw.blockThirdPartyCookies === 'boolean' ? raw.blockThirdPartyCookies : true,
     googleSignInCompatibility: typeof raw.googleSignInCompatibility === 'boolean' ? raw.googleSignInCompatibility : true,
     thirdPartyCookieExceptions: normalizeCookieExceptions(raw.thirdPartyCookieExceptions),

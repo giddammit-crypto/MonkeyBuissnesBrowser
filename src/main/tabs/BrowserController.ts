@@ -10,6 +10,7 @@ import {
   dialog,
   Menu,
   nativeImage,
+  nativeTheme,
   session,
   shell,
   WebContentsView,
@@ -24,7 +25,7 @@ import { LocalExtensionManager } from '../../services/extensions/LocalExtensionM
 import { isSafeMediaUrl, mediaKindForMime, mediaKindForUrl } from '../../shared/media';
 import { isSafeWebUrl, parseOmniboxInput } from '../../shared/omnibox';
 import { normalizeNewTabBackground } from '../../shared/background';
-import { canRequestStorageAccess, getExternalPageUrl, getSiteKey, normalizeCookieExceptions, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
+import { canRequestStorageAccess, getExternalPageUrl, getSiteKey, normalizeCookieExceptions, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
 import { getClientHintHeaders, getChromeUserAgent } from '../../shared/chromiumIdentity';
 import type {
   BookmarkEntry,
@@ -116,6 +117,9 @@ export class BrowserController {
     this.passwords = new PasswordStore(app.getPath('userData'));
     this.importer = new BrowserDataImporter(this.stores, this.passwords, (cookies) => this.setImportedCookies(cookies));
     this.browserSession = session.fromPartition('persist:northstar-default');
+    const initialExceptions = this.stores.settings.get().adBlockExceptions ?? [];
+    this.adBlock.engine.setExceptions(initialExceptions);
+    this.privateAdBlock.engine.setExceptions(initialExceptions);
     this.extensionsManager = new LocalExtensionManager(this.browserSession, app.getPath('userData'));
     this.browsec = new BrowsecService(app.getPath('userData'));
     this.browsec.setWebContentsProvider(() => {
@@ -181,6 +185,13 @@ export class BrowserController {
     this.shellView.webContents.on('will-navigate', (event) => event.preventDefault());
     this.shellView.webContents.on('will-redirect', (event) => event.preventDefault());
     this.shellView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    this.shellView.webContents.on('devtools-opened', () => {
+      const devContents = this.shellView?.webContents.devToolsWebContents;
+      if (devContents && !devContents.isDestroyed()) {
+        void devContents.insertCSS(':root { color-scheme: dark !important; } body { background-color: #1e1f29 !important; }').catch(() => undefined);
+      }
+    });
+    this.shellView.webContents.on('devtools-closed', () => this.refreshViewBounds());
     this.installShortcuts(this.shellView.webContents);
     this.window.contentView.addChildView(this.shellView);
     this.shellView.setBounds({ x: 0, y: 0, width: 1440, height: 900 });
@@ -736,6 +747,7 @@ export class BrowserController {
         wallpaperDim: typeof patch.wallpaperDim === 'number' && Number.isFinite(patch.wallpaperDim) ? Math.max(0, Math.min(75, Math.round(patch.wallpaperDim))) : current.wallpaperDim ?? 0,
         sleepAfterMinutes,
         adBlockEnabled: typeof patch.adBlockEnabled === 'boolean' ? patch.adBlockEnabled : current.adBlockEnabled ?? true,
+        adBlockExceptions: patch.adBlockExceptions === undefined ? current.adBlockExceptions ?? [] : normalizeSiteExceptions(patch.adBlockExceptions),
         blockThirdPartyCookies: typeof patch.blockThirdPartyCookies === 'boolean' ? patch.blockThirdPartyCookies : current.blockThirdPartyCookies ?? true,
         googleSignInCompatibility: typeof patch.googleSignInCompatibility === 'boolean' ? patch.googleSignInCompatibility : current.googleSignInCompatibility ?? true,
         thirdPartyCookieExceptions: patch.thirdPartyCookieExceptions === undefined ? current.thirdPartyCookieExceptions ?? [] : normalizeCookieExceptions(patch.thirdPartyCookieExceptions),
@@ -744,6 +756,8 @@ export class BrowserController {
     });
     this.adBlock.engine.setEnabled(next.adBlockEnabled !== false);
     this.privateAdBlock.engine.setEnabled(next.adBlockEnabled !== false);
+    this.adBlock.engine.setExceptions(next.adBlockExceptions ?? []);
+    this.privateAdBlock.engine.setExceptions(next.adBlockExceptions ?? []);
     const bg = next.newTabBackground ?? 'portrait';
     let appearance = next.appearancePreset ?? 'classic';
     if (!appearance || appearance === 'classic') {
@@ -884,6 +898,20 @@ export class BrowserController {
     if (!site) throw new Error('Некорректный адрес сайта.');
     const current = this.stores.settings.get().thirdPartyCookieExceptions ?? [];
     this.updateSettings({ thirdPartyCookieExceptions: allow ? [...current, site] : current.filter((item) => item !== site) });
+  }
+
+  async setSiteAdBlockEnabled(tabId: string, enabled: boolean): Promise<void> {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.isInternal || typeof enabled !== 'boolean') {
+      throw new Error('Управление блокировщиком доступно только для открытых веб-сайтов.');
+    }
+    const site = normalizeSiteKey(tab.url);
+    if (!site) throw new Error('Некорректный адрес сайта.');
+    const current = this.stores.settings.get().adBlockExceptions ?? [];
+    const next = enabled
+      ? current.filter((item) => normalizeSiteKey(item) !== site)
+      : [...new Set([...current, site])];
+    this.updateSettings({ adBlockExceptions: next });
   }
 
   async importBrowserFile(kind: ImportFileKind): Promise<ImportFileReport | null> {
@@ -1258,6 +1286,7 @@ export class BrowserController {
     if (!this.privateSession) {
       this.privateSession = session.fromPartition(`private-${crypto.randomUUID()}`, { cache: false });
       this.privateAdBlock = new SessionAdBlock(new FilterEngine());
+      this.privateAdBlock.engine.setExceptions(this.stores.settings.get().adBlockExceptions ?? []);
       this.configureSession(this.privateSession, true);
       if (this.privateProxy) {
         this.privateProxyReady = this.applyPrivateProxy(this.privateSession, this.privateProxy);
@@ -1447,7 +1476,11 @@ export class BrowserController {
       });
     };
     targetSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
-      if (blocker.engine.shouldBlock(details.url, details.resourceType)) {
+      const topLevelUrl = details.webContents && !details.webContents.isDestroyed()
+        ? details.webContents.getURL()
+        : (details.webContentsId ? [...this.tabs.values()].find((t) => t.webContentsId === details.webContentsId)?.url : undefined)
+          || details.referrer;
+      if (blocker.engine.shouldBlock(details.url, details.resourceType, topLevelUrl)) {
         this.emitSnapshot();
         callback({ cancel: true });
         return;
@@ -1794,13 +1827,22 @@ export class BrowserController {
       };
     });
     contents.on('context-menu', (_event, params) => this.showContextMenu(contents, params));
+    contents.on('devtools-opened', () => {
+      const devContents = contents.devToolsWebContents;
+      if (devContents && !devContents.isDestroyed()) {
+        void devContents.insertCSS(':root { color-scheme: dark !important; } body { background-color: #1e1f29 !important; }').catch(() => undefined);
+      }
+    });
+    contents.on('devtools-closed', () => this.refreshViewBounds());
     contents.on('will-navigate', (event, url) => {
       if (!isSafeWebUrl(url)) event.preventDefault();
     });
     contents.on('will-redirect', (event, url) => { if (!isSafeWebUrl(url)) event.preventDefault(); });
     contents.on('did-start-loading', () => {
       tab.isLoading = true;
-      this.memoryManager.updateTab(tab.id, { loading: true });
+      if (tab.lifecycle === 'crashed') tab.lifecycle = 'active';
+      tab.lastError = undefined;
+      this.memoryManager.updateTab(tab.id, { loading: true, lifecycle: tab.lifecycle });
       this.emitSnapshot();
     });
     contents.on('did-stop-loading', () => {
@@ -1830,8 +1872,10 @@ export class BrowserController {
       if (!isMainFrame || errorCode === -3) return;
       tab.isLoading = false;
       tab.lifecycle = 'crashed';
+      tab.lastError = { errorCode, errorDescription, validatedURL };
       this.memoryManager.updateTab(tab.id, { loading: false, lifecycle: 'crashed' });
       this.eventListener?.({ type: 'navigation-error', tab: this.toSnapshot(tab), message: `${errorDescription}: ${validatedURL}` });
+      this.refreshViewBounds();
       this.emitSnapshot();
     });
     contents.on('media-started-playing', () => {
@@ -1857,8 +1901,10 @@ export class BrowserController {
       if (this.htmlFullscreenTabId === tab.id) this.leaveHtmlFullscreen();
       tab.lifecycle = 'crashed';
       tab.isLoading = false;
+      tab.lastError = { errorDescription: details.reason };
       this.memoryManager.updateTab(tab.id, { loading: false, lifecycle: 'crashed' });
       this.eventListener?.({ type: 'renderer-gone', tab: this.toSnapshot(tab), message: details.reason });
+      this.refreshViewBounds();
       this.emitSnapshot();
     });
     contents.on('destroyed', () => {
@@ -1914,7 +1960,10 @@ export class BrowserController {
   }
 
   private applyBounds(tab: TabRecord): void {
-    if (!tab.view || tab.isInternal) return;
+    if (!tab.view || tab.isInternal || tab.lifecycle === 'crashed') {
+      tab.view?.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      return;
+    }
     const bounds = this.window?.getContentBounds();
     if (!bounds) return;
     if (this.htmlFullscreenTabId === tab.id) { tab.view.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height }); return; }
@@ -2241,6 +2290,7 @@ export class BrowserController {
         if (contents.isDevToolsOpened()) {
           contents.closeDevTools();
         } else {
+          contents.openDevTools({ mode: 'detach', activate: true });
           contents.inspectElement(params.x, params.y);
         }
       },
@@ -2453,7 +2503,7 @@ export class BrowserController {
         if (targetContents.isDevToolsOpened()) {
           targetContents.closeDevTools();
         } else {
-          targetContents.openDevTools({ mode: 'detach' });
+          targetContents.openDevTools({ mode: 'detach', activate: true });
         }
       });
       // Shell dialogs/find own Escape even while the underlying site is loading.

@@ -17,6 +17,11 @@ export interface TabSnapshot {
   lifecycle: TabLifecycle;
   workspaceId: string;
   canDownloadMedia?: boolean;
+  lastError?: {
+    errorCode?: number;
+    errorDescription?: string;
+    validatedURL?: string;
+  };
 }
 
 export interface HistoryEntry {
@@ -73,6 +78,7 @@ export interface BrowserSettings {
   wallpaperDim?: number;
   sleepAfterMinutes: 5 | 15 | 30 | 60 | 0;
   adBlockEnabled?: boolean;
+  adBlockExceptions?: string[];
   blockThirdPartyCookies?: boolean;
   googleSignInCompatibility?: boolean;
   restoreSession?: boolean;
@@ -196,6 +202,7 @@ export interface BrowserSnapshot {
     enabled: boolean;
     blockedTotal: number;
     blockedByHost: Record<string, number>;
+    exceptions?: string[];
   };
   performance: {
     sampledAt: number;

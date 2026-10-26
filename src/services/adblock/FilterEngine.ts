@@ -1,9 +1,11 @@
 import type { Session } from 'electron';
+import { isAdBlockDisabledForSite } from '../../shared/sitePolicy';
 
 export interface AdBlockStats {
   enabled: boolean;
   blockedTotal: number;
   blockedByHost: Record<string, number>;
+  exceptions: string[];
 }
 
 interface FilterRule {
@@ -69,11 +71,25 @@ const builtInRules: FilterRule[] = [
 export class FilterEngine {
   private enabled = true;
   private readonly rules: FilterRule[] = [...builtInRules];
+  private exceptions: string[] = [];
   private blockedTotal = 0;
   private readonly blockedByHost = new Map<string, number>();
 
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
+  }
+
+  setExceptions(exceptions: string[]): void {
+    this.exceptions = Array.isArray(exceptions) ? exceptions : [];
+  }
+
+  getExceptions(): string[] {
+    return [...this.exceptions];
+  }
+
+  isException(initiatingPageUrl?: string): boolean {
+    if (!initiatingPageUrl || this.exceptions.length === 0) return false;
+    return isAdBlockDisabledForSite(initiatingPageUrl, this.exceptions);
   }
 
   addRule(rule: string): void {
@@ -83,8 +99,9 @@ export class FilterEngine {
     if (!this.rules.some((item) => item.token === token && item.kind === kind)) this.rules.push({ token, kind });
   }
 
-  shouldBlock(rawUrl: string, resourceType?: string): boolean {
+  shouldBlock(rawUrl: string, resourceType?: string, initiatingPageUrl?: string): boolean {
     if (!this.enabled || resourceType === 'mainFrame') return false;
+    if (initiatingPageUrl && this.isException(initiatingPageUrl)) return false;
     let url: URL;
     try {
       url = new URL(rawUrl);
@@ -103,7 +120,12 @@ export class FilterEngine {
   }
 
   stats(): AdBlockStats {
-    return { enabled: this.enabled, blockedTotal: this.blockedTotal, blockedByHost: Object.fromEntries(this.blockedByHost) };
+    return {
+      enabled: this.enabled,
+      blockedTotal: this.blockedTotal,
+      blockedByHost: Object.fromEntries(this.blockedByHost),
+      exceptions: [...this.exceptions],
+    };
   }
 }
 
@@ -112,11 +134,12 @@ export class SessionAdBlock {
 
   constructor(readonly engine: FilterEngine) {}
 
-  install(targetSession: Session): void {
+  install(targetSession: Session, getInitiatingPageUrl?: (details: Electron.OnBeforeRequestListenerDetails) => string | undefined): void {
     if (this.installed.has(targetSession)) return;
     this.installed.add(targetSession);
     targetSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
-      callback({ cancel: this.engine.shouldBlock(details.url, details.resourceType) });
+      const pageUrl = getInitiatingPageUrl ? getInitiatingPageUrl(details) : details.referrer;
+      callback({ cancel: this.engine.shouldBlock(details.url, details.resourceType, pageUrl) });
     });
   }
 }

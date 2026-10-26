@@ -8,6 +8,7 @@ const api: BrowserApi = {
   activateTab: (tabId) => ipcRenderer.invoke('browser:activate-tab', tabId),
   openCurrentPageExternally: (tabId) => ipcRenderer.invoke('browser:open-page-externally', tabId),
   setSiteCookieException: (tabId, allow) => ipcRenderer.invoke('browser:set-site-cookie-exception', tabId, allow),
+  setSiteAdBlockEnabled: (tabId, enabled) => ipcRenderer.invoke('browser:set-site-adblock-enabled', tabId, enabled),
   importBrowserFile: (kind) => ipcRenderer.invoke('browser:import-file', kind),
   tabAction: (tabId, action) => ipcRenderer.invoke('browser:tab-action', tabId, action),
   reopenClosedTab: () => ipcRenderer.invoke('browser:reopen-closed-tab'),

@@ -1568,6 +1568,184 @@ select {
   max-width: 410px;
   margin: 0 0 20px;
 }
+/* Responsive Site Error Page */
+.site-error-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: calc(100vh - 120px);
+  padding: 24px 16px;
+  box-sizing: border-box;
+  animation: siteErrorFadeIn 0.25s ease-out;
+  overflow-y: auto;
+}
+
+@keyframes siteErrorFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.site-error-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: 100%;
+  max-width: 580px;
+  background: #ffffff;
+  color: #171c23;
+  border-radius: 28px;
+  padding: 24px 28px 32px;
+  box-sizing: border-box;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.site-error-image-wrapper {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.site-error-image {
+  width: 100%;
+  max-width: 440px;
+  height: auto;
+  max-height: 40vh;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  pointer-events: none;
+}
+
+.site-error-info {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.site-error-title {
+  font-size: 19px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 8px;
+  letter-spacing: -0.01em;
+}
+
+.site-error-url-pill {
+  display: inline-block;
+  background: #f1f5f9;
+  color: #475569;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  padding: 5px 14px;
+  border-radius: 20px;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 12px;
+  border: 1px solid #e2e8f0;
+}
+
+.site-error-hint {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #64748b;
+  max-width: 440px;
+  margin: 0 0 8px;
+}
+
+.site-error-code {
+  font-size: 11px;
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  margin-bottom: 4px;
+}
+
+.site-error-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+  width: 100%;
+}
+
+.site-error-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.1s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+  outline: none;
+}
+
+.site-error-btn:active {
+  transform: scale(0.98);
+}
+
+.site-error-btn.primary {
+  background: #2563eb;
+  color: #ffffff;
+  border: 1px solid #1d4ed8;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+}
+
+.site-error-btn.primary:hover {
+  background: #1d4ed8;
+}
+
+.site-error-btn.secondary {
+  background: #f8fafc;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+
+.site-error-btn.secondary:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+@media (max-width: 520px) {
+  .site-error-card {
+    padding: 18px 16px 24px;
+    border-radius: 20px;
+  }
+  .site-error-image {
+    max-height: 32vh;
+  }
+  .site-error-title {
+    font-size: 16px;
+  }
+  .site-error-hint {
+    font-size: 12px;
+  }
+  .site-error-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+  .site-error-btn {
+    width: 100%;
+  }
+}
 .download-row {
   display: flex;
   align-items: center;
@@ -2238,6 +2416,112 @@ select {
   gap: 12px;
   font-size: 11px;
   margin: 12px 0;
+}
+.site-adblock-control {
+  padding: 12px 10px;
+  border-top: 1px solid var(--border);
+}
+.site-adblock-control .site-control-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.site-adblock-control .site-control-header > strong {
+  font-size: 11px;
+}
+.site-adblock-control .status-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.site-adblock-control .status-badge.is-on {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+.site-adblock-control .status-badge.is-off {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+.site-adblock-control .site-key {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-bottom: 10px;
+  color: var(--accent);
+  font-size: 11px;
+}
+.site-adblock-control > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  margin: 10px 0;
+  cursor: pointer;
+}
+.site-adblock-control > small {
+  display: block;
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.65;
+}
+.toolbar-actions .icon-button.is-adblock-disabled {
+  color: #f59e0b;
+}
+.toolbar-actions .icon-button.is-adblock-disabled:hover {
+  color: #fbbf24;
+}
+.adblock-exceptions-settings {
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+.adblock-exceptions-settings p {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  margin: 12px 0;
+}
+.adblock-exceptions-settings > small {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.adblock-add-exception-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.adblock-add-exception-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text);
+  outline: none;
+}
+.adblock-add-exception-row input:focus {
+  border-color: var(--accent);
+}
+.adblock-add-exception-row .plain-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 11px;
+}
+.adblock-error-text {
+  display: block;
+  color: #ef4444;
+  font-size: 11px;
+  margin-bottom: 8px;
 }
 .cookie-exceptions-settings {
   padding: 20px 0;

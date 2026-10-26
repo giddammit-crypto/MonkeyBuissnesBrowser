@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canRequestStorageAccess, getExternalPageUrl, getGoogleAuthNotice, getSiteKey, isGoogleYouTubeSignInRequest, normalizeCookieExceptions, shouldStripThirdPartyCookies } from '../../src/shared/sitePolicy';
+import { canRequestStorageAccess, getExternalPageUrl, getGoogleAuthNotice, getSiteKey, isAdBlockDisabledForSite, isGoogleYouTubeSignInRequest, normalizeCookieExceptions, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../src/shared/sitePolicy';
 const policy = (requestUrl: string, topLevelUrl: string, extra = {}) => shouldStripThirdPartyCookies({ requestUrl, topLevelUrl, resourceType: 'xhr', isPrivate: false, enabled: true, ...extra });
 describe('site-aware cookie policy', () => {
   it('keeps search engine login subdomains same-site', () => {
@@ -95,5 +95,29 @@ describe('Google auth help and explicit external navigation', () => {
     expect(getExternalPageUrl('https://www.youtube.com/')).toBe('https://www.youtube.com/');
     expect(getExternalPageUrl('javascript:alert(1)')).toBeNull();
     expect(getExternalPageUrl('https://username:password@example.com')).toBeNull();
+  });
+});
+
+describe('site adblock exception policy', () => {
+  it('normalizes domains and URLs to domain keys', () => {
+    expect(normalizeSiteKey('https://www.youtube.com/watch?v=123')).toBe('youtube.com');
+    expect(normalizeSiteKey('http://m.vk.com/feed')).toBe('vk.com');
+    expect(normalizeSiteKey('habr.com')).toBe('habr.com');
+    expect(normalizeSiteKey('  YOUTUBE.COM  ')).toBe('youtube.com');
+    expect(normalizeSiteKey('about:blank')).toBeNull();
+    expect(normalizeSiteKey('not a domain!')).toBeNull();
+  });
+
+  it('normalizes and deduplicates lists of site exceptions', () => {
+    const list = ['https://www.youtube.com', 'YOUTUBE.COM', 'vk.com', 'invalid', 'habr.com/feed'];
+    expect(normalizeSiteExceptions(list)).toEqual(['youtube.com', 'vk.com', 'habr.com']);
+  });
+
+  it('correctly checks if adblock is disabled for a given site', () => {
+    const exceptions = ['youtube.com', 'vk.com'];
+    expect(isAdBlockDisabledForSite('https://www.youtube.com/watch?v=xyz', exceptions)).toBe(true);
+    expect(isAdBlockDisabledForSite('https://m.vk.com/video', exceptions)).toBe(true);
+    expect(isAdBlockDisabledForSite('https://habr.com/articles', exceptions)).toBe(false);
+    expect(isAdBlockDisabledForSite('about:blank', exceptions)).toBe(false);
   });
 });

@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   app,
   ipcMain,
+  nativeTheme,
   protocol,
 } from 'electron';
 import type { BrowserApi, ChromeBounds } from '../shared/ipc';
@@ -20,6 +21,7 @@ if (!app.commandLine.hasSwitch('user-data-dir')) {
 app.setName('soulm8te');
 app.setAppUserModelId('soulm8te');
 app.userAgentFallback = getChromeUserAgent();
+nativeTheme.themeSource = 'dark';
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
 
@@ -89,6 +91,7 @@ function registerIpc(): void {
   ipcMain.handle('browser:activate-tab', (event, tabId: string) => requireShell(event).activateTab(tabId));
   ipcMain.handle('browser:open-page-externally', (event, tabId: string) => requireShell(event).openCurrentPageExternally(tabId));
   ipcMain.handle('browser:set-site-cookie-exception', (event, tabId: string, allow: boolean) => requireShell(event).setSiteCookieException(tabId, allow));
+  ipcMain.handle('browser:set-site-adblock-enabled', (event, tabId: string, enabled: boolean) => requireShell(event).setSiteAdBlockEnabled(tabId, enabled));
   ipcMain.handle('browser:import-file', (event, kind: import('../shared/types').ImportFileKind) => requireShell(event).importBrowserFile(kind));
   ipcMain.handle('browser:tab-action', (event, tabId: string, action: import('../shared/ipc').TabAction) => requireShell(event).tabAction(tabId, action));
   ipcMain.handle('browser:reopen-closed-tab', (event) => requireShell(event).reopenClosedTab());

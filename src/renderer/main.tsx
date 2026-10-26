@@ -34,6 +34,7 @@ import {
   Search,
   Settings,
   Shield,
+  ShieldOff,
   Square,
   Star,
   Trash2,
@@ -58,7 +59,7 @@ import type {
   ImportFileKind,
   ImportFileReport,
 } from "../shared/types";
-import { getGoogleAuthNotice, getSiteKey } from "../shared/sitePolicy";
+import { getGoogleAuthNotice, getSiteKey, normalizeSiteKey } from "../shared/sitePolicy";
 import { normalizeNewTabBackground } from "../shared/background";
 import { getOmniboxSuggestions } from "../shared/omniboxSuggestions";
 import logoLight from "./assets/soul/logo-light.png";
@@ -79,6 +80,7 @@ import BrowsecModal from "./BrowsecModal";
 import GoogleAccountPopover from "./GoogleAccountPopover";
 import TabSearch from "./TabSearch";
 import SiteFavicon from "./SiteFavicon";
+import SiteErrorPage from "./SiteErrorPage";
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
@@ -181,6 +183,11 @@ function App(): React.JSX.Element {
   const authNotice = getGoogleAuthNotice(currentTab?.url ?? "");
   useEffect(() => setAuthNoticeDismissed(false), [currentTab?.id, currentTab?.url]);
   const currentSite = getSiteKey(currentTab?.url ?? "");
+  const currentDomain = normalizeSiteKey(currentTab?.url ?? "");
+  const isAdBlockDisabledOnCurrentSite = Boolean(
+    currentDomain &&
+      snapshot?.settings.adBlockExceptions?.some((exc) => normalizeSiteKey(exc) === currentDomain)
+  );
   const sidebarCollapsed = snapshot?.settings.sidebarCollapsed ?? false;
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const omniboxSuggestions = useMemo(() => {
@@ -772,8 +779,12 @@ function App(): React.JSX.Element {
             )}
           </button>
           <button
-            className={`icon-button ${popover === "protection" ? "selected" : ""}`}
-            title="Приватность и защита"
+            className={`icon-button ${popover === "protection" ? "selected" : ""} ${isAdBlockDisabledOnCurrentSite ? "is-adblock-disabled" : ""}`}
+            title={
+              isAdBlockDisabledOnCurrentSite
+                ? "Приватность и защита · Блокировщик рекламы выключен для этого сайта"
+                : "Приватность и защита"
+            }
             aria-label="Приватность и защита"
             aria-expanded={popover === "protection"}
             onClick={() =>
@@ -782,7 +793,7 @@ function App(): React.JSX.Element {
               )
             }
           >
-            <Shield size={18} />
+            {isAdBlockDisabledOnCurrentSite ? <ShieldOff size={18} /> : <Shield size={18} />}
           </button>
           <button
             className={`browsec-toolbar-btn ${snapshot.browsec?.enabled ? "is-active" : ""} ${popover === "browsec" ? "selected" : ""}`}
@@ -1001,6 +1012,50 @@ function App(): React.JSX.Element {
               <span>Заблокировано запросов</span>
               <strong>{snapshot.adBlock.blockedTotal}</strong>
             </div>
+            {currentDomain && (
+              <div className="site-adblock-control">
+                <div className="site-control-header">
+                  <strong>Блокировщик на этом сайте</strong>
+                  <span className={`status-badge ${isAdBlockDisabledOnCurrentSite ? "is-off" : "is-on"}`}>
+                    {isAdBlockDisabledOnCurrentSite ? "Выключен" : "Включен"}
+                  </span>
+                </div>
+                <small className="site-key">{currentDomain}</small>
+                <label>
+                  <span>Блокировать рекламу</span>
+                  <input
+                    type="checkbox"
+                    aria-label={`Блокировать рекламу на ${currentDomain}`}
+                    checked={!isAdBlockDisabledOnCurrentSite}
+                    disabled={snapshot.settings.adBlockEnabled === false}
+                    onChange={(event) => {
+                      if (currentTab) {
+                        const enableForSite = event.target.checked;
+                        run(
+                          window.browserApi
+                            .setSiteAdBlockEnabled(currentTab.id, enableForSite)
+                            .then(() => {
+                              setToast({
+                                tone: "info",
+                                message: enableForSite
+                                  ? `Блокировка рекламы включена для ${currentDomain}. Обновите страницу.`
+                                  : `Блокировка рекламы отключена для ${currentDomain}. Обновите страницу.`,
+                              });
+                            }),
+                        );
+                      }
+                    }}
+                  />
+                </label>
+                <small>
+                  {snapshot.settings.adBlockEnabled === false
+                    ? "Блокировщик рекламы выключен глобально во всех настройках браузера."
+                    : isAdBlockDisabledOnCurrentSite
+                      ? "Реклама и трекеры на этом сайте не блокируются. Обновите страницу, чтобы применить."
+                      : "Реклама и трекеры на этом сайте фильтруются встроенным блокировщиком."}
+                </small>
+              </div>
+            )}
             {currentSite && (
               <div className="site-cookie-control">
                 <strong>Cookies этого сайта</strong>
@@ -1370,18 +1425,11 @@ function App(): React.JSX.Element {
             />
           )}
           {panel === "home" && currentTab?.lifecycle === "crashed" && (
-            <EmptyState
-              icon={<AlertTriangle size={28} />}
-              title="Страница недоступна"
-              description="Проверьте соединение и попробуйте обновить вкладку."
-              action={
-                <button
-                  className="primary-button"
-                  onClick={() => run(window.browserApi.reload(currentTab.id))}
-                >
-                  Повторить попытку
-                </button>
-              }
+            <SiteErrorPage
+              tab={currentTab}
+              onRetry={() => run(window.browserApi.reload(currentTab.id))}
+              onBack={() => run(window.browserApi.goBack(currentTab.id))}
+              onNewTab={() => run(window.browserApi.createTab({ isPrivate }))}
             />
           )}
           {panel === "bookmarks" && (
@@ -2811,6 +2859,23 @@ function SettingsPanel({
   const workingSet = snapshot.performance
     ? Math.round(snapshot.performance.totalWorkingSet / 1024)
     : null;
+  const [newAdBlockSite, setNewAdBlockSite] = useState("");
+  const [adBlockSiteError, setAdBlockSiteError] = useState("");
+  const handleAddAdBlockException = () => {
+    const raw = newAdBlockSite.trim();
+    if (!raw) return;
+    const normalized = normalizeSiteKey(raw);
+    if (!normalized) {
+      setAdBlockSiteError("Введите корректный адрес сайта или домен (например, youtube.com)");
+      return;
+    }
+    setAdBlockSiteError("");
+    const current = settings.adBlockExceptions ?? [];
+    if (!current.some((exc) => normalizeSiteKey(exc) === normalized)) {
+      update({ adBlockExceptions: [...current, normalized] });
+    }
+    setNewAdBlockSite("");
+  };
   const update = (
     patch: Parameters<typeof window.browserApi.updateSettings>[0],
   ) => run(window.browserApi.updateSettings(patch));
@@ -3031,6 +3096,68 @@ function SettingsPanel({
               }
             />
           </label>
+          <div className="adblock-exceptions-settings">
+            <div className="small-heading">
+              <ShieldOff size={18} />
+              <strong>Сайты, где блокировщик выключен</strong>
+            </div>
+            <p>
+              На этих сайтах фильтрация рекламы и трекеров отключена. Вы можете
+              добавить домен или удалить его из списка исключений.
+            </p>
+            <div className="adblock-add-exception-row">
+              <input
+                type="text"
+                placeholder="Например, youtube.com"
+                value={newAdBlockSite}
+                onChange={(e) => {
+                  setNewAdBlockSite(e.target.value);
+                  if (adBlockSiteError) setAdBlockSiteError("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAddAdBlockException();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="plain-button"
+                onClick={handleAddAdBlockException}
+                disabled={!newAdBlockSite.trim()}
+              >
+                <Plus size={15} />
+                Добавить
+              </button>
+            </div>
+            {adBlockSiteError && <small className="adblock-error-text">{adBlockSiteError}</small>}
+            {(settings.adBlockExceptions?.length ?? 0) === 0 ? (
+              <small>Исключений пока нет. Блокировщик включен для всех сайтов.</small>
+            ) : (
+              <ul className="cookie-exception-list adblock-exception-list">
+                {settings.adBlockExceptions?.map((site) => (
+                  <li key={site}>
+                    <span>{site}</span>
+                    <button
+                      className="icon-button"
+                      aria-label={`Удалить сайт ${site} из исключений`}
+                      title="Включить блокировщик обратно"
+                      onClick={() =>
+                        update({
+                          adBlockExceptions: settings.adBlockExceptions?.filter(
+                            (value) => value !== site,
+                          ),
+                        })
+                      }
+                    >
+                      <X size={15} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <label className="setting-row">
             <span>
               <strong>Блокировать сторонние cookies</strong>
