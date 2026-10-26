@@ -2,9 +2,9 @@
 .browsec-popover {
   position: absolute;
   top: 50px;
-  right: clamp(10px, 4vw, 56px);
-  width: min(350px, calc(100vw - 24px));
-  max-height: calc(100vh - 120px);
+  right: clamp(10px, 3vw, 48px);
+  width: min(395px, calc(100vw - 20px));
+  max-height: min(650px, calc(100vh - 72px));
   overflow: hidden;
   padding: 0;
   background: var(--surface);
@@ -15,6 +15,17 @@
   display: flex;
   flex-direction: column;
   animation: browsec-popover-in 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (max-width: 440px) {
+  .browsec-popover {
+    top: 48px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: calc(100vh - 56px);
+    border-radius: 14px;
+  }
 }
 
 @keyframes browsec-popover-in {
@@ -554,23 +565,44 @@
   box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
 }
 
-.location-caption-row {
+.location-card-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
+  width: 100%;
+}
+
+.location-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.location-meta-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  padding-top: 9px;
+  border-top: 1px solid rgb(127 127 127 / 14%);
 }
 
 .server-status-pill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 1px 6px;
+  padding: 2px 7px;
   border-radius: 6px;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .server-status-pill.online {
@@ -579,7 +611,8 @@
   border: 1px solid rgb(34 197 94 / 25%);
 }
 
-[data-theme="dark"] .server-status-pill.online {
+[data-theme="dark"] .server-status-pill.online,
+[data-theme="graphite"] .server-status-pill.online {
   color: #4ade80;
 }
 
@@ -589,21 +622,24 @@
   border: 1px solid rgb(239 68 68 / 25%);
 }
 
-[data-theme="dark"] .server-status-pill.offline {
+[data-theme="dark"] .server-status-pill.offline,
+[data-theme="graphite"] .server-status-pill.offline {
   color: #f87171;
 }
 
 .last-checked-pill {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   font-size: 10px;
   color: var(--text-muted);
   font-weight: 500;
   background: var(--surface);
-  padding: 1px 5px;
-  border-radius: 4px;
+  padding: 2px 7px;
+  border-radius: 6px;
   border: 1px solid var(--border);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .server-health-recheck-btn,
@@ -611,14 +647,15 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-secondary);
   cursor: pointer;
   padding: 0;
+  flex-shrink: 0;
   transition: all 0.15s ease;
 }
 
@@ -699,4 +736,46 @@
 .ping-chip.good { color: #16a34a; font-weight: 700; }
 .ping-chip.medium { color: #d97706; }
 .ping-chip.slow { color: #dc2626; }
+
+.ping-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.speed-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+[data-theme="graphite"] .country-status-indicator.online {
+  color: #4ade80;
+}
+
+[data-theme="graphite"] .country-status-indicator.offline {
+  color: #f87171;
+}
+
+[data-theme="graphite"] .ping-indicator.good { color: #4ade80; }
+[data-theme="graphite"] .ping-indicator.medium { color: #fbbf24; }
+[data-theme="graphite"] .ping-indicator.slow { color: #f87171; }
+
+[data-theme="graphite"] .ping-chip.good { color: #4ade80; }
+[data-theme="graphite"] .ping-chip.medium { color: #fbbf24; }
+[data-theme="graphite"] .ping-chip.slow { color: #f87171; }
 

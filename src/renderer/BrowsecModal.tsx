@@ -331,55 +331,57 @@ export const BrowsecModal: React.FC<BrowsecModalProps> = ({
 
           {/* Current Location Card */}
           <div className="browsec-location-card">
-            <div className="location-flag-badge">
-              <span className="location-flag">{currentCountry.flag}</span>
-            </div>
-            <div className="location-info">
-              <div className="location-caption-row">
+            <div className="location-card-header">
+              <div className="location-flag-badge">
+                <span className="location-flag">{currentCountry.flag}</span>
+              </div>
+              <div className="location-info">
                 <span className="location-caption">Текущая локация</span>
-                <span className={`server-status-pill ${isServerOnline ? "online" : "offline"}`} title={`Статус сервера: ${isServerOnline ? "В сети" : "Недоступен"}`}>
-                  <span className={`status-indicator-dot ${isServerOnline ? "online" : "offline"}`} />
-                  {isServerOnline ? "В сети" : "Недоступен"}
-                </span>
+                <div className="location-title-row">
+                  <span className="location-title">{currentCountry.name}</span>
+                  <span className="location-en">({currentCountry.nameEn})</span>
+                </div>
               </div>
-              <span className="location-title">
-                {currentCountry.name}{" "}
-                <small className="location-en">({currentCountry.nameEn})</small>
-              </span>
-              <div className="location-meta">
-                <span className={`ping-indicator ${serverPing < 80 ? "good" : serverPing < 180 ? "medium" : "slow"}`} title="Задержка ответа сервера">
-                  <span className={`ping-dot ${isServerOnline ? "online" : "offline"}`} />
-                  {serverPing} ms
-                </span>
-                <span className="last-checked-pill" title={`12-часовая проверка: ${formatFullDateTime(lastCheckedTs)}`}>
-                  <Clock size={11} />
-                  {formatLastCheckedTime(lastCheckedTs)}
-                </span>
-                <button
-                  type="button"
-                  className="server-health-recheck-btn"
-                  onClick={() => void handleTriggerHealthCheck(selectedCode)}
-                  disabled={checkingHealth}
-                  title="Проверить статус сервера сейчас"
-                  aria-label="Проверить статус сервера сейчас"
-                >
-                  <RefreshCw size={11} className={checkingHealth ? "spin" : ""} />
-                </button>
-                <span className="speed-badge">Без ограничений</span>
-              </div>
-              {healthNotice && (
-                <div className="location-health-notice">{healthNotice}</div>
-              )}
+              <button
+                type="button"
+                className="browsec-change-btn"
+                onClick={() => setActiveTab("countries")}
+                title="Выбрать другую страну"
+              >
+                <span>Сменить</span>
+                <ChevronRight size={15} />
+              </button>
             </div>
-            <button
-              type="button"
-              className="browsec-change-btn"
-              onClick={() => setActiveTab("countries")}
-              title="Выбрать другую страну"
-            >
-              <span>Сменить</span>
-              <ChevronRight size={15} />
-            </button>
+
+            <div className="location-meta-row">
+              <span className={`server-status-pill ${isServerOnline ? "online" : "offline"}`} title={`Статус сервера: ${isServerOnline ? "В сети" : "Недоступен"}`}>
+                <span className={`status-indicator-dot ${isServerOnline ? "online" : "offline"}`} />
+                <span>{isServerOnline ? "В сети" : "Недоступен"}</span>
+              </span>
+              <span className={`ping-indicator ${serverPing < 80 ? "good" : serverPing < 180 ? "medium" : "slow"}`} title="Задержка ответа сервера">
+                <span className={`ping-dot ${isServerOnline ? "online" : "offline"}`} />
+                <span>{serverPing} ms</span>
+              </span>
+              <span className="last-checked-pill" title={`12-часовая проверка: ${formatFullDateTime(lastCheckedTs)}`}>
+                <Clock size={11} />
+                <span>{formatLastCheckedTime(lastCheckedTs)}</span>
+              </span>
+              <button
+                type="button"
+                className="server-health-recheck-btn"
+                onClick={() => void handleTriggerHealthCheck(selectedCode)}
+                disabled={checkingHealth}
+                title="Проверить статус сервера сейчас"
+                aria-label="Проверить статус сервера сейчас"
+              >
+                <RefreshCw size={11} className={checkingHealth ? "spin" : ""} />
+              </button>
+              <span className="speed-badge">Без ограничений</span>
+            </div>
+
+            {healthNotice && (
+              <div className="location-health-notice">{healthNotice}</div>
+            )}
           </div>
 
           {/* WebRTC Leak Protection */}
