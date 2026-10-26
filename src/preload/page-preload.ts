@@ -180,6 +180,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     const host = window.location.hostname;
     const isHostOrSubdomain = (domain: string): boolean => host === domain || host.endsWith(`.${domain}`);
     const isVkHost = isHostOrSubdomain('vk.com') || isHostOrSubdomain('vkvideo.ru');
+    const injectors: Array<() => void> = [];
+    let injectionTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleInjection = () => {
+      if (injectionTimer) return;
+      injectionTimer = setTimeout(() => {
+        injectionTimer = undefined;
+        for (const inject of injectors) inject();
+      }, 350);
+    };
 
     // VK video, music & photo downloader
     if (isVkHost) {
@@ -306,8 +315,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           actions.appendChild(dl);
         }
       };
-      setInterval(injectVkButton, 1000);
-      window.addEventListener('popstate', () => setTimeout(injectVkButton, 300));
+      injectors.push(injectVkButton);
+      window.addEventListener('popstate', scheduleInjection);
     }
 
     // YouTube native stream downloader
@@ -354,9 +363,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
            targetContainer.appendChild(audioBtn);
          }
        };
-      setInterval(injectYtButton, 1200);
-      window.addEventListener('yt-navigate-finish', () => setTimeout(injectYtButton, 400));
-      window.addEventListener('spfdone', () => setTimeout(injectYtButton, 400));
+       injectors.push(injectYtButton);
+       window.addEventListener('yt-navigate-finish', scheduleInjection);
+       window.addEventListener('spfdone', scheduleInjection);
     }
 
     // Rutube does not expose a stable action toolbar across its player layouts.
@@ -405,11 +414,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           container.appendChild(button);
         }
       };
-      setInterval(injectRutubeButtons, 1200);
-      window.addEventListener('popstate', () => setTimeout(injectRutubeButtons, 400));
+      injectors.push(injectRutubeButtons);
+      window.addEventListener('popstate', scheduleInjection);
     }
 
+    if (injectors.length && typeof MutationObserver !== 'undefined' && document.body) {
+      const observer = new MutationObserver(scheduleInjection);
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+    scheduleInjection();
+
     // 4. Video & Audio media detection for download button checkmark
+    let lastMediaSignature = '';
     const checkMedia = () => {
       try {
         const videos = document.getElementsByTagName('video');
@@ -440,11 +456,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         )) {
           hasVideo = true;
         }
+        const signature = `${hasVideo ? '1' : '0'}:${hasAudio ? '1' : '0'}`;
+        if (signature === lastMediaSignature) return;
+        lastMediaSignature = signature;
         ipcRenderer.send('page:media-detected', { hasVideo, hasAudio });
       } catch {}
     };
     checkMedia();
-    setInterval(checkMedia, 3000);
+    setInterval(checkMedia, 5000);
 
     // Audio stream auto-capture on playback
     document.addEventListener('play', (e) => {

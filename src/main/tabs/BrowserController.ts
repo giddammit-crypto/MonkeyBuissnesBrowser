@@ -1263,10 +1263,11 @@ export class BrowserController {
 
   private async getCookieArgsForUrl(targetUrl: string, sourceSession: Electron.Session = this.browserSession): Promise<{ args: string[]; cleanup: () => void }> {
     try {
+      // Match the actual request URL instead of using a broad suffix such as
+      // `.co.uk`, which could include unrelated cookies in the yt-dlp export.
       const u = new URL(targetUrl);
-      const host = u.hostname.replace(/^www\./, '');
-      const domainFilter = host.includes('.') ? `.${host.split('.').slice(-2).join('.')}` : host;
-      const cookies = await sourceSession.cookies.get({ domain: domainFilter });
+      const host = u.hostname;
+      const cookies = await sourceSession.cookies.get({ url: targetUrl });
       if (!cookies || cookies.length === 0) {
         return { args: [], cleanup: () => {} };
       }
@@ -1441,17 +1442,14 @@ export class BrowserController {
     try {
       fs.mkdirSync(downloadDir, { recursive: true });
     } catch {}
-    const fallbackFilename = customFilename || (isAudio ? 'audio.mp3' : 'video.mp4');
     const sourceSession = isPrivate && this.privateSession ? this.privateSession : this.browserSession;
-    const cleanFilename = this.sanitizeMediaFilename(customFilename);
-    const expectedOutputPath = cleanFilename
-      ? path.join(downloadDir, `${cleanFilename}${path.extname(cleanFilename) ? '' : isAudio ? '.mp3' : '.mp4'}`)
-      : undefined;
+    const outputFilename = this.mediaOutputFilename(customFilename, isAudio);
+    const expectedOutputPath = outputFilename ? path.join(downloadDir, outputFilename) : undefined;
 
     const entry: DownloadEntry = {
       id,
       url,
-      filename: fallbackFilename,
+      filename: outputFilename || (isAudio ? 'audio.mp3' : 'video.mp4'),
       path: expectedOutputPath,
       kind: isAudio ? 'audio' : 'video',
       isPrivate,
@@ -1475,9 +1473,7 @@ export class BrowserController {
       '-P', downloadDir,
     ];
 
-    args.push('-o', cleanFilename
-      ? expectedOutputPath!
-      : path.join(downloadDir, '%(title)s.%(ext)s'));
+    args.push('-o', expectedOutputPath || path.join(downloadDir, '%(title)s.%(ext)s'));
 
     if (videoSiteForUrl(url) === 'vk' || url.includes('vkuservideo.net') || url.includes('vkuseraudio.net')) {
       args.push('--referer', 'https://vk.com/');
@@ -1607,6 +1603,16 @@ export class BrowserController {
       .replace(/\.+$/, '')
       .slice(0, 180);
     return cleaned || undefined;
+  }
+
+  private mediaOutputFilename(rawFilename: string | undefined, isAudio: boolean): string | undefined {
+    const cleaned = this.sanitizeMediaFilename(rawFilename);
+    if (!cleaned) return undefined;
+    const base = cleaned
+      .replace(/\.(?:mp3|m4a|aac|flac|wav|ogg|mp4|mkv|webm|mov|avi|m4v)$/i, '')
+      .replace(/\.+$/, '')
+      .trim();
+    return `${base || (isAudio ? 'audio' : 'video')}.${isAudio ? 'mp3' : 'mp4'}`;
   }
 
   private userFacingMediaDownloadError(error: string, isAudio: boolean): string {
@@ -2250,8 +2256,14 @@ export class BrowserController {
       this.updateNavigationState(tab);
       this.emitSnapshot();
     });
-    contents.on('did-navigate', (_event, url) => { this.memoryManager.updateTab(tab.id, { hasFormEdits: false, capturing: false }); this.updateUrl(tab, url); });
-    contents.on('did-navigate-in-page', (_event, url) => this.updateUrl(tab, url));
+    const clearCapturedMedia = () => {
+      this.capturedMediaStreams.delete(contents.id);
+      tab.hasDownloadableMedia = false;
+      tab.capturedAudioFilename = undefined;
+      this.memoryManager.updateTab(tab.id, { capturing: false });
+    };
+    contents.on('did-navigate', (_event, url) => { clearCapturedMedia(); this.memoryManager.updateTab(tab.id, { hasFormEdits: false }); this.updateUrl(tab, url); });
+    contents.on('did-navigate-in-page', (_event, url) => { clearCapturedMedia(); this.updateUrl(tab, url); });
     contents.on('page-title-updated', (event, title) => {
       event.preventDefault();
       if (contents.isDestroyed() || this.tabs.get(tab.id) !== tab || tab.webContentsId !== contents.id) return;
@@ -2315,6 +2327,7 @@ export class BrowserController {
       this.emitSnapshot();
     });
     contents.on('destroyed', () => {
+      this.capturedMediaStreams.delete(contents.id);
       if (this.tabs.has(tab.id) && tab.webContentsId === contents.id) {
         if (this.popupOpeners.has(tab.id)) { void this.closeTab(tab.id); return; }
         tab.lifecycle = 'crashed';
@@ -2573,7 +2586,7 @@ export class BrowserController {
     }
 
     // Smart native media downloaders for YouTube, VK, Pinterest (NO third-party sites)
-    if (currentUrl.includes('youtube.com') || currentUrl.includes('youtu.be')) {
+    if (isVideoPageUrl(currentUrl) && videoSiteForUrl(currentUrl) === 'youtube') {
       const ytMatch = currentUrl.match(/(?:v=|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
       const videoId = ytMatch ? ytMatch[1] : null;
       if (videoId) {
@@ -2590,7 +2603,7 @@ export class BrowserController {
           },
         });
       }
-    } else if (currentUrl.includes('vk.com/video') || currentUrl.includes('vkvideo.ru') || currentUrl.includes('vk.com/clip') || currentUrl.includes('vk.com')) {
+    } else if (isVideoPageUrl(currentUrl) && videoSiteForUrl(currentUrl) === 'vk') {
       template.push({
         label: 'Скачать видео VK (HD)',
         click: () => {
@@ -2782,13 +2795,16 @@ export class BrowserController {
   registerCapturedAudio(webContentsId: number, url: string, _title?: string, _artist?: string, filename?: string): void {
     if (!isSafeWebUrl(url)) return;
     const current = this.capturedMediaStreams.get(webContentsId) || {};
+    const mediaChanged = current.audio !== url;
     current.audio = url;
     this.capturedMediaStreams.set(webContentsId, current);
     const tab = [...this.tabs.values()].find((entry) => entry.webContentsId === webContentsId);
     if (tab) {
+      const wasAvailable = tab.hasDownloadableMedia;
+      const filenameChanged = Boolean(filename && tab.capturedAudioFilename !== filename);
       tab.hasDownloadableMedia = true;
       if (filename) tab.capturedAudioFilename = filename;
-      this.emitSnapshot();
+      if (mediaChanged || filenameChanged || !wasAvailable) this.emitSnapshot();
     }
   }
 
