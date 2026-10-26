@@ -97,6 +97,7 @@
   gap: 12px;
   flex-wrap: wrap;
   font-size: 13px;
+  margin: 0 0 14px;
 }
 .manager-message.error {
   color: var(--danger, #b42c36);
@@ -119,4 +120,57 @@
   color: var(--manager-error);
   overflow-wrap: anywhere;
   line-height: 1.6;
+}
+
+.entries-manager .entry-list {
+  min-width: 0;
+}
+
+.entries-manager .managed-entry {
+  min-width: 0;
+}
+
+@media (max-width: 680px) {
+  .manager-heading .panel-header {
+    flex: 1 1 100%;
+  }
+
+  .managed-entry {
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .managed-entry-open {
+    flex-basis: calc(100% - 40px);
+    padding: 8px 6px;
+  }
+
+  .manager-row-actions {
+    align-self: center;
+  }
+
+  .bookmark-editor {
+    padding: 16px;
+  }
+
+  .manager-form-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .manager-form-actions > button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .managed-entry-open {
+    flex-basis: 100%;
+  }
+
+  .manager-row-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }

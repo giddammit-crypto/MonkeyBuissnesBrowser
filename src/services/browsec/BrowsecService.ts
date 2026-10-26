@@ -98,8 +98,15 @@ export class BrowsecService {
 
   async registerSession(targetSession: Session): Promise<void> {
     this.registeredSessions.add(targetSession);
-    await this.applyProxy(targetSession);
-    this.applyWebRtcPolicyToSession(targetSession);
+    try {
+      await this.applyProxy(targetSession);
+      this.applyWebRtcPolicyToSession(targetSession);
+    } catch (error) {
+      // A failed registration must not leave a dead session in the retry set;
+      // later toggles would otherwise repeatedly hit the same rejected calls.
+      this.registeredSessions.delete(targetSession);
+      throw error;
+    }
   }
 
   unregisterSession(targetSession: Session): void {

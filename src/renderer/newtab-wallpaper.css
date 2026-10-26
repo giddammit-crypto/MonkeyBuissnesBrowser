@@ -151,6 +151,32 @@
   }
 }
 
+@media (max-width: 680px) {
+  .new-tab-page[data-new-tab-background="portrait"] .newtab-center,
+  .new-tab-page:not([data-new-tab-background="plain"]) .newtab-center {
+    width: 100%;
+    padding-top: 12px;
+  }
+
+  .new-tab-page[data-new-tab-background="portrait"] .newtab-recent {
+    padding-left: 0;
+  }
+
+  .new-tab-page[data-new-tab-background="portrait"] .newtab-workspace {
+    gap: 16px;
+  }
+
+  .newtab-wallpaper img {
+    object-position: 82% center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .newtab-wallpaper img {
+    transition: none;
+  }
+}
+
 /* Local wallpaper chooser; the existing light/dark themes are untouched. */
 .custom-wallpaper-setting { flex-wrap: wrap; gap: 12px; }
 .custom-wallpaper-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }

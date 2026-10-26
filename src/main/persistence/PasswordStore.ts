@@ -14,6 +14,19 @@ interface PasswordRecordInput {
   browser: ImportBrowser;
 }
 
+const supportedBrowsers: ImportBrowser[] = ['chrome', 'yandex', 'firefox', 'edge', 'brave', 'opera', 'vivaldi', 'file'];
+
+function isStoredPassword(value: unknown): value is StoredPassword {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.id === 'string' && record.id.length > 0
+    && typeof record.origin === 'string' && record.origin.length > 0
+    && typeof record.username === 'string'
+    && typeof record.password === 'string'
+    && supportedBrowsers.includes(record.browser as ImportBrowser)
+    && typeof record.importedAt === 'number' && Number.isFinite(record.importedAt);
+}
+
 export class PasswordStore {
   private readonly filePath: string;
 
@@ -87,7 +100,7 @@ export class PasswordStore {
       const encrypted = fs.readFileSync(this.filePath, 'utf8');
       const records: unknown = JSON.parse(safeStorage.decryptString(Buffer.from(encrypted, 'base64')));
       if (!Array.isArray(records)) throw new Error('Invalid vault shape');
-      const valid = records.filter((record): record is StoredPassword => record && typeof record.origin === 'string' && typeof record.username === 'string' && typeof record.password === 'string' && typeof record.id === 'string' && typeof record.importedAt === 'number');
+      const valid = records.filter(isStoredPassword);
       if (strict && valid.length !== records.length) throw new Error('Invalid vault record');
       return valid;
     } catch {

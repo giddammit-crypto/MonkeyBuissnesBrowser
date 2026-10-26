@@ -1,6 +1,8 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import dns from 'node:dns';
+import { isIP } from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import {
   app,
@@ -22,10 +24,10 @@ import { MemoryManager } from '../../services/memory/MemoryManager';
 import { VpnConfigStore } from '../../services/vpn/VpnConfigStore';
 import { BrowsecService } from '../../services/browsec/BrowsecService';
 import { LocalExtensionManager } from '../../services/extensions/LocalExtensionManager';
-import { isSafeMediaUrl, mediaKindForMime, mediaKindForUrl } from '../../shared/media';
+import { isSafeMediaUrl, isVideoPageUrl, mediaKindForMime, mediaKindForUrl, videoSiteForUrl } from '../../shared/media';
 import { isSafeWebUrl, parseOmniboxInput } from '../../shared/omnibox';
 import { normalizeNewTabBackground } from '../../shared/background';
-import { canRequestStorageAccess, getExternalPageUrl, getSiteKey, normalizeCookieExceptions, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
+import { canRequestStorageAccess, getExternalPageUrl, getSiteKey, normalizeCookieExceptions, normalizePermissionOrigin, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
 import { getClientHintHeaders, getChromeUserAgent } from '../../shared/chromiumIdentity';
 import type {
   BookmarkEntry,
@@ -45,6 +47,9 @@ import type {
   ImportReport,
   ImportedPasswordSummary,
   GoogleAccount,
+  NotificationPermissionDecision,
+  PrivacyDashboardSnapshot,
+  PrivacySitePermission,
 } from '../../shared/types';
 import { BrowserStores, buildStoredSession, defaultBrowsecCountries } from '../persistence/BrowserStores';
 import { PasswordStore } from '../persistence/PasswordStore';
@@ -109,6 +114,7 @@ export class BrowserController {
   private readonly popupToTab = new Map<number, string>();
   private readonly findQueries = new Map<string, string>();
   private readonly capturedMediaStreams = new Map<number, { video?: string; audio?: string }>();
+  private readonly notificationPermissions = new Map<string, NotificationPermissionDecision>();
   private readonly extensionsManager: LocalExtensionManager;
 
   constructor() {
@@ -163,7 +169,7 @@ export class BrowserController {
     this.window = new BaseWindow({
       width: 1440,
       height: 900,
-      minWidth: 920,
+      minWidth: 360,
       minHeight: 640,
       show: false,
       frame: false,
@@ -239,6 +245,11 @@ export class BrowserController {
     return senderId === this.shellContentsId;
   }
 
+  isTrustedPage(senderId: number): boolean {
+    if ([...this.tabs.values()].some((tab) => tab.webContentsId === senderId && Boolean(tab.view) && !tab.view!.webContents.isDestroyed())) return true;
+    return [...this.popupWindows].some((popup) => !popup.isDestroyed() && popup.webContents.id === senderId && !popup.webContents.isDestroyed());
+  }
+
   getSnapshot(): BrowserSnapshot {
     const storedWorkspaces = this.stores.workspaces.get();
     const tabsByWorkspace = new Map<string, string[]>();
@@ -258,6 +269,7 @@ export class BrowserController {
       downloads: this.downloads,
       workspaces: storedWorkspaces.map((workspace) => ({ ...workspace, tabIds: tabsByWorkspace.get(workspace.id) ?? [] })),
       settings: this.stores.settings.get(),
+      notificationPermissions: this.stores.notificationPermissions.get(),
       vpn: this.vpn.getSnapshot(),
       browsec: this.browsec.getSnapshot(),
       adBlock: this.adBlock.engine.stats(),
@@ -272,6 +284,178 @@ export class BrowserController {
           }
         : null,
     };
+  }
+
+  async getPrivacyDashboard(tabId?: string): Promise<PrivacyDashboardSnapshot> {
+    const selectedTab = tabId ? this.tabs.get(tabId) : this.tabs.get(this.activeTabId);
+    const isPrivate = Boolean(selectedTab?.isPrivate);
+    const targetSession = isPrivate && this.privateSession ? this.privateSession : this.browserSession;
+    const settings = this.stores.settings.get();
+    const browsec = this.browsec.getSnapshot();
+    const adBlockStats = isPrivate ? this.privateAdBlock.engine.stats() : this.adBlock.engine.stats();
+    const checkedAt = Date.now();
+
+    let proxyRule = '';
+    try {
+      proxyRule = await targetSession.resolveProxy('https://api64.ipify.org');
+    } catch {
+      proxyRule = '';
+    }
+
+    const hasBrowsecRoute = browsec.enabled || browsec.smartRules.some((rule) => rule.enabled);
+    const hasExplicitProxy = isPrivate && Boolean(this.privateProxy);
+    const hasResolvedProxy = /\b(?:PROXY|HTTPS|SOCKS|SOCKS5|QUIC)\b/i.test(proxyRule);
+    const routeMode: PrivacyDashboardSnapshot['route']['mode'] = hasExplicitProxy
+      ? 'proxy'
+      : hasBrowsecRoute || hasResolvedProxy
+        ? 'browsec'
+        : proxyRule
+          ? 'direct'
+          : 'unknown';
+    const routeLabel = routeMode === 'proxy'
+      ? 'Приватный прокси'
+      : routeMode === 'browsec'
+        ? `Browsec · ${(browsec.country || 'auto').toUpperCase()}`
+        : routeMode === 'direct'
+          ? 'Прямое соединение'
+          : 'Маршрут не определён';
+    const routeDetail = routeMode === 'proxy'
+      ? 'Текущая приватная вкладка использует настроенный прокси.'
+      : routeMode === 'browsec'
+        ? 'Запросы проходят через маршрут Browsec или активное Smart Rule.'
+        : routeMode === 'direct'
+          ? 'Браузер не обнаружил активный прокси-маршрут.'
+          : 'Не удалось определить состояние маршрута.';
+
+    const externalIp = await this.fetchPrivacyExternalIp(targetSession);
+    let dnsServers: string[] = [];
+    try {
+      dnsServers = dns.getServers().filter((server) => typeof server === 'string' && server.length > 0).slice(0, 8);
+    } catch {
+      dnsServers = [];
+    }
+
+    const sitePermissions: PrivacySitePermission[] = [
+      ...this.stores.notificationPermissions.get().map((entry) => ({
+        id: `notifications:${entry.origin}`,
+        origin: entry.origin,
+        kind: 'notifications' as const,
+        decision: entry.decision === 'allow' ? 'allow' as const : 'deny' as const,
+        label: entry.decision === 'allow' ? 'Уведомления разрешены' : 'Уведомления запрещены',
+        updatedAt: entry.updatedAt,
+      })),
+      ...(settings.thirdPartyCookieExceptions ?? []).map((origin) => ({
+        id: `cookies:${origin}`,
+        origin,
+        kind: 'cookies' as const,
+        decision: 'allow' as const,
+        label: 'Сторонние cookies разрешены',
+      })),
+      ...(settings.adBlockExceptions ?? []).map((origin) => ({
+        id: `adblock:${origin}`,
+        origin: `https://${origin}`,
+        kind: 'adblock' as const,
+        decision: 'exception' as const,
+        label: 'Блокировка рекламы отключена',
+      })),
+    ].slice(0, 100);
+
+    const routeProtected = routeMode === 'browsec' || routeMode === 'proxy';
+    const leakChecks: PrivacyDashboardSnapshot['leakChecks'] = [
+      {
+        id: 'external-ip',
+        label: 'Внешний IP',
+        status: externalIp.status === 'ok' ? 'pass' : 'unknown',
+        detail: externalIp.status === 'ok'
+          ? `IP получен через ${externalIp.source}.`
+          : 'Сервис проверки IP недоступен; попробуйте обновить проверку.',
+      },
+      {
+        id: 'dns',
+        label: 'DNS-маршрут',
+        status: routeProtected ? 'pass' : dnsServers.length ? 'warn' : 'unknown',
+        detail: routeProtected
+          ? 'DNS-запросы выполняются в защищённом браузерном маршруте.'
+          : dnsServers.length
+            ? 'Используются системные DNS-серверы без активного прокси-маршрута.'
+            : 'DNS-серверы определить не удалось.',
+      },
+      {
+        id: 'webrtc',
+        label: 'WebRTC leak protection',
+        status: browsec.webrtcLeakProtection !== false ? 'pass' : 'warn',
+        detail: browsec.webrtcLeakProtection !== false
+          ? 'Непроксируемый UDP-трафик WebRTC ограничен.'
+          : 'Защита WebRTC отключена в настройках Browsec.',
+      },
+      {
+        id: 'third-party-cookies',
+        label: 'Сторонние cookies',
+        status: settings.blockThirdPartyCookies !== false ? 'pass' : 'warn',
+        detail: settings.blockThirdPartyCookies !== false
+          ? 'Сторонние cookies блокируются по умолчанию.'
+          : 'Глобальная блокировка сторонних cookies отключена.',
+      },
+    ];
+
+    return {
+      checkedAt,
+      isPrivate,
+      externalIp,
+      route: {
+        mode: routeMode,
+        label: routeLabel,
+        detail: routeDetail,
+        proxyRule: proxyRule || undefined,
+      },
+      dns: {
+        servers: dnsServers,
+        status: dnsServers.length ? 'system' : 'unavailable',
+        detail: dnsServers.length ? 'Резолверы операционной системы' : 'DNS-серверы недоступны для чтения',
+      },
+      blockedTrackers: {
+        total: adBlockStats.blockedTotal,
+        topHosts: Object.entries(adBlockStats.blockedByHost)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 6)
+          .map(([host, count]) => ({ host, count })),
+        enabled: adBlockStats.enabled,
+      },
+      sitePermissions,
+      leakChecks,
+    };
+  }
+
+  private async fetchPrivacyExternalIp(targetSession: Electron.Session): Promise<PrivacyDashboardSnapshot['externalIp']> {
+    const source = 'api64.ipify.org';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000);
+    try {
+      const response = await targetSession.fetch('https://api64.ipify.org?format=json', {
+        headers: { accept: 'application/json,text/plain' },
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const text = await response.text();
+      let candidate = text.trim();
+      try {
+        const parsed = JSON.parse(text) as { ip?: unknown };
+        if (typeof parsed.ip === 'string') candidate = parsed.ip.trim();
+      } catch {
+        // api64.ipify may return a plain IP when a proxy strips the query.
+      }
+      const family = isIP(candidate);
+      if (family !== 4 && family !== 6) throw new Error('Некорректный ответ сервиса IP');
+      return { value: candidate, family: family === 4 ? 'IPv4' : 'IPv6', status: 'ok', source };
+    } catch (error) {
+      return {
+        status: 'unavailable',
+        source,
+        error: error instanceof Error ? error.message : 'network-error',
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async createTab(input: { url?: string; isPrivate?: boolean; active?: boolean; lazy?: boolean } = {}): Promise<TabSnapshot> {
@@ -784,7 +968,7 @@ export class BrowserController {
         sidebarCollapsed: typeof patch.sidebarCollapsed === 'boolean' ? patch.sidebarCollapsed : current.sidebarCollapsed,
         searchEngine,
         newTabBackground: normalizeNewTabBackground(patch.newTabBackground === undefined ? current.newTabBackground : patch.newTabBackground),
-        appearancePreset: patch.appearancePreset === 'detroit' || patch.appearancePreset === 'classic' || patch.appearancePreset === 'cyberpink' || patch.appearancePreset === 'cyberpink-fuji' ? patch.appearancePreset : current.appearancePreset ?? 'classic',
+        appearancePreset: patch.appearancePreset === 'detroit' || patch.appearancePreset === 'classic' || patch.appearancePreset === 'cyberpink' || patch.appearancePreset === 'cyberpink-fuji' || patch.appearancePreset === 'cyber-butterfly' || patch.appearancePreset === 'tokyo-night' || patch.appearancePreset === 'celestial-palace' ? patch.appearancePreset : current.appearancePreset ?? 'classic',
         accentColor: ['blue', 'teal', 'violet', 'rose', 'pink', 'white', 'milk', 'graphite'].includes(patch.accentColor ?? '') ? patch.accentColor as BrowserSettings['accentColor'] : current.accentColor ?? 'blue',
         wallpaperDim: typeof patch.wallpaperDim === 'number' && Number.isFinite(patch.wallpaperDim) ? Math.max(0, Math.min(75, Math.round(patch.wallpaperDim))) : current.wallpaperDim ?? 0,
         sleepAfterMinutes,
@@ -925,6 +1109,21 @@ export class BrowserController {
     this.updateSettings({ thirdPartyCookieExceptions: allow ? [...current, site] : current.filter((item) => item !== site) });
   }
 
+  setSiteNotificationPermission(tabId: string, decision: NotificationPermissionDecision | 'ask'): void {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.isPrivate || tab.isInternal) throw new Error('Разрешения уведомлений доступны только для обычных сайтов.');
+    const origin = normalizePermissionOrigin(tab.url);
+    if (!origin) throw new Error('Разрешения уведомлений доступны только для HTTPS-сайтов.');
+    if (decision === 'ask') {
+      this.notificationPermissions.delete(origin);
+      this.stores.clearNotificationPermission(origin);
+    } else {
+      this.stores.setNotificationPermission(origin, decision);
+      this.notificationPermissions.set(origin, decision);
+    }
+    this.emitSnapshot();
+  }
+
   async setSiteAdBlockEnabled(tabId: string, enabled: boolean): Promise<void> {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.isInternal || typeof enabled !== 'boolean') {
@@ -1062,12 +1261,12 @@ export class BrowserController {
     this.persistSession();
   }
 
-  private async getCookieArgsForUrl(targetUrl: string): Promise<{ args: string[]; cleanup: () => void }> {
+  private async getCookieArgsForUrl(targetUrl: string, sourceSession: Electron.Session = this.browserSession): Promise<{ args: string[]; cleanup: () => void }> {
     try {
       const u = new URL(targetUrl);
       const host = u.hostname.replace(/^www\./, '');
       const domainFilter = host.includes('.') ? `.${host.split('.').slice(-2).join('.')}` : host;
-      const cookies = await this.browserSession.cookies.get({ domain: domainFilter });
+      const cookies = await sourceSession.cookies.get({ domain: domainFilter });
       if (!cookies || cookies.length === 0) {
         return { args: [], cleanup: () => {} };
       }
@@ -1096,9 +1295,11 @@ export class BrowserController {
     }
   }
 
-  downloadMediaUrl(url: string, filename?: string, isAudio = false): void {
+  downloadMediaUrl(url: string, filename?: string, isAudio = false, sourceWebContentsId?: number): void {
     if (!url || !isSafeWebUrl(url)) return;
-    const activeTab = this.tabs.get(this.activeTabId);
+    const activeTab = sourceWebContentsId === undefined
+      ? this.tabs.get(this.activeTabId)
+      : [...this.tabs.values()].find((tab) => tab.webContentsId === sourceWebContentsId);
     const activeStream = activeTab?.webContentsId ? this.capturedMediaStreams.get(activeTab.webContentsId) : undefined;
 
     // 1. Audio request handling (VK music, direct mp3/m3u8, page audio)
@@ -1107,21 +1308,21 @@ export class BrowserController {
         const audioUrl = activeStream.audio;
         const customName = filename || activeTab?.capturedAudioFilename;
         if (audioUrl.includes('.m3u8')) {
-          void this.downloadWithYtDlp(audioUrl, customName, true);
+          void this.downloadWithYtDlp(audioUrl, customName, true, activeTab?.isPrivate ?? false);
         } else if (activeTab?.view?.webContents && !activeTab.view.webContents.isDestroyed()) {
           this.downloadMedia(activeTab.view.webContents, audioUrl);
         } else {
-          void this.downloadWithYtDlp(audioUrl, customName, true);
+          void this.downloadWithYtDlp(audioUrl, customName, true, activeTab?.isPrivate ?? false);
         }
         return;
       }
-      if (url.includes('vkuseraudio.net') || url.endsWith('.mp3') || url.includes('.mp3?')) {
+      if (url.includes('vkuseraudio.net') || mediaKindForUrl(url) === 'audio') {
         if (url.includes('.m3u8')) {
-          void this.downloadWithYtDlp(url, filename, true);
+          void this.downloadWithYtDlp(url, filename, true, activeTab?.isPrivate ?? false);
         } else if (activeTab?.view?.webContents && !activeTab.view.webContents.isDestroyed()) {
           this.downloadMedia(activeTab.view.webContents, url);
         } else {
-          void this.downloadWithYtDlp(url, filename, true);
+          void this.downloadWithYtDlp(url, filename, true, activeTab?.isPrivate ?? false);
         }
         return;
       }
@@ -1195,15 +1396,15 @@ export class BrowserController {
         `).then((res: { type: string; url: string } | null) => {
           if (res?.url && isSafeWebUrl(res.url)) {
             if (res.type === 'video' && res.url.includes('.m3u8')) {
-              void this.downloadWithYtDlp(res.url, filename, false);
+              void this.downloadWithYtDlp(res.url, filename, false, activeTab?.isPrivate ?? false);
             } else {
               this.downloadMedia(contents, res.url);
             }
           } else {
-            void this.downloadWithYtDlp(url, filename, isAudio);
+            void this.downloadWithYtDlp(url, filename, isAudio, activeTab?.isPrivate ?? false);
           }
         }).catch(() => {
-          void this.downloadWithYtDlp(url, filename, isAudio);
+          void this.downloadWithYtDlp(url, filename, isAudio, activeTab?.isPrivate ?? false);
         });
         return;
       }
@@ -1211,7 +1412,7 @@ export class BrowserController {
 
     // 3. Normalize VK modal URLs (feed, im, wall with z=video... or z=clip...)
     let normalizedUrl = url;
-    if (url.includes('vk.com') || url.includes('vkvideo.ru')) {
+    if (videoSiteForUrl(url) === 'vk') {
       const videoMatch = url.match(/(?:z=)?video(-?\d+_\d+)/);
       const clipMatch = url.match(/(?:z=)?clip(-?\d+_\d+)/);
       if (videoMatch) {
@@ -1221,26 +1422,17 @@ export class BrowserController {
       }
     }
 
-    const isVideoSite =
-      normalizedUrl.includes('youtube.com') ||
-      normalizedUrl.includes('youtu.be') ||
-      normalizedUrl.includes('vk.com/video') ||
-      normalizedUrl.includes('vkvideo.ru') ||
-      normalizedUrl.includes('vk.com/clip') ||
-      normalizedUrl.includes('rutube.ru');
-
-    if (isVideoSite) {
-      void this.downloadWithYtDlp(normalizedUrl, filename, isAudio);
+    if (isVideoPageUrl(normalizedUrl)) {
+      void this.downloadWithYtDlp(normalizedUrl, filename, isAudio, activeTab?.isPrivate ?? false);
       return;
     }
 
-    const currentTab = this.tabs.get(this.activeTabId);
-    if (currentTab?.view?.webContents && !currentTab.view.webContents.isDestroyed()) {
-      this.downloadMedia(currentTab.view.webContents, normalizedUrl);
+    if (activeTab?.view?.webContents && !activeTab.view.webContents.isDestroyed()) {
+      this.downloadMedia(activeTab.view.webContents, normalizedUrl);
     }
   }
 
-  private async downloadWithYtDlp(url: string, customFilename?: string, isAudio = false): Promise<void> {
+  private async downloadWithYtDlp(url: string, customFilename?: string, isAudio = false, isPrivate = false): Promise<void> {
     const localBin = path.join(os.homedir(), '.local/bin/yt-dlp');
     const ytDlpPath = fs.existsSync(localBin) ? localBin : 'yt-dlp';
 
@@ -1250,13 +1442,19 @@ export class BrowserController {
       fs.mkdirSync(downloadDir, { recursive: true });
     } catch {}
     const fallbackFilename = customFilename || (isAudio ? 'audio.mp3' : 'video.mp4');
+    const sourceSession = isPrivate && this.privateSession ? this.privateSession : this.browserSession;
+    const cleanFilename = this.sanitizeMediaFilename(customFilename);
+    const expectedOutputPath = cleanFilename
+      ? path.join(downloadDir, `${cleanFilename}${path.extname(cleanFilename) ? '' : isAudio ? '.mp3' : '.mp4'}`)
+      : undefined;
 
     const entry: DownloadEntry = {
       id,
       url,
       filename: fallbackFilename,
+      path: expectedOutputPath,
       kind: isAudio ? 'audio' : 'video',
-      isPrivate: false,
+      isPrivate,
       state: 'progressing',
       receivedBytes: 0,
       totalBytes: 0,
@@ -1269,16 +1467,23 @@ export class BrowserController {
     const args = [
       '--no-warnings',
       '--newline',
+      '--no-playlist',
+      '--socket-timeout', '20',
+      '--retries', '3',
+      '--fragment-retries', '3',
       '--js-runtimes', 'node',
       '-P', downloadDir,
-      '-o', '%(title)s.%(ext)s',
     ];
 
-    if (url.includes('vk.com') || url.includes('vkvideo.ru') || url.includes('vkuservideo.net') || url.includes('vkuseraudio.net')) {
+    args.push('-o', cleanFilename
+      ? expectedOutputPath!
+      : path.join(downloadDir, '%(title)s.%(ext)s'));
+
+    if (videoSiteForUrl(url) === 'vk' || url.includes('vkuservideo.net') || url.includes('vkuseraudio.net')) {
       args.push('--referer', 'https://vk.com/');
     }
 
-    const cookieInfo = await this.getCookieArgsForUrl(url);
+    const cookieInfo = await this.getCookieArgsForUrl(url, sourceSession);
     if (cookieInfo.args.length > 0) {
       args.push(...cookieInfo.args);
     }
@@ -1294,6 +1499,19 @@ export class BrowserController {
       const child = spawn(ytDlpPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       this.ytDlpProcesses.set(id, { child, isPaused: false });
       let stderrText = '';
+      let finalized = false;
+
+      const finalizeFailure = (message: string) => {
+        if (finalized) return;
+        finalized = true;
+        cookieInfo.cleanup();
+        this.ytDlpProcesses.delete(id);
+        entry.isLive = false;
+        entry.state = 'interrupted';
+        entry.error = this.userFacingMediaDownloadError(message, isAudio);
+        this.persistDownloads(true);
+        this.emitSnapshot();
+      };
 
       child.stderr?.on('data', (chunk: Buffer) => {
         stderrText += chunk.toString();
@@ -1338,6 +1556,8 @@ export class BrowserController {
       });
 
       child.on('close', (code) => {
+        if (finalized) return;
+        finalized = true;
         cookieInfo.cleanup();
         this.ytDlpProcesses.delete(id);
         entry.isLive = false;
@@ -1358,20 +1578,14 @@ export class BrowserController {
         } else {
           entry.state = 'interrupted';
           const errLine = stderrText.split('\n').filter(l => l.trim().startsWith('ERROR:')).pop() || '';
-          entry.error = errLine ? errLine.replace(/^ERROR:\s*/, '') : 'Не удалось завершить загрузку видео.';
+          entry.error = this.userFacingMediaDownloadError(errLine ? errLine.replace(/^ERROR:\s*/, '') : '', isAudio);
         }
         this.persistDownloads(true);
         this.emitSnapshot();
       });
 
       child.on('error', (err) => {
-        cookieInfo.cleanup();
-        this.ytDlpProcesses.delete(id);
-        entry.isLive = false;
-        entry.state = 'interrupted';
-        entry.error = err.message || 'Ошибка загрузчика';
-        this.persistDownloads(true);
-        this.emitSnapshot();
+        finalizeFailure(err.message || 'Ошибка загрузчика');
       });
     } catch (cause) {
       cookieInfo.cleanup();
@@ -1382,6 +1596,27 @@ export class BrowserController {
       this.persistDownloads(true);
       this.emitSnapshot();
     }
+  }
+
+  private sanitizeMediaFilename(rawFilename?: string): string | undefined {
+    if (typeof rawFilename !== 'string') return undefined;
+    const cleaned = rawFilename
+      .replace(/[\\/:*?"<>|\x00-\x1f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/\.+$/, '')
+      .slice(0, 180);
+    return cleaned || undefined;
+  }
+
+  private userFacingMediaDownloadError(error: string, isAudio: boolean): string {
+    const lower = error.toLowerCase();
+    if (lower.includes('yt-dlp') || lower.includes('not found') || lower.includes('enoent')) return 'Загрузчик видео не найден. Установите yt-dlp и повторите попытку.';
+    if (lower.includes('sign in') || lower.includes('login') || lower.includes('cookies')) return 'Сайт требует входа. Откройте сайт в этой вкладке и повторите скачивание.';
+    if (lower.includes('private') || lower.includes('members-only')) return 'Видео доступно только авторизованным пользователям или имеет ограниченный доступ.';
+    if (lower.includes('unsupported url')) return 'Эта страница не поддерживается для скачивания.';
+    if (lower.includes('requested format') || lower.includes('format')) return isAudio ? 'Не удалось получить аудиопоток для этой страницы.' : 'Не удалось подобрать совместимый видеопоток.';
+    return error || (isAudio ? 'Не удалось скачать аудио.' : 'Не удалось скачать видео.');
   }
 
   minimizeWindow(): void {
@@ -1537,6 +1772,8 @@ export class BrowserController {
     // Identify as native Google Chrome 134 on Linux/current OS without any Electron or custom app tokens.
     targetSession.setUserAgent(getChromeUserAgent());
     const allowedPermissions = new Set<string>();
+    const notificationPermissions = isPrivate ? new Map<string, NotificationPermissionDecision>() : this.notificationPermissions;
+    const pendingNotificationPermissions = new Map<string, Promise<NotificationPermissionDecision>>();
     const permissionKey = (origin: string, permission: string) => `${origin}:${permission}`;
     const storageKey = (top: string, origin: string): string => {
       try { return `storage-access:${new URL(top).origin}:${new URL(origin).origin}`; } catch { return ''; }
@@ -1549,6 +1786,10 @@ export class BrowserController {
     targetSession.setPermissionCheckHandler((contents, permission, origin, details) => {
       if (permission === 'storage-access') {
         return storageEligible(details.requestingUrl || origin, contents) && Boolean(contents && allowedPermissions.has(storageKey(contents.getURL(), origin)));
+      }
+      if (permission === 'notifications') {
+        const decision = notificationPermissions.get(origin) ?? (isPrivate ? undefined : this.stores.getNotificationPermission(origin));
+        return decision === 'allow';
       }
       return permission === 'fullscreen' || permission === 'clipboard-sanitized-write' || allowedPermissions.has(permissionKey(origin, permission));
     });
@@ -1568,6 +1809,41 @@ export class BrowserController {
       let origin: string;
       try { origin = new URL(details.requestingUrl || contents.getURL()).origin; } catch { callback(false); return; }
       if (!origin.startsWith('https://') || !['media', 'geolocation', 'notifications'].includes(permission) || !this.window || contents.isDestroyed()) { callback(false); return; }
+      if (permission === 'notifications') {
+        const storedDecision = notificationPermissions.get(origin) ?? (isPrivate ? undefined : this.stores.getNotificationPermission(origin));
+        if (storedDecision) { callback(storedDecision === 'allow'); return; }
+        const requestKey = permissionKey(origin, permission);
+        const pending = pendingNotificationPermissions.get(requestKey);
+        if (pending) {
+          void pending.then((decision) => callback(decision === 'allow')).catch(() => callback(false));
+          return;
+        }
+        const decisionPromise = dialog.showMessageBox(this.window, {
+          type: 'question',
+          title: 'Разрешение сайта',
+          message: `${origin} запрашивает доступ к уведомлениям.`,
+          detail: 'Выбор будет сохранён для этого сайта и больше не будет спрашиваться при каждом обновлении страницы.',
+          buttons: ['Запретить', 'Разрешить'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        }).then(({ response }): NotificationPermissionDecision => {
+          const decision: NotificationPermissionDecision = response === 1 ? 'allow' : 'deny';
+          notificationPermissions.set(origin, decision);
+          if (!isPrivate) {
+            try { this.stores.setNotificationPermission(origin, decision); } catch { /* Keep the in-memory decision for this session. */ }
+          }
+          return decision;
+        }).catch(() => {
+          notificationPermissions.set(origin, 'deny');
+          return 'deny' as const;
+        });
+        pendingNotificationPermissions.set(requestKey, decisionPromise);
+        void decisionPromise.then((decision) => callback(decision === 'allow')).catch(() => callback(false)).finally(() => {
+          if (pendingNotificationPermissions.get(requestKey) === decisionPromise) pendingNotificationPermissions.delete(requestKey);
+        });
+        return;
+      }
       const label = permission === 'media' ? 'камере или микрофону' : permission === 'geolocation' ? 'местоположению' : 'уведомлениям';
       void dialog.showMessageBox(this.window, { type: 'question', title: 'Разрешение сайта', message: `${origin} запрашивает доступ к ${label}.`, buttons: ['Запретить', 'Разрешить на эту сессию'], defaultId: 0, cancelId: 0, noLink: true }).then(({ response }) => {
         const allowed = response === 1 && !contents.isDestroyed();
@@ -1877,7 +2153,9 @@ export class BrowserController {
     tab.view = undefined;
     tab.webContentsId = undefined;
     if (!view) return;
-    if (this.window && !this.window.isDestroyed()) this.window.contentView.removeChildView(view);
+    if (this.window && !this.window.isDestroyed()) {
+      try { this.window.contentView.removeChildView(view); } catch {}
+    }
     if (contents && !contents.isDestroyed()) contents.close();
   }
 
@@ -2482,19 +2760,9 @@ export class BrowserController {
     const stream = webContentsId ? this.capturedMediaStreams.get(webContentsId) : undefined;
     const url = tab.url || '';
     const isVideoSite = Boolean(
-      url && (
-        url.includes('youtube.com/watch') ||
-        url.includes('youtube.com/shorts') ||
-        url.includes('youtu.be/') ||
-        url.includes('vk.com/video') ||
-        url.includes('vkvideo.ru') ||
-        url.includes('vk.com/clip') ||
-        (url.includes('vk.com') && url.includes('z=video')) ||
-        (url.includes('vk.com') && url.includes('z=clip')) ||
-        url.includes('rutube.ru/video') ||
-        (url.includes('pinterest.') && url.includes('/pin/')) ||
-        url.includes('pin.it/')
-      )
+      (url && isVideoPageUrl(url)) ||
+      (url.includes('pinterest.') && url.includes('/pin/')) ||
+      url.includes('pin.it/')
     );
     const canDownloadMedia = Boolean(tab.hasDownloadableMedia || isVideoSite || Boolean(stream?.video) || Boolean(stream?.audio));
     return {
@@ -2512,6 +2780,7 @@ export class BrowserController {
   }
 
   registerCapturedAudio(webContentsId: number, url: string, _title?: string, _artist?: string, filename?: string): void {
+    if (!isSafeWebUrl(url)) return;
     const current = this.capturedMediaStreams.get(webContentsId) || {};
     current.audio = url;
     this.capturedMediaStreams.set(webContentsId, current);

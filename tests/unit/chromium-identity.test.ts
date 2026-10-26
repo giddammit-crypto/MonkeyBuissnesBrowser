@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CHROME_FULL_VERSION,
   CHROME_MAJOR_VERSION,
@@ -7,6 +7,10 @@ import {
   getClientHintHeaders,
   getPageStealthScript,
 } from '../../src/shared/chromiumIdentity';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('Chromium / Chrome 134 native identity', () => {
   it('generates Chrome 134 Linux User-Agent and headers without Electron tokens', () => {
@@ -38,6 +42,16 @@ describe('Chromium / Chrome 134 native identity', () => {
     expect(mac.userAgent).toContain(`Chrome/${CHROME_FULL_VERSION}`);
     expect(mac.secChUaPlatform).toBe('"macOS"');
     expect(mac.platform).toBe('MacIntel');
+  });
+
+  it('detects macOS when the platform argument is omitted', () => {
+    vi.stubGlobal('process', { platform: 'darwin' });
+
+    const identity = getChromiumIdentity();
+
+    expect(identity.platform).toBe('MacIntel');
+    expect(identity.brandPlatform).toBe('macOS');
+    expect(identity.userAgent).toContain('Macintosh; Intel Mac OS X 10_15_7');
   });
 
   it('provides Client Hints headers dictionary for webRequest.onBeforeSendHeaders', () => {

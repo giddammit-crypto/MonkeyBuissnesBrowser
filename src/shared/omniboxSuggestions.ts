@@ -1,4 +1,5 @@
 import type { BookmarkEntry, HistoryEntry } from './types';
+import { isSafeWebUrl } from './omnibox';
 
 export type SuggestionKind = 'popular' | 'bookmark' | 'history' | 'search';
 
@@ -71,9 +72,17 @@ export function getOmniboxSuggestions(
   const query = rawInput.trim();
   if (!query) return [];
 
-  const maxResults = options?.maxResults ?? 7;
+  // Keep the contract bounded even when a caller passes an invalid limit. A
+  // usable omnibox always retains one search fallback at minimum.
+  const requestedMaxResults = options?.maxResults ?? 7;
+  const maxResults = Number.isFinite(requestedMaxResults)
+    ? Math.max(1, Math.floor(requestedMaxResults))
+    : 7;
   const qLower = query.toLowerCase().replace(/^(?:https?:\/\/)?(?:www\.)?/, '');
-  const searchBase = options?.searchEngineUrl || 'https://yandex.ru/search/?text=';
+  const configuredSearchBase = options?.searchEngineUrl || 'https://yandex.ru/search/?text=';
+  // Suggestions are rendered as navigation targets. Do not let a malformed or
+  // javascript: search-engine setting turn a suggestion into script execution.
+  const searchBase = isSafeWebUrl(configuredSearchBase) ? configuredSearchBase : 'https://yandex.ru/search/?text=';
   const searchUrl = `${searchBase}${encodeURIComponent(query)}`;
   const searchDomain = extractDomain(searchBase);
 
@@ -174,7 +183,9 @@ export function getOmniboxSuggestions(
     }
   }
 
-  // 4. Always include search suggestion
+  // 4. Always include search suggestion. With maxResults=1 this is the only
+  // result; otherwise it remains the final fallback as before.
+  if (suggestions.length >= maxResults) return suggestions.slice(0, maxResults);
   suggestions.push({
     id: `search-${query}`,
     kind: 'search',
@@ -184,5 +195,5 @@ export function getOmniboxSuggestions(
     badge: 'Поиск',
   });
 
-  return suggestions;
+  return suggestions.slice(0, maxResults);
 }

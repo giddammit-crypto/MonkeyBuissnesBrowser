@@ -30,6 +30,7 @@ describe('parseOmniboxInput', () => {
     expect(parseOmniboxInput('   ').kind).toBe('invalid');
     expect(isSafeWebUrl('file:///etc/passwd')).toBe(false);
     expect(isSafeWebUrl('https://example.com')).toBe(true);
+    expect(isSafeWebUrl('https://user:secret@example.com')).toBe(false);
   });
 });
 
@@ -45,6 +46,7 @@ describe('omnibox host parsing regressions', () => {
   it('rejects unsupported explicit protocols while allowing punctuation in searches', () => {
     for (const input of ['ftp://example.org/file', 'javascript:alert(1)', 'custom://example.org']) expect(parseOmniboxInput(input).kind).toBe('invalid');
     expect(parseOmniboxInput('how: why', 'https://search.test/?q=')).toEqual({ kind: 'search', url: 'https://search.test/?q=how%3A%20why' });
+    expect(parseOmniboxInput('https://user:secret@example.com').kind).toBe('invalid');
   });
 });
 
@@ -73,5 +75,14 @@ describe('getOmniboxSuggestions', () => {
     const last = results[results.length - 1];
     expect(last.kind).toBe('search');
     expect(last.url).toContain('cats%20and%20dogs');
+  });
+
+  it('keeps suggestion targets safe and respects a one-item limit', async () => {
+    const { getOmniboxSuggestions } = await import('../../src/shared/omniboxSuggestions');
+    const result = getOmniboxSuggestions('cats', { searchEngineUrl: 'javascript:alert(1)', maxResults: 1 });
+    expect(result).toHaveLength(1);
+    expect(result[0].kind).toBe('search');
+    expect(result[0].url).toBe('https://yandex.ru/search/?text=cats');
+    expect(getOmniboxSuggestions('cats', { maxResults: 0 })).toHaveLength(1);
   });
 });

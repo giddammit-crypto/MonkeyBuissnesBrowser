@@ -38,4 +38,12 @@ describe('MemoryManager eligibility', () => {
     manager.registerTab({ tabId: 'tab-2', active: false, pinned: false, audible: false, loading: false, downloading: false, lastInteractionAt: 0, lifecycle: 'background' });
     expect(manager.canHibernate('tab-2', 0)).toEqual({ allowed: true });
   });
+
+  it('does not hibernate a tab outside the background lifecycle or accept invalid thresholds', () => {
+    const manager = new MemoryManager();
+    manager.registerTab({ tabId: 'active-lifecycle', active: false, pinned: false, audible: false, loading: false, downloading: false, lastInteractionAt: 0, lifecycle: 'hibernated' });
+    expect(manager.canHibernate('active-lifecycle', 0).reason).toBe('not-background-tab');
+    manager.updateTab('active-lifecycle', { lifecycle: 'background' });
+    expect(manager.canHibernate('active-lifecycle', -1).reason).toBe('invalid-idle-threshold');
+  });
 });

@@ -87,6 +87,60 @@ export interface BrowserSettings {
   thirdPartyCookieExceptions?: string[];
 }
 
+export type NotificationPermissionDecision = 'allow' | 'deny';
+
+export interface NotificationPermissionEntry {
+  origin: string;
+  decision: NotificationPermissionDecision;
+  updatedAt: number;
+}
+
+export type PrivacyCheckStatus = 'pass' | 'warn' | 'fail' | 'unknown';
+
+export interface PrivacySitePermission {
+  id: string;
+  origin: string;
+  kind: 'notifications' | 'cookies' | 'adblock';
+  decision: 'allow' | 'deny' | 'exception';
+  label: string;
+  updatedAt?: number;
+}
+
+export interface PrivacyDashboardSnapshot {
+  checkedAt: number;
+  isPrivate: boolean;
+  externalIp: {
+    value?: string;
+    family?: 'IPv4' | 'IPv6';
+    status: 'ok' | 'unavailable';
+    source: string;
+    error?: string;
+  };
+  route: {
+    mode: 'direct' | 'browsec' | 'proxy' | 'unknown';
+    label: string;
+    detail: string;
+    proxyRule?: string;
+  };
+  dns: {
+    servers: string[];
+    status: 'system' | 'unavailable';
+    detail: string;
+  };
+  blockedTrackers: {
+    total: number;
+    topHosts: Array<{ host: string; count: number }>;
+    enabled: boolean;
+  };
+  sitePermissions: PrivacySitePermission[];
+  leakChecks: Array<{
+    id: 'external-ip' | 'dns' | 'webrtc' | 'third-party-cookies';
+    label: string;
+    status: PrivacyCheckStatus;
+    detail: string;
+  }>;
+}
+
 export type ImportBrowser = 'chrome' | 'yandex' | 'firefox' | 'edge' | 'brave' | 'opera' | 'vivaldi' | 'file';
 export type ImportFileKind = 'bookmarks' | 'passwords';
 export interface ImportFileReport {
@@ -196,6 +250,7 @@ export interface BrowserSnapshot {
   downloads: DownloadEntry[];
   workspaces: WorkspaceEntry[];
   settings: BrowserSettings;
+  notificationPermissions: NotificationPermissionEntry[];
   vpn: VpnSnapshot;
   browsec: BrowsecState;
   googleAccounts?: GoogleAccount[];

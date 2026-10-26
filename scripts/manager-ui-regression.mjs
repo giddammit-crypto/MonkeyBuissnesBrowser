@@ -62,6 +62,47 @@ try {
     BaseWindow.getAllWindows()[0].setSize(920, 640),
   );
   await shell.evaluate(() =>
+    window.browserApi.updateSettings({
+      theme: "light",
+      appearancePreset: "classic",
+      newTabBackground: "plain",
+      accentColor: "graphite",
+    }),
+  );
+  await shell.waitForFunction(
+    () => document.documentElement.dataset.theme === "light"
+      && document.documentElement.dataset.accent === "graphite",
+  );
+  const heroContrast = await shell.locator(".hero-search > button").evaluate((element) => {
+    const rgb = (raw) => (raw.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+    const luminance = (values) => values
+      .map((value) => {
+        const channel = value / 255;
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+      })
+      .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    const foreground = luminance(rgb(getComputedStyle(element).color));
+    const background = luminance(rgb(getComputedStyle(element).backgroundColor));
+    return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+  });
+  assert(heroContrast >= 4.5, `Light-theme submit arrow contrast too low: ${heroContrast}`);
+  console.log("PASS light-theme new-tab submit arrow remains visible");
+  await shell
+    .locator(".sidebar")
+    .getByRole("button", { name: "Центр приватности", exact: true })
+    .click();
+  await expect(
+    shell.getByRole("region", { name: "Центр приватности" }),
+  ).toBeVisible();
+  await expect(
+    shell.getByRole("heading", { name: "Центр приватности", exact: true }),
+  ).toBeVisible();
+  console.log("PASS privacy dashboard opens from the sidebar");
+  await shell
+    .locator(".sidebar")
+    .getByRole("button", { name: "Обзор", exact: true })
+    .click();
+  await shell.evaluate(() =>
     window.browserApi.updateSettings({ theme: "dark" }),
   );
   await shell.waitForFunction(
@@ -204,6 +245,35 @@ try {
   console.log(
     "PASS password metadata layout and search control at 920×640 in dark theme",
   );
+
+  await app.evaluate(({ BaseWindow }) =>
+    BaseWindow.getAllWindows()[0].setSize(420, 640),
+  );
+  await expect
+    .poll(() =>
+      shell.locator(".app-shell").evaluate(
+        (element) => Math.round(element.getBoundingClientRect().width),
+      ),
+    )
+    .toBe(420);
+  await expect
+    .poll(() =>
+      shell.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+      ),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      shell.locator(".toolbar, .panel-visible").evaluateAll((elements) =>
+        elements.every((element) => {
+          const bounds = element.getBoundingClientRect();
+          return bounds.left >= -1 && bounds.right <= window.innerWidth + 1;
+        }),
+      ),
+    )
+    .toBe(true);
+  console.log("PASS compact 420px toolbar and settings stay within the viewport");
 } finally {
   if (app) await app.close();
   fs.rmSync(profile, { recursive: true, force: true });

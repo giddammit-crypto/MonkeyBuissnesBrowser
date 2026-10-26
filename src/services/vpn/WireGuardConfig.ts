@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 export interface WireGuardPeer {
   publicKey: string;
   endpoint?: string;
@@ -24,9 +26,12 @@ function isValidCidr(value: string): boolean {
   const [address, prefix] = value.split('/');
   if (!address || !prefix || !/^\d+$/.test(prefix)) return false;
   const prefixNumber = Number(prefix);
-  if (address.includes(':')) return prefixNumber >= 0 && prefixNumber <= 128;
-  const octets = address.split('.');
-  return octets.length === 4 && octets.every((octet) => /^\d+$/.test(octet) && Number(octet) >= 0 && Number(octet) <= 255) && prefixNumber >= 0 && prefixNumber <= 32;
+  const version = isIP(address);
+  return version === 6 ? prefixNumber <= 128 : version === 4 ? prefixNumber <= 32 : false;
+}
+
+function isValidKey(value: string | undefined): value is string {
+  return typeof value === 'string' && keyPattern.test(value);
 }
 
 function isValidEndpoint(value: string): boolean {
@@ -43,9 +48,11 @@ export function parseWireGuardConfig(raw: string): { config?: WireGuardConfig; e
   const flushPeer = () => {
     if (!Object.keys(peerConfig).length) return;
     const publicKey = peerConfig.PublicKey;
-    if (!publicKey || !keyPattern.test(publicKey)) errors.push('Каждый Peer должен содержать корректный PublicKey.');
+    if (!isValidKey(publicKey)) errors.push('Каждый Peer должен содержать корректный PublicKey.');
     const allowedIPs = splitList(peerConfig.AllowedIPs);
     if (!allowedIPs.length) errors.push('У Peer должен быть указан AllowedIPs.');
+    if (allowedIPs.some((address) => !isValidCidr(address))) errors.push('Peer.AllowedIPs содержит неверный CIDR.');
+    if (peerConfig.PresharedKey && !isValidKey(peerConfig.PresharedKey)) errors.push('Peer.PresharedKey имеет неверный формат.');
     if (peerConfig.PostUp || peerConfig.PostDown || peerConfig.PreUp || peerConfig.PreDown) errors.push('Командные hooks в конфигурации WireGuard запрещены.');
     if (peerConfig.Endpoint && !isValidEndpoint(peerConfig.Endpoint)) errors.push('Endpoint Peer имеет неверный формат.');
     if (peerConfig.PersistentKeepalive && (!/^\d+$/.test(peerConfig.PersistentKeepalive) || Number(peerConfig.PersistentKeepalive) > 65535)) errors.push('PersistentKeepalive имеет неверное значение.');
@@ -80,7 +87,7 @@ export function parseWireGuardConfig(raw: string): { config?: WireGuardConfig; e
 
   if (interfaceConfig.PostUp || interfaceConfig.PostDown || interfaceConfig.PreUp || interfaceConfig.PreDown) errors.push('Командные hooks в конфигурации WireGuard запрещены.');
 
-  if (!keyPattern.test(interfaceConfig.PrivateKey ?? '')) errors.push('Interface.PrivateKey отсутствует или имеет неверный формат.');
+  if (!isValidKey(interfaceConfig.PrivateKey)) errors.push('Interface.PrivateKey отсутствует или имеет неверный формат.');
   const addresses = splitList(interfaceConfig.Address);
   if (!addresses.length) errors.push('Interface.Address обязателен.');
   if (addresses.some((address) => !isValidCidr(address))) errors.push('Interface.Address содержит неверный CIDR.');

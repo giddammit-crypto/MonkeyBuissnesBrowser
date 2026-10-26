@@ -78,3 +78,15 @@ it('reports locked and corrupted vaults rather than an empty password list and r
   fs.writeFileSync(file,before);
   expect(store.summaries()).toHaveLength(1);
 });
+
+it('rejects malformed records instead of exposing them as summaries', () => {
+  const root = directory(); const store = new PasswordStore(root);
+  store.addMany([{ origin: 'https://saved.test', username: 'user', password: 'secret', browser: 'file' }]);
+  const file = path.join(root, 'browser-data', 'passwords.enc');
+  const records = JSON.parse(Buffer.from(fs.readFileSync(file, 'utf8'), 'base64').toString());
+  // The fixture encryption is identity-like, so alter the serialized vault
+  // and verify strict reads fail without replacing it.
+  records[0].browser = 'unknown';
+  fs.writeFileSync(file, Buffer.from(JSON.stringify(records)).toString('base64'));
+  expect(() => store.summaries()).toThrow('Операция отменена');
+});

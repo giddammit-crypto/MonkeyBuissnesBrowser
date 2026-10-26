@@ -38,6 +38,7 @@ protocol.registerSchemesAsPrivileged([
 let controller: BrowserController | undefined;
 let appProtocolRegistered = false;
 let ipcRegistered = false;
+let applicationPromise: Promise<void> | undefined;
 
 function registerAppProtocol(): void {
   if (appProtocolRegistered) return;
@@ -88,12 +89,14 @@ function registerIpc(): void {
   if (ipcRegistered) return;
   ipcRegistered = true;
   ipcMain.handle('browser:get-snapshot', (event) => requireShell(event).getSnapshot());
+  ipcMain.handle('browser:get-privacy-dashboard', (event, tabId?: string) => requireShell(event).getPrivacyDashboard(typeof tabId === 'string' ? tabId : undefined));
   ipcMain.handle('browser:create-tab', (event, input: { url?: string; isPrivate?: boolean } = {}) =>
     requireShell(event).createTab(input),
   );
   ipcMain.handle('browser:activate-tab', (event, tabId: string) => requireShell(event).activateTab(tabId));
   ipcMain.handle('browser:open-page-externally', (event, tabId: string) => requireShell(event).openCurrentPageExternally(tabId));
   ipcMain.handle('browser:set-site-cookie-exception', (event, tabId: string, allow: boolean) => requireShell(event).setSiteCookieException(tabId, allow));
+  ipcMain.handle('browser:set-site-notification-permission', (event, tabId: string, decision: 'allow' | 'deny' | 'ask') => requireShell(event).setSiteNotificationPermission(tabId, decision));
   ipcMain.handle('browser:set-site-adblock-enabled', (event, tabId: string, enabled: boolean) => requireShell(event).setSiteAdBlockEnabled(tabId, enabled));
   ipcMain.handle('browser:import-file', (event, kind: import('../shared/types').ImportFileKind) => requireShell(event).importBrowserFile(kind));
   ipcMain.handle('browser:tab-action', (event, tabId: string, action: import('../shared/ipc').TabAction) => requireShell(event).tabAction(tabId, action));
@@ -159,27 +162,41 @@ function registerIpc(): void {
   ipcMain.handle('browser:delete-download', (event, downloadId: string, deleteFile?: boolean) => requireShell(event).deleteDownload(downloadId, deleteFile));
   ipcMain.handle('browser:retry-download', (event, downloadId: string) => requireShell(event).retryDownload(downloadId));
   ipcMain.on('browser:start-download-drag', (event, downloadId: string) => {
-    controller?.startDownloadDrag(downloadId, event.sender);
+    try {
+      requireShell(event).startDownloadDrag(downloadId, event.sender);
+    } catch {
+      // The drag command is fire-and-forget; ignore calls from non-shell frames.
+    }
   });
   ipcMain.handle('browser:add-google-account', (event, email: string, name?: string) => requireShell(event).addGoogleAccount(email, name));
   ipcMain.handle('browser:switch-google-account', (event, accountId: string) => requireShell(event).switchGoogleAccount(accountId));
   ipcMain.handle('browser:remove-google-account', (event, accountId: string) => requireShell(event).removeGoogleAccount(accountId));
   ipcMain.on('page:download-media', (event, data: { url: string; filename?: string; isAudio?: boolean }) => {
-    if (data?.url && typeof data.url === 'string' && (data.url.startsWith('https://') || data.url.startsWith('http://'))) {
-      controller?.downloadMediaUrl(data.url, data.filename, data.isAudio);
+    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id) && data?.url && typeof data.url === 'string' && (data.url.startsWith('https://') || data.url.startsWith('http://'))) {
+      controller.downloadMediaUrl(data.url, typeof data.filename === 'string' ? data.filename : undefined, typeof data.isAudio === 'boolean' ? data.isAudio : false, event.sender.id);
     }
   });
   ipcMain.on('page:media-detected', (event, data: { hasVideo?: boolean; hasAudio?: boolean }) => {
-    controller?.markTabHasMedia(event.sender.id, Boolean(data?.hasVideo || data?.hasAudio));
+    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabHasMedia(event.sender.id, Boolean(data?.hasVideo || data?.hasAudio));
   });
   ipcMain.on('page:audio-stream-captured', (event, data: { url: string; title?: string; artist?: string; filename?: string }) => {
-    if (data?.url && typeof data.url === 'string') {
-      controller?.registerCapturedAudio(event.sender.id, data.url, data.title, data.artist, data.filename);
+    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id) && data?.url && typeof data.url === 'string') {
+      controller.registerCapturedAudio(
+        event.sender.id,
+        data.url,
+        typeof data.title === 'string' ? data.title : undefined,
+        typeof data.artist === 'string' ? data.artist : undefined,
+        typeof data.filename === 'string' ? data.filename : undefined,
+      );
     }
   });
-  ipcMain.on('page:google-account-detected', (_event, data: { email: string; name?: string; avatar?: string }) => {
-    if (data?.email) {
-      controller?.registerGoogleAccount(data.email, data.name, data.avatar);
+  ipcMain.on('page:google-account-detected', (event, data: { email: string; name?: string; avatar?: string }) => {
+    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id) && typeof data?.email === 'string' && data.email) {
+      controller.registerGoogleAccount(
+        data.email,
+        typeof data.name === 'string' ? data.name : undefined,
+        typeof data.avatar === 'string' ? data.avatar : undefined,
+      );
     }
   });
   ipcMain.handle('window:minimize', (event) => requireShell(event).minimizeWindow());
@@ -188,18 +205,26 @@ function registerIpc(): void {
 }
 
 async function createApplication(): Promise<void> {
-  if (controller?.window && !controller.window.isDestroyed()) {
-    controller.window.show();
-    return;
+  if (applicationPromise) return applicationPromise;
+  applicationPromise = (async () => {
+    if (controller?.window && !controller.window.isDestroyed()) {
+      controller.window.show();
+      return;
+    }
+    registerAppProtocol();
+    controller = new BrowserController();
+    controller.setListeners(
+      (snapshot) => controller?.shellView?.webContents.send('browser:snapshot', snapshot),
+      (event) => controller?.shellView?.webContents.send('browser:event', event),
+    );
+    registerIpc();
+    await controller.createWindow();
+  })();
+  try {
+    await applicationPromise;
+  } finally {
+    applicationPromise = undefined;
   }
-  registerAppProtocol();
-  controller = new BrowserController();
-  controller.setListeners(
-    (snapshot) => controller?.shellView?.webContents.send('browser:snapshot', snapshot),
-    (event) => controller?.shellView?.webContents.send('browser:event', event),
-  );
-  registerIpc();
-  await controller.createWindow();
 }
 
 void app.whenReady().then(createApplication);

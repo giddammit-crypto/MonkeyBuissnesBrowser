@@ -11,6 +11,27 @@ interface StoredVpnRecord {
   metadata: VpnSnapshot;
 }
 
+function normalizeStoredRecord(value: unknown): StoredVpnRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const metadata = raw.metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const snapshot = metadata as Record<string, unknown>;
+  if (typeof raw.profileName !== 'string' || !raw.profileName
+    || typeof raw.encryptedConfig !== 'string' || !raw.encryptedConfig
+    || snapshot.configured !== true || snapshot.mode !== 'system'
+    || snapshot.state !== 'configured'
+    || !Array.isArray(snapshot.addresses) || !snapshot.addresses.every((item) => typeof item === 'string')
+    || !Array.isArray(snapshot.dns) || !snapshot.dns.every((item) => typeof item === 'string')
+    || typeof snapshot.peerCount !== 'number' || !Number.isInteger(snapshot.peerCount) || snapshot.peerCount < 1
+    || typeof snapshot.savedSecurely !== 'boolean' || !Array.isArray(snapshot.errors) || !snapshot.errors.every((item) => typeof item === 'string')) return null;
+  return {
+    profileName: raw.profileName,
+    encryptedConfig: raw.encryptedConfig,
+    metadata: metadata as VpnSnapshot,
+  };
+}
+
 const emptySnapshot = (): VpnSnapshot => ({
   configured: false,
   mode: 'system',
@@ -61,9 +82,9 @@ export class VpnConfigStore {
   private sessionSnapshot: VpnSnapshot;
 
   constructor(userDataPath: string) {
-    this.record = new JsonStore<StoredVpnRecord | null>(path.join(userDataPath, 'browser-data', 'vpn-config.json'), null);
+    this.record = new JsonStore<StoredVpnRecord | null>(path.join(userDataPath, 'browser-data', 'vpn-config.json'), null, normalizeStoredRecord);
     const stored = this.record.get();
-    this.sessionSnapshot = stored?.encryptedConfig ? stored.metadata : emptySnapshot();
+    this.sessionSnapshot = stored ? stored.metadata : emptySnapshot();
   }
 
   getSnapshot(): VpnSnapshot {
@@ -89,26 +110,44 @@ export class VpnConfigStore {
   }
 
   async importRaw(profileName: string, rawConfig: string): Promise<VpnSnapshot> {
-    const backend = process.platform === 'linux' ? safeStorage.getSelectedStorageBackend() : undefined;
-    const encryptionAvailable = await safeStorage.isAsyncEncryptionAvailable();
+    const backend = process.platform === 'linux' ? this.storageBackend() : undefined;
+    const encryptionAvailable = await this.isEncryptionAvailable();
     const secureBackend = backend === undefined || (backend !== 'basic_text' && backend !== 'unknown');
     const savedSecurely = encryptionAvailable && secureBackend;
     const next = snapshotFromConfig(profileName, rawConfig, savedSecurely, backend);
-    this.sessionSnapshot = next;
 
     if (!next.configured) {
       this.record.set(null);
+      this.sessionSnapshot = next;
       return next;
     }
 
     if (!savedSecurely) {
-      this.record.set({ profileName, metadata: next });
+      // Never persist even the raw configuration metadata when the platform
+      // cannot protect the secret. The active session may still use it until
+      // restart, but a later launch must not present it as restorable.
+      this.record.set(null);
+      this.sessionSnapshot = next;
       return next;
     }
 
-    const encrypted = await safeStorage.encryptStringAsync(rawConfig);
+    let encrypted: Buffer;
+    try {
+      encrypted = await safeStorage.encryptStringAsync(rawConfig);
+    } catch {
+      throw new Error('Не удалось зашифровать VPN-конфигурацию. Существующая конфигурация не изменена.');
+    }
     this.record.set({ profileName, encryptedConfig: encrypted.toString('base64'), metadata: next });
+    this.sessionSnapshot = next;
     return next;
+  }
+
+  private storageBackend(): string | undefined {
+    try { return safeStorage.getSelectedStorageBackend(); } catch { return undefined; }
+  }
+
+  private async isEncryptionAvailable(): Promise<boolean> {
+    try { return await safeStorage.isAsyncEncryptionAvailable(); } catch { return false; }
   }
 
   clear(): VpnSnapshot {

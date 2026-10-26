@@ -34,6 +34,7 @@ import {
   Search,
   Settings,
   Shield,
+  ShieldCheck,
   ShieldOff,
   Square,
   Star,
@@ -58,8 +59,9 @@ import type {
   ImportReport,
   ImportFileKind,
   ImportFileReport,
+  PrivacyDashboardSnapshot,
 } from "../shared/types";
-import { getGoogleAuthNotice, getSiteKey, normalizeSiteKey } from "../shared/sitePolicy";
+import { getGoogleAuthNotice, getSiteKey, normalizePermissionOrigin, normalizeSiteKey } from "../shared/sitePolicy";
 import { normalizeNewTabBackground } from "../shared/background";
 import { getOmniboxSuggestions } from "../shared/omniboxSuggestions";
 import logoLight from "./assets/soul/logo-light.png";
@@ -75,6 +77,7 @@ import chloeIcon from "./assets/soul/chloe-icon-512.png";
 import symbol from "./assets/soul/symbol.svg";
 import "./styles.css";
 import "./newtab-wallpaper.css";
+import "./privacy-dashboard.css";
 import { userFacingError } from "./userFacingError";
 import BrowsecModal from "./BrowsecModal";
 import GoogleAccountPopover from "./GoogleAccountPopover";
@@ -82,66 +85,207 @@ import DownloadsPopover from "./DownloadsPopover";
 import TabSearch from "./TabSearch";
 import SiteFavicon from "./SiteFavicon";
 import SiteErrorPage from "./SiteErrorPage";
+import PrivacyDashboard from "./PrivacyDashboard";
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
-type Panel = "home" | "bookmarks" | "history" | "downloads" | "settings";
+type Panel = "home" | "bookmarks" | "history" | "downloads" | "privacy" | "settings";
 type Toast = { tone: "error" | "success" | "info"; message: string };
-// User wallpapers are kept in the trusted shell's local storage. Never load
+// User wallpapers are kept in the trusted shell's IndexedDB. Never load
 // remote/CSS URLs, SVG or arbitrary files into the privileged browser shell.
 const CUSTOM_WALLPAPER_KEY = "soul-m8te-custom-wallpaper-v1";
 const CUSTOM_WALLPAPER_EVENT = "soul-m8te-wallpaper-changed";
-function readCustomWallpaper(): string | null {
+const CUSTOM_WALLPAPER_DB = "soulm8te-custom-wallpaper-v2";
+const CUSTOM_WALLPAPER_STORE = "wallpaper";
+const CUSTOM_WALLPAPER_RECORD = "current";
+const MAX_CUSTOM_WALLPAPER_BYTES = 20 * 1024 * 1024;
+type CustomWallpaperSource = Blob | string;
+
+function readLegacyCustomWallpaper(): string | null {
   try {
     const value = localStorage.getItem(CUSTOM_WALLPAPER_KEY);
     return value && value.length <= 3_000_000 && /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(value) ? value : null;
   } catch { return null; }
 }
-function useCustomWallpaper(): [string | null, (data: string | null) => void] {
-  const [image, setImage] = useState<string | null>(readCustomWallpaper);
+
+function idbRequest<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("Не удалось открыть хранилище обоев."));
+  });
+}
+
+function openWallpaperDatabase(): Promise<IDBDatabase> {
+  if (!window.indexedDB) throw new Error("Хранилище обоев недоступно в этом профиле.");
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(CUSTOM_WALLPAPER_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(CUSTOM_WALLPAPER_STORE)) {
+        request.result.createObjectStore(CUSTOM_WALLPAPER_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("Не удалось открыть хранилище обоев."));
+  });
+}
+
+async function readStoredWallpaper(): Promise<Blob | null> {
+  try {
+    const database = await openWallpaperDatabase();
+    try {
+      const value = await idbRequest(database.transaction(CUSTOM_WALLPAPER_STORE, "readonly").objectStore(CUSTOM_WALLPAPER_STORE).get(CUSTOM_WALLPAPER_RECORD));
+      return value instanceof Blob && value.size > 0 && value.size <= MAX_CUSTOM_WALLPAPER_BYTES ? value : null;
+    } finally {
+      database.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function writeStoredWallpaper(value: Blob | null): Promise<void> {
+  const database = await openWallpaperDatabase();
+  try {
+    const transaction = database.transaction(CUSTOM_WALLPAPER_STORE, "readwrite");
+    const store = transaction.objectStore(CUSTOM_WALLPAPER_STORE);
+    if (value) store.put(value, CUSTOM_WALLPAPER_RECORD);
+    else store.delete(CUSTOM_WALLPAPER_RECORD);
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error("Не удалось сохранить обои."));
+      transaction.onabort = () => reject(transaction.error ?? new Error("Не удалось сохранить обои."));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function sourceToWallpaperBlob(source: CustomWallpaperSource): Promise<Blob> {
+  if (source instanceof Blob) return source;
+  if (!source.startsWith("blob:") && !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(source)) {
+    throw new Error("Недопустимые данные обоев.");
+  }
+  const response = await fetch(source);
+  if (!response.ok) throw new Error("Не удалось прочитать обои.");
+  return response.blob();
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("Не удалось прочитать обои."));
+    reader.onerror = () => reject(reader.error ?? new Error("Не удалось прочитать обои."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function loadCustomWallpaper(): Promise<Blob | null> {
+  const stored = await readStoredWallpaper();
+  if (stored) return stored;
+  const legacy = readLegacyCustomWallpaper();
+  if (!legacy) return null;
+  try {
+    const migrated = await sourceToWallpaperBlob(legacy);
+    if (migrated.size <= MAX_CUSTOM_WALLPAPER_BYTES) {
+      await writeStoredWallpaper(migrated);
+      localStorage.removeItem(CUSTOM_WALLPAPER_KEY);
+      return migrated;
+    }
+  } catch { /* Ignore an invalid legacy value and fall back to the bundled wallpaper. */ }
+  return null;
+}
+
+function useCustomWallpaper(): [string | null, (data: CustomWallpaperSource | null) => Promise<void>] {
+  const [image, setImage] = useState<string | null>(null);
   useEffect(() => {
-    const changed = () => setImage(readCustomWallpaper());
+    let disposed = false;
+    const apply = async () => {
+      const blob = await loadCustomWallpaper();
+      if (disposed) return;
+      const dataUrl = blob ? await blobToDataUrl(blob) : null;
+      if (disposed) return;
+      setImage(dataUrl);
+    };
+    const changed = () => { void apply(); };
+    void apply();
     window.addEventListener(CUSTOM_WALLPAPER_EVENT, changed);
-    return () => window.removeEventListener(CUSTOM_WALLPAPER_EVENT, changed);
+    return () => {
+      disposed = true;
+      window.removeEventListener(CUSTOM_WALLPAPER_EVENT, changed);
+    };
   }, []);
-  const save = (value: string | null) => {
-    if (value !== null && (value.length > 3_000_000 || !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(value))) throw new Error("Недопустимые данные обоев.");
-    if (value === null) localStorage.removeItem(CUSTOM_WALLPAPER_KEY);
-    else localStorage.setItem(CUSTOM_WALLPAPER_KEY, value);
+  const save = async (value: CustomWallpaperSource | null) => {
+    if (value === null) {
+      await writeStoredWallpaper(null);
+      localStorage.removeItem(CUSTOM_WALLPAPER_KEY);
+    } else {
+      const blob = await sourceToWallpaperBlob(value);
+      if (!blob.size || blob.size > MAX_CUSTOM_WALLPAPER_BYTES) throw new Error("Изображение должно быть не больше 20 МБ.");
+      await writeStoredWallpaper(blob);
+      localStorage.removeItem(CUSTOM_WALLPAPER_KEY);
+    }
     window.dispatchEvent(new Event(CUSTOM_WALLPAPER_EVENT));
   };
   return [image, save];
 }
-async function imageAsWallpaper(file: File): Promise<string> {
-  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type))
+
+function imageTypeForFile(file: globalThis.File): string | null {
+  const type = file.type.toLowerCase();
+  if (["image/png", "image/jpeg", "image/webp"].includes(type)) return type;
+  const extension = file.name.toLowerCase().split(".").pop();
+  return extension === "png" ? "image/png" : extension === "jpg" || extension === "jpeg" ? "image/jpeg" : extension === "webp" ? "image/webp" : null;
+}
+
+async function imageAsWallpaper(file: globalThis.File): Promise<Blob> {
+  const imageType = imageTypeForFile(file);
+  if (!imageType)
     throw new Error("Поддерживаются только PNG, JPEG и WebP.");
-  if (!file.size || file.size > 20_000_000)
+  if (!file.size || file.size > MAX_CUSTOM_WALLPAPER_BYTES)
     throw new Error("Изображение должно быть не больше 20 МБ.");
-  const blobUrl = URL.createObjectURL(file);
+  const sourceFile = file.type === imageType ? file : new globalThis.File([file], file.name, { type: imageType, lastModified: file.lastModified });
+  let source: CanvasImageSource;
+  let sourceWidth = 0;
+  let sourceHeight = 0;
+  let releaseSource: () => void = () => {};
   try {
-    const photo = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new window.Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error("Изображение повреждено."));
-      image.src = blobUrl;
-    });
-    if (!photo.naturalWidth || !photo.naturalHeight || photo.naturalWidth > 12000 || photo.naturalHeight > 12000)
+    try {
+      const bitmap = await createImageBitmap(sourceFile);
+      source = bitmap;
+      sourceWidth = bitmap.width;
+      sourceHeight = bitmap.height;
+      releaseSource = () => bitmap.close();
+    } catch {
+      const blobUrl = URL.createObjectURL(sourceFile);
+      const photo = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new window.Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("Не удалось прочитать изображение. Проверьте, что файл не повреждён и имеет формат PNG, JPEG или WebP."));
+        image.src = blobUrl;
+      });
+      source = photo;
+      sourceWidth = photo.naturalWidth;
+      sourceHeight = photo.naturalHeight;
+      releaseSource = () => URL.revokeObjectURL(blobUrl);
+    }
+    if (!sourceWidth || !sourceHeight || sourceWidth > 12000 || sourceHeight > 12000)
       throw new Error("Неподдерживаемое разрешение изображения.");
-    const scale = Math.min(1, 2560 / photo.naturalWidth, 1600 / photo.naturalHeight);
+    const scale = Math.min(1, 2560 / sourceWidth, 1600 / sourceHeight);
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(photo.naturalWidth * scale));
-    canvas.height = Math.max(1, Math.round(photo.naturalHeight * scale));
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Не удалось подготовить изображение.");
-    context.drawImage(photo, 0, 0, canvas.width, canvas.height);
-    for (const quality of [0.88, 0.74, 0.6]) {
-      const compressed = canvas.toDataURL("image/webp", quality);
-      if (compressed.startsWith("data:image/webp;base64,") && compressed.length <= 3_000_000)
-        return compressed;
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const toBlob = (type: string, quality: number) => new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
+    for (const type of ["image/webp", "image/jpeg"]) {
+      for (const quality of [0.92, 0.84, 0.72, 0.58]) {
+        const compressed = await toBlob(type, quality);
+        if (compressed && compressed.size <= MAX_CUSTOM_WALLPAPER_BYTES) return compressed;
+      }
     }
-    throw new Error("Не удалось сжать обои. Выберите изображение меньшего разрешения.");
+    throw new Error("Не удалось подготовить обои до 20 МБ. Выберите изображение меньшего разрешения.");
   } finally {
-    URL.revokeObjectURL(blobUrl);
+    releaseSource();
   }
 }
 
@@ -174,6 +318,9 @@ function App(): React.JSX.Element {
   const [findResult, setFindResult] = useState("");
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [workspaceName, setWorkspaceName] = useState("");
+  const [privacyDashboard, setPrivacyDashboard] = useState<PrivacyDashboardSnapshot | null>(null);
+  const [privacyDashboardLoading, setPrivacyDashboardLoading] = useState(false);
+  const [privacyDashboardError, setPrivacyDashboardError] = useState("");
   const viewportRef = useRef<HTMLDivElement>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
@@ -189,7 +336,11 @@ function App(): React.JSX.Element {
   const authNotice = getGoogleAuthNotice(currentTab?.url ?? "");
   useEffect(() => setAuthNoticeDismissed(false), [currentTab?.id, currentTab?.url]);
   const currentSite = getSiteKey(currentTab?.url ?? "");
+  const currentOrigin = normalizePermissionOrigin(currentTab?.url ?? "");
   const currentDomain = normalizeSiteKey(currentTab?.url ?? "");
+  const currentNotificationPermission = currentOrigin
+    ? snapshot?.notificationPermissions?.find((entry) => entry.origin === currentOrigin)?.decision
+    : undefined;
   const isAdBlockDisabledOnCurrentSite = Boolean(
     currentDomain &&
       snapshot?.settings.adBlockExceptions?.some((exc) => normalizeSiteKey(exc) === currentDomain)
@@ -247,6 +398,24 @@ function App(): React.JSX.Element {
     },
     [showError],
   );
+  const refreshPrivacyDashboard = useCallback(async () => {
+    setPrivacyDashboardLoading(true);
+    setPrivacyDashboardError("");
+    try {
+      const next = await window.browserApi.getPrivacyDashboard(currentTab?.id);
+      setPrivacyDashboard(next);
+    } catch (error) {
+      setPrivacyDashboardError(userFacingError(error));
+    } finally {
+      setPrivacyDashboardLoading(false);
+    }
+  }, [currentTab?.id]);
+
+  useEffect(() => {
+    if (panel !== "privacy") return;
+    void refreshPrivacyDashboard();
+  }, [panel, refreshPrivacyDashboard]);
+
   const openPanel = useCallback((next: Panel) => {
     setPanel((current) => (current === next && next !== "home" ? "home" : next));
     setPopover(null);
@@ -1108,6 +1277,42 @@ function App(): React.JSX.Element {
                   )}
               </div>
             )}
+            {currentOrigin && !isPrivate && (
+              <div className="site-cookie-control site-notification-control">
+                <strong>Уведомления сайта</strong>
+                <small className="site-key">{currentOrigin}</small>
+                <label>
+                  <span>Разрешение</span>
+                  <select
+                    aria-label="Разрешение уведомлений для этого сайта"
+                    value={currentNotificationPermission ?? "ask"}
+                    onChange={(event) => {
+                      if (!currentTab) return;
+                      const decision = event.target.value as "allow" | "deny" | "ask";
+                      run(
+                        window.browserApi
+                          .setSiteNotificationPermission(currentTab.id, decision)
+                          .then(() => {
+                            setToast({
+                              tone: "info",
+                              message: decision === "ask"
+                                ? "Браузер снова будет спрашивать разрешение уведомлений для этого сайта."
+                                : decision === "allow"
+                                  ? "Уведомления разрешены для этого сайта."
+                                  : "Уведомления запрещены для этого сайта.",
+                            });
+                          }),
+                      );
+                    }}
+                  >
+                    <option value="ask">Спрашивать</option>
+                    <option value="allow">Разрешить</option>
+                    <option value="deny">Запретить</option>
+                  </select>
+                </label>
+                <small>Выбор сохраняется для этого HTTPS-источника и не сбрасывается после перезагрузки страницы или перезапуска браузера.</small>
+              </div>
+            )}
             <p className="privacy-note">
               {snapshot.privacy?.proxy
                 ? "Для приватных вкладок задан прокси. Проверьте внешний IP на доверенном сервисе."
@@ -1254,15 +1459,22 @@ function App(): React.JSX.Element {
             collapsed={sidebarCollapsed}
             onClick={() => openPanel("history")}
           />
-          <NavItem
-            icon={<Download size={18} />}
+           <NavItem
+             icon={<Download size={18} />}
             label="Загрузки"
             active={panel === "downloads"}
             collapsed={sidebarCollapsed}
             onClick={() => openPanel("downloads")}
             isDownloading={isDownloading}
-            downloadProgress={downloadProgress}
-          />
+             downloadProgress={downloadProgress}
+           />
+           <NavItem
+             icon={<ShieldCheck size={18} />}
+             label="Центр приватности"
+             active={panel === "privacy"}
+             collapsed={sidebarCollapsed}
+             onClick={() => openPanel("privacy")}
+           />
         </nav>
         <div className="sidebar-divider" />
         {!sidebarCollapsed && <div className="sidebar-label">Пространства</div>}
@@ -1398,7 +1610,7 @@ function App(): React.JSX.Element {
                 <strong>{authNotice.title}</strong>
                 <p>{authNotice.message}</p>
               </div>
-              <button className="icon-button" aria-label="Скрыть подсказку со входом" title="Скрыть" onClick={() => setAuthNoticeDismissed(true)}><X size={16}/></button>
+              <button className="icon-button" aria-label="Скрыть помощь со входом Google" title="Скрыть" onClick={() => setAuthNoticeDismissed(true)}><X size={16}/></button>
             </section>
           )}
         <div
@@ -1440,7 +1652,7 @@ function App(): React.JSX.Element {
               onOpen={navigate}
             /></React.Suspense>
           )}
-          {panel === "downloads" && (
+           {panel === "downloads" && (
             <DownloadsPanel
               downloads={snapshot.downloads.filter((item) => Boolean(item.isPrivate) === isPrivate)}
               isPrivate={isPrivate}
@@ -1448,9 +1660,22 @@ function App(): React.JSX.Element {
               currentTabUrl={currentTab?.url}
               currentTabTitle={currentTab?.title}
               canDownloadVideo={canDownloadVideo}
-            />
-          )}
-          {panel === "settings" && (
+             />
+           )}
+           {panel === "privacy" && (
+             <PrivacyDashboard
+               snapshot={snapshot}
+               dashboard={privacyDashboard}
+               loading={privacyDashboardLoading}
+               error={privacyDashboardError}
+               onRefresh={() => void refreshPrivacyDashboard()}
+               onManagePermissions={() => {
+                 setPanel("home");
+                 setPopover("protection");
+               }}
+             />
+           )}
+           {panel === "settings" && (
             <SettingsPanel
               snapshot={snapshot}
               run={run}
@@ -2870,13 +3095,13 @@ function SettingsPanel({
     try {
       const wallpaper = await imageAsWallpaper(file);
       // Keep the previous wallpaper if either local storage or settings fail.
-      // Storage is written first so a quota error cannot change browser settings.
-      const previous = customWallpaper;
-      saveCustomWallpaper(wallpaper);
+      // Storage is written first so a persistence error cannot change browser settings.
+      const previous = customWallpaper ? await sourceToWallpaperBlob(customWallpaper) : null;
+      await saveCustomWallpaper(wallpaper);
       try {
         await window.browserApi.updateSettings({ newTabBackground: "portrait" });
       } catch (error) {
-        try { saveCustomWallpaper(previous); } catch { /* Preserve original error. */ }
+        try { await saveCustomWallpaper(previous); } catch { /* Preserve original error. */ }
         throw error;
       }
       setWallpaperMessage("Собственные обои сохранены на этом устройстве.");
@@ -3047,14 +3272,14 @@ function SettingsPanel({
           <div className="setting-row custom-wallpaper-setting">
             <span>
               <strong>Собственные обои</strong>
-              <small>Локальный PNG, JPEG или WebP до 2 МБ. Не отправляется в интернет.</small>
+              <small>Локальный PNG, JPEG или WebP до 20 МБ. Не отправляется в интернет.</small>
             </span>
             <div className="custom-wallpaper-controls">
               <label className="custom-wallpaper-upload">
                 Выбрать файл
                 <input type="file" accept="image/png,image/jpeg,image/webp" aria-label="Загрузить собственные обои" onChange={(event) => void onWallpaperFile(event)} />
               </label>
-              {customWallpaper && <button type="button" className="plain-button" onClick={() => { saveCustomWallpaper(null); setWallpaperMessage("Возвращён стандартный портрет."); }}>Сбросить</button>}
+              {customWallpaper && <button type="button" className="plain-button" onClick={() => void saveCustomWallpaper(null).then(() => setWallpaperMessage("Возвращён стандартный портрет.")).catch((error) => setWallpaperMessage(error instanceof Error ? error.message : "Не удалось сбросить обои."))}>Сбросить</button>}
             </div>
             {wallpaperMessage && <small role="status">{wallpaperMessage}</small>}
           </div>

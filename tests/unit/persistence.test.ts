@@ -105,6 +105,20 @@ describe('BrowserStores', () => {
     expect(new BrowserStores(directory).settings.get().googleSignInCompatibility).toBe(false);
   });
 
+  it('persists notification decisions by exact origin and can reset them to ask', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-notification-permissions-'));
+    temporaryDirectories.push(directory);
+    const stores = new BrowserStores(directory);
+    stores.setNotificationPermission('https://www.example.com/path', 'deny');
+    expect(stores.getNotificationPermission('https://www.example.com')).toBe('deny');
+    expect(stores.getNotificationPermission('https://sub.example.com')).toBeUndefined();
+    expect(new BrowserStores(directory).getNotificationPermission('https://www.example.com/again')).toBe('deny');
+    stores.setNotificationPermission('https://www.example.com', 'allow');
+    expect(stores.getNotificationPermission('https://www.example.com')).toBe('allow');
+    stores.clearNotificationPermission('https://www.example.com');
+    expect(stores.getNotificationPermission('https://www.example.com')).toBeUndefined();
+  });
+
   it('edits bookmarks without changing identity or losing them after restart', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-bookmark-manager-'));
     temporaryDirectories.push(directory);

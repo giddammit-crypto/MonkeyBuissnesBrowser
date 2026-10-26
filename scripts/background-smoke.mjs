@@ -11,6 +11,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-background-e2e-'));
 fs.mkdirSync(path.join(dataPath, 'browser-data'));
 fs.writeFileSync(path.join(dataPath, 'browser-data/settings.json'), JSON.stringify({ newTabBackground: 'mountain-lake', theme: 'light', restoreSession: true }));
+const validPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+const customWallpaperFile = Buffer.concat([validPng, Buffer.alloc(2_100_000)]);
 const checks = [], shellErrors = [];
 let app, shell;
 const invoke = (method, ...args) => shell.evaluate(({method,args})=>window.browserApi[method](...args), {method,args});
@@ -47,6 +49,24 @@ try {
   await launch();
   await check('legacy wallpaper setting migrates to the bundled portrait default',async()=>{
     assert.equal((await snapshot()).settings.newTabBackground,'portrait'); await expectPortrait();
+  });
+  await check('accepts a valid custom wallpaper above the former 2 MB limit and restores it after restart',async()=>{
+    await shell.getByRole('button',{name:'Настройки',exact:true}).first().click();
+    await shell.getByLabel('Загрузить собственные обои').setInputFiles({
+      name: 'custom-wallpaper.png',
+      buffer: customWallpaperFile,
+    });
+    await expect(shell.getByText('Собственные обои сохранены на этом устройстве.',{exact:true})).toBeVisible();
+    await shell.locator('.settings-heading').getByRole('button',{name:'Закрыть',exact:true}).click();
+    await expect(wallpaper()).toHaveCount(1);
+    const customImage = wallpaper().locator('img');
+    await expect.poll(()=>customImage.evaluate(image=>image.complete&&image.naturalWidth>0)).toBe(true);
+    assert((await customImage.getAttribute('src')).startsWith('data:image/'),'custom wallpaper must use a local image resource');
+    await app.close(); app=undefined; await launch();
+    await expect(wallpaper()).toHaveCount(1);
+    const restoredImage = wallpaper().locator('img');
+    await expect.poll(()=>restoredImage.evaluate(image=>image.complete&&image.naturalWidth>0)).toBe(true);
+    assert((await restoredImage.getAttribute('src')).startsWith('data:image/'),'custom wallpaper must survive restart in local profile storage');
   });
   await check('Settings plain choice removes the wallpaper layer and persists a closed local enum',async()=>{
     await selectBackground('plain');

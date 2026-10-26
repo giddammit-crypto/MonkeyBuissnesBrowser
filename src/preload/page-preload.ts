@@ -178,9 +178,11 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   const initMediaHelper = () => {
     const host = window.location.hostname;
+    const isHostOrSubdomain = (domain: string): boolean => host === domain || host.endsWith(`.${domain}`);
+    const isVkHost = isHostOrSubdomain('vk.com') || isHostOrSubdomain('vkvideo.ru');
 
     // VK video, music & photo downloader
-    if (host.includes('vk.com') || host.includes('vkvideo.ru')) {
+    if (isVkHost) {
       const injectVkButton = () => {
         const pvBottom = document.getElementById('pv_bottom_info');
         if (pvBottom && !pvBottom.querySelector('.soul-vk-dl')) {
@@ -309,7 +311,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     // YouTube native stream downloader
-    if (host.includes('youtube.com')) {
+    if (isHostOrSubdomain('youtube.com')) {
       const injectYtButton = () => {
         const targetContainer = document.querySelector('#owner, #actions #top-level-buttons-computed, ytd-watch-metadata #actions');
         if (targetContainer && !document.querySelector('.soul-yt-dl-btn')) {
@@ -330,12 +332,81 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             btn.textContent = '✓ Скачивается';
             setTimeout(() => { btn.textContent = '⬇ Скачать MP4'; }, 3000);
           };
-          targetContainer.appendChild(btn);
-        }
-      };
+           targetContainer.appendChild(btn);
+         }
+         if (targetContainer && !document.querySelector('.soul-yt-audio-dl-btn')) {
+           const audioBtn = document.createElement('button');
+           audioBtn.className = 'soul-yt-audio-dl-btn';
+           audioBtn.textContent = '♫ MP3';
+           audioBtn.title = 'Скачать аудиодорожку в MP3';
+           audioBtn.style.cssText = 'background:#f1f3f4;color:#202124;border:1px solid #dadce0;border-radius:18px;padding:0 14px;height:36px;font-size:13px;font-weight:600;cursor:pointer;margin-left:8px;display:inline-flex;align-items:center;gap:6px;';
+           audioBtn.onclick = (e) => {
+             e.preventDefault();
+             e.stopPropagation();
+             ipcRenderer.send('page:download-media', {
+               url: window.location.href,
+               filename: (document.title.replace(/[\\/:*?"<>|]/g, '') || 'youtube-audio') + '.mp3',
+               isAudio: true,
+             });
+             audioBtn.textContent = '✓ Скачивается';
+             setTimeout(() => { audioBtn.textContent = '♫ MP3'; }, 3000);
+           };
+           targetContainer.appendChild(audioBtn);
+         }
+       };
       setInterval(injectYtButton, 1200);
       window.addEventListener('yt-navigate-finish', () => setTimeout(injectYtButton, 400));
       window.addEventListener('spfdone', () => setTimeout(injectYtButton, 400));
+    }
+
+    // Rutube does not expose a stable action toolbar across its player layouts.
+    // Add compact controls beside the player and let yt-dlp resolve the page.
+    if (isHostOrSubdomain('rutube.ru')) {
+      const injectRutubeButtons = () => {
+        const player = document.querySelector('video, [class*="player"], [class*="Player"]');
+        const container = player?.parentElement || document.body;
+        if (!container) return;
+        if (!document.querySelector('.soul-rutube-dl-btn')) {
+          const button = document.createElement('button');
+          button.className = 'soul-rutube-dl-btn';
+          button.textContent = '⬇ Скачать MP4';
+          button.title = 'Скачать видео Rutube в MP4';
+          button.style.cssText = 'position:relative;z-index:2147483647;background:#f4511e;color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;cursor:pointer;margin:8px;';
+          button.onclick = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            ipcRenderer.send('page:download-media', {
+              url: window.location.href,
+              filename: (document.title.replace(/[\\/:*?"<>|]/g, '') || 'rutube-video') + '.mp4',
+              isAudio: false,
+            });
+            button.textContent = '✓ Скачивается';
+            setTimeout(() => { button.textContent = '⬇ Скачать MP4'; }, 3000);
+          };
+          container.appendChild(button);
+        }
+        if (!document.querySelector('.soul-rutube-audio-dl-btn')) {
+          const button = document.createElement('button');
+          button.className = 'soul-rutube-audio-dl-btn';
+          button.textContent = '♫ MP3';
+          button.title = 'Скачать аудио Rutube в MP3';
+          button.style.cssText = 'position:relative;z-index:2147483647;background:#fff;color:#f4511e;border:1px solid #f4511e;border-radius:8px;padding:7px 11px;font-size:12px;font-weight:700;cursor:pointer;margin:8px 8px 8px 0;';
+          button.onclick = (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            ipcRenderer.send('page:download-media', {
+              url: window.location.href,
+              filename: (document.title.replace(/[\\/:*?"<>|]/g, '') || 'rutube-audio') + '.mp3',
+              isAudio: true,
+            });
+            button.textContent = '✓ Скачивается';
+            setTimeout(() => { button.textContent = '♫ MP3'; }, 3000);
+          };
+          container.appendChild(button);
+        }
+      };
+      setInterval(injectRutubeButtons, 1200);
+      window.addEventListener('popstate', () => setTimeout(injectRutubeButtons, 400));
     }
 
     // 4. Video & Audio media detection for download button checkmark
@@ -359,7 +430,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             break;
           }
         }
-        if (!hasVideo && (host.includes('youtube.com') || host.includes('youtu.be') || host.includes('rutube.ru') || host.includes('vk.com') || host.includes('vkvideo.ru') || host.includes('pinterest.'))) {
+        if (!hasVideo && (
+          isHostOrSubdomain('youtube.com') ||
+          isHostOrSubdomain('youtu.be') ||
+          isHostOrSubdomain('rutube.ru') ||
+          isVkHost ||
+          isHostOrSubdomain('pinterest.com') ||
+          isHostOrSubdomain('pinterest.ru')
+        )) {
           hasVideo = true;
         }
         ipcRenderer.send('page:media-detected', { hasVideo, hasAudio });
@@ -384,7 +462,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }, true);
 
     // 5. Google Account Detection & SSO Auto-sync
-    if (host.includes('google.')) {
+    if (isHostOrSubdomain('google.com') || isHostOrSubdomain('google.ru')) {
       const checkGoogleAccount = () => {
         try {
           const ariaEl = document.querySelector('a[aria-label*="@"], div[aria-label*="@"], [data-email*="@"]');

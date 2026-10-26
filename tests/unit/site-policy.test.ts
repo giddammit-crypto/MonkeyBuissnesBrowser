@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canRequestStorageAccess, getExternalPageUrl, getGoogleAuthNotice, getSiteKey, isAdBlockDisabledForSite, isGoogleYouTubeSignInRequest, normalizeCookieExceptions, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../src/shared/sitePolicy';
+import { canRequestStorageAccess, getExternalPageUrl, getGoogleAuthNotice, getSiteKey, isAdBlockDisabledForSite, isGoogleYouTubeSignInRequest, normalizeCookieExceptions, normalizePermissionOrigin, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../src/shared/sitePolicy';
 const policy = (requestUrl: string, topLevelUrl: string, extra = {}) => shouldStripThirdPartyCookies({ requestUrl, topLevelUrl, resourceType: 'xhr', isPrivate: false, enabled: true, ...extra });
 describe('site-aware cookie policy', () => {
   it('keeps search engine login subdomains same-site', () => {
@@ -25,6 +25,13 @@ describe('site-aware cookie policy', () => {
     expect(getSiteKey('https://ПРИМЕР.РФ/path')).toBe('https://xn--e1afmkfd.xn--p1ai');
     expect(getSiteKey('http://127.0.0.1:8080/path')).toBe('http://127.0.0.1');
     expect(normalizeCookieExceptions(['https://www.youtube.com/path','https://youtube.com','javascript:alert(1)',42])).toEqual(['https://youtube.com']);
+  });
+  it('normalizes notification permissions to exact secure origins', () => {
+    expect(normalizePermissionOrigin('https://EXAMPLE.com/path')).toBe('https://example.com');
+    expect(normalizePermissionOrigin('https://example.com:8443/path')).toBe('https://example.com:8443');
+    expect(normalizePermissionOrigin('http://example.com/')).toBeNull();
+    expect(normalizePermissionOrigin('https://user:pass@example.com/')).toBeNull();
+    expect(normalizePermissionOrigin('https://example.com.evil.test/')).toBe('https://example.com.evil.test');
   });
   it('preserves only the HTTPS Google/YouTube account hand-off in normal browsing', () => {
     for (const [request, top] of [

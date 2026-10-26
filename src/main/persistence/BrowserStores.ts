@@ -8,12 +8,13 @@ import type {
   DownloadEntry,
   GoogleAccount,
   HistoryEntry,
+  NotificationPermissionEntry,
   TabSnapshot,
   WorkspaceEntry,
 } from '../../shared/types';
 import { isSafeWebUrl } from '../../shared/omnibox';
 import { JsonStore } from './JsonStore';
-import { normalizeCookieExceptions, normalizeSiteExceptions } from '../../shared/sitePolicy';
+import { normalizeCookieExceptions, normalizePermissionOrigin, normalizeSiteExceptions } from '../../shared/sitePolicy';
 import { normalizeNewTabBackground } from '../../shared/background';
 
 const defaultSettings: BrowserSettings = {
@@ -224,6 +225,7 @@ export class BrowserStores {
   readonly session: JsonStore<StoredSession>;
   readonly browsec: JsonStore<BrowsecState>;
   readonly googleAccounts: JsonStore<{ accounts: GoogleAccount[]; activeId?: string }>;
+  readonly notificationPermissions: JsonStore<NotificationPermissionEntry[]>;
 
   constructor(userDataPath: string) {
     const dataPath = path.join(userDataPath, 'browser-data');
@@ -251,6 +253,16 @@ export class BrowserStores {
     })));
     this.session = new JsonStore(path.join(dataPath, 'session.json'), { tabs: [], activeIndex: 0 }, normalizeSession);
     this.browsec = new JsonStore(path.join(dataPath, 'browsec-settings.json'), defaultBrowsecState, normalizeBrowsecState);
+    this.notificationPermissions = new JsonStore(path.join(dataPath, 'notification-permissions.json'), [], (raw) => normalizeEntries<NotificationPermissionEntry>(raw, (entry) => {
+      const origin = normalizePermissionOrigin(text(entry.origin));
+      return origin === entry.origin
+        && (entry.decision === 'allow' || entry.decision === 'deny')
+        && finite(entry.updatedAt);
+    }, 500).map((entry) => ({
+      origin: normalizePermissionOrigin(entry.origin)!,
+      decision: entry.decision,
+      updatedAt: entry.updatedAt,
+    })));
     this.googleAccounts = new JsonStore(path.join(dataPath, 'google-accounts.json'), { accounts: [] }, (raw) => {
       if (!raw || typeof raw !== 'object') return { accounts: [] };
       const obj = raw as Record<string, unknown>;
@@ -270,6 +282,28 @@ export class BrowserStores {
         : [];
       return { accounts, activeId: activeId || accounts[0]?.id };
     });
+  }
+
+  getNotificationPermission(origin: string): NotificationPermissionEntry['decision'] | undefined {
+    const normalized = normalizePermissionOrigin(origin);
+    if (!normalized) return undefined;
+    return this.notificationPermissions.get().find((entry) => entry.origin === normalized)?.decision;
+  }
+
+  setNotificationPermission(origin: string, decision: NotificationPermissionEntry['decision']): void {
+    const normalized = normalizePermissionOrigin(origin);
+    if (!normalized || !['allow', 'deny'].includes(decision)) throw new Error('Некорректное разрешение уведомлений.');
+    const next: NotificationPermissionEntry = { origin: normalized, decision, updatedAt: Date.now() };
+    this.notificationPermissions.set([
+      next,
+      ...this.notificationPermissions.get().filter((entry) => entry.origin !== normalized),
+    ].slice(0, 500));
+  }
+
+  clearNotificationPermission(origin: string): void {
+    const normalized = normalizePermissionOrigin(origin);
+    if (!normalized) return;
+    this.notificationPermissions.set(this.notificationPermissions.get().filter((entry) => entry.origin !== normalized));
   }
 
   addHistory(entry: Omit<HistoryEntry, 'id' | 'visitedAt'>): HistoryEntry {

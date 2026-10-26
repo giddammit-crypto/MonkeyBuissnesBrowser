@@ -41,6 +41,7 @@ export class MemoryManager {
   canHibernate(tabId: string, idleMinutes: number): { allowed: boolean; reason?: string } {
     const tab = this.tabs.get(tabId);
     if (!tab) return { allowed: false, reason: 'unknown-tab' };
+    if (!Number.isFinite(idleMinutes) || idleMinutes < 0) return { allowed: false, reason: 'invalid-idle-threshold' };
     if (tab.active) return { allowed: false, reason: 'active-tab' };
     if (tab.pinned) return { allowed: false, reason: 'pinned-tab' };
     if (tab.audible) return { allowed: false, reason: 'audible-tab' };
@@ -48,6 +49,7 @@ export class MemoryManager {
     if (tab.downloading) return { allowed: false, reason: 'download-in-progress' };
     if (tab.hasFormEdits) return { allowed: false, reason: 'unsaved-form' };
     if (tab.capturing) return { allowed: false, reason: 'media-capture' };
+    if (tab.lifecycle !== 'background') return { allowed: false, reason: 'not-background-tab' };
     if (Date.now() - tab.lastInteractionAt < idleMinutes * 60_000) return { allowed: false, reason: 'recent-interaction' };
     return { allowed: true };
   }

@@ -91,6 +91,7 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  min-height: 100dvh;
   margin: 0;
   overflow: hidden;
   background: transparent !important;
@@ -171,6 +172,7 @@ select {
 }
 .app-shell {
   height: 100%;
+  min-height: 100dvh;
   width: 100%;
   position: relative;
   --chrome-height: 144px;
@@ -1106,7 +1108,7 @@ select {
   height: 38px;
   display: grid;
   place-items: center;
-  color: var(--text);
+  color: var(--accent-contrast, #ffffff);
   background: var(--signal);
   border-radius: 10px;
 }
@@ -2380,6 +2382,183 @@ select {
     max-width: 100%;
   }
 }
+
+/* Compact chrome keeps every toolbar action reachable without horizontal overflow. */
+@media (max-width: 680px) {
+  .window-titlebar {
+    padding-left: 10px;
+  }
+
+  .window-actions button {
+    width: 40px;
+  }
+
+  .tab-strip {
+    padding-left: 8px;
+    padding-right: 8px;
+    gap: 3px;
+  }
+
+  .toolbar {
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .navigation-actions {
+    gap: 2px;
+  }
+
+  .toolbar-actions {
+    gap: 2px;
+  }
+
+  .toolbar-actions .icon-button,
+  .browsec-toolbar-btn,
+  .google-account-toolbar-btn {
+    width: 32px;
+    min-width: 32px;
+    padding-left: 0;
+    padding-right: 0;
+    justify-content: center;
+  }
+
+  .browsec-toolbar-btn {
+    gap: 0;
+  }
+
+  .browsec-btn-status,
+  .google-btn-label {
+    display: none;
+  }
+
+  .mode-chip {
+    width: 32px;
+    min-width: 32px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+
+  .omnibox {
+    min-width: 72px;
+    gap: 6px;
+    padding-left: 10px;
+  }
+
+  .omnibox-incognito-badge {
+    padding-left: 5px;
+    padding-right: 5px;
+  }
+
+  .omnibox-incognito-badge span {
+    display: none;
+  }
+
+  .panel-visible {
+    padding: 20px 16px;
+  }
+
+  .new-tab-page {
+    padding: 16px;
+  }
+
+  .newtab-center {
+    padding-top: 20px;
+  }
+
+  .manager-heading {
+    align-items: stretch;
+  }
+
+  .manager-heading .panel-header {
+    min-width: 0;
+  }
+
+  .manager-heading > .plain-button {
+    width: 100%;
+  }
+
+  .manager-filters,
+  .manager-filters .panel-search,
+  .manager-filters select {
+    width: 100%;
+  }
+
+  .manager-filters select {
+    max-width: none;
+  }
+
+  .entry-row,
+  .download-row {
+    padding: 14px;
+    gap: 10px;
+  }
+
+  .entry-time {
+    display: none;
+  }
+
+  .empty-state {
+    padding: 56px 16px;
+  }
+}
+
+@media (max-width: 420px) {
+  .navigation-actions .icon-button {
+    width: 30px;
+    min-width: 30px;
+  }
+
+  .toolbar-actions .icon-button,
+  .toolbar-actions .browsec-toolbar-btn,
+  .toolbar-actions .google-account-toolbar-btn,
+  .toolbar-actions .mode-chip {
+    width: 28px;
+    min-width: 28px;
+  }
+
+  .omnibox {
+    min-width: 52px;
+  }
+
+  .panel-visible {
+    padding: 16px 12px;
+  }
+
+  .settings-section,
+  .bookmark-editor {
+    padding: 16px;
+  }
+}
+
+@media (pointer: coarse) {
+  .icon-button,
+  .tab-search-trigger,
+  .tab-close,
+  .new-tab-button,
+  .nav-item,
+  .workspace-row,
+  .plain-button,
+  .primary-button,
+  .browsec-tab-btn,
+  .countries-back-btn,
+  .country-item,
+  .browsec-close-btn,
+  .browsec-change-btn,
+  .smart-submit-btn,
+  .smart-preset-btn,
+  .rule-delete-btn {
+    min-height: 40px;
+  }
+
+  .icon-button,
+  .tab-close,
+  .new-tab-button,
+  .browsec-close-btn,
+  .countries-back-btn {
+    min-width: 40px;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *:before,
@@ -2552,6 +2731,20 @@ select {
   color: var(--text);
   margin: 8px 0;
   cursor: pointer;
+}
+.site-notification-control > label {
+  align-items: center;
+}
+.site-notification-control select {
+  min-width: 128px;
+  max-width: 160px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--canvas);
+  color: var(--text);
+  font-size: 11px;
 }
 .site-adblock-control {
   padding: 12px 14px;
@@ -5895,5 +6088,3 @@ select:focus-visible {
 .download-header-btn.is-downloading {
   color: var(--signal, #38bdf8);
 }
-
-

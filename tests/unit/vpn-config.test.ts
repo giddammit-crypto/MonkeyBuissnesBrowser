@@ -31,4 +31,13 @@ describe('parseWireGuardConfig', () => {
       'Endpoint Peer имеет неверный формат.',
     ]));
   });
+
+  it('validates peer CIDRs and optional preshared keys', () => {
+    const result = parseWireGuardConfig(`[Interface]\nPrivateKey = ${validKey}\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = ${validKey}\nAllowedIPs = not-a-cidr\nPresharedKey = invalid`);
+    expect(result.config).toBeUndefined();
+    expect(result.errors).toEqual(expect.arrayContaining([
+      'Peer.AllowedIPs содержит неверный CIDR.',
+      'Peer.PresharedKey имеет неверный формат.',
+    ]));
+  });
 });

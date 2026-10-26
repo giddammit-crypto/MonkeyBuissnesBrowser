@@ -18,7 +18,10 @@ export function parseOmniboxInput(rawInput: string, searchUrl = SEARCH_URL): Nav
   if (/^(?:https?|javascript|data|file|vbscript|ftp):/i.test(input) || /^[a-z][a-z\d+.-]*:\S/i.test(input)) {
     try {
       const explicit = new URL(input);
-      if (explicit.protocol === 'http:' || explicit.protocol === 'https:') return { kind: 'url', url: explicit.href };
+       if (explicit.protocol === 'http:' || explicit.protocol === 'https:') {
+         if (!isSafeWebUrl(explicit.href)) return { kind: 'invalid', reason: 'Адрес с учётными данными не поддерживается.' };
+         return { kind: 'url', url: explicit.href };
+       }
       return { kind: 'invalid', reason: `Схема ${explicit.protocol} не поддерживается.` };
     } catch { return { kind: 'invalid', reason: 'Некорректный адрес.' }; }
   }
@@ -29,7 +32,7 @@ export function parseOmniboxInput(rawInput: string, searchUrl = SEARCH_URL): Nav
 export function isSafeWebUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
-    return url.protocol === 'http:' || url.protocol === 'https:';
+    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname) && !url.username && !url.password;
   } catch {
     return false;
   }

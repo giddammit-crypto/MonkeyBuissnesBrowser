@@ -36,22 +36,31 @@ export function parseWindowFeatures(features?: string): ParsedWindowFeatures {
     } else if (key === 'top' || key === 'screeny') {
       if (Number.isFinite(num)) result.y = num;
     } else if (key === 'popup') {
-      result.popup = val === '' || val === '1' || val === 'yes' || val === 'true';
+      result.popup = parseFeatureBoolean(val);
     } else if (key === 'menubar') {
-      result.menubar = val === '1' || val === 'yes' || val === 'true';
+      result.menubar = parseFeatureBoolean(val);
     } else if (key === 'toolbar') {
-      result.toolbar = val === '1' || val === 'yes' || val === 'true';
+      result.toolbar = parseFeatureBoolean(val);
     } else if (key === 'location') {
-      result.location = val === '1' || val === 'yes' || val === 'true';
+      result.location = parseFeatureBoolean(val);
     } else if (key === 'status') {
-      result.status = val === '1' || val === 'yes' || val === 'true';
+      result.status = parseFeatureBoolean(val);
     } else if (key === 'resizable') {
-      result.resizable = val === '1' || val === 'yes' || val === 'true';
+      result.resizable = parseFeatureBoolean(val);
     } else if (key === 'scrollbars') {
-      result.scrollbars = val === '1' || val === 'yes' || val === 'true';
+      result.scrollbars = parseFeatureBoolean(val);
     }
   }
   return result;
+}
+
+function parseFeatureBoolean(value: string): boolean {
+  // In window.open feature strings a bare flag means enabled (for example,
+  // "menubar"), while the common 0/no/false spellings explicitly disable it.
+  if (value === '') return true;
+  if (value === '0' || value === 'no' || value === 'false' || value === 'off') return false;
+  if (value === '1' || value === 'yes' || value === 'true' || value === 'on') return true;
+  return false;
 }
 
 export function isAuthPopupUrl(rawUrl: string): boolean {

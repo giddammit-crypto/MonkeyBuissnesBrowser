@@ -40,6 +40,8 @@ export class LocalExtensionManager {
 
   private async load(directory: string): Promise<LocalExtension> {
     const realPath = await fs.realpath(directory);
+    const alreadyLoaded = [...this.active.values()].find((item) => item.directory === realPath);
+    if (alreadyLoaded) return alreadyLoaded;
     const manifest = await this.validate(realPath);
     const result = await this.browserSession.extensions.loadExtension(realPath, { allowFileAccess: false });
     const item = { id: result.id, ...manifest, directory: realPath };
@@ -74,18 +76,26 @@ export class LocalExtensionManager {
     });
     if (warning.response !== 1) return null;
     const item = await this.load(directory);
-    const existing = this.saved.get();
-    const directories = Array.isArray(existing) ? existing.filter((entry): entry is SavedDirectory => Boolean(entry && typeof entry.directory === 'string' && entry.directory !== directory)) : [];
-    this.saved.set([...directories, { directory }].slice(-30));
+    try {
+      const existing = this.saved.get();
+      const directories = Array.isArray(existing) ? existing.filter((entry): entry is SavedDirectory => Boolean(entry && typeof entry.directory === 'string' && entry.directory !== directory)) : [];
+      this.saved.set([...directories, { directory }].slice(-30));
+    } catch (error) {
+      // Do not leave an extension active when its durable registration failed.
+      try { this.browserSession.extensions.removeExtension(item.id); } catch {}
+      this.active.delete(item.id);
+      throw error;
+    }
     return item;
   }
 
   remove(id: string): void {
     const item = this.active.get(id);
     if (!item) return;
-    this.browserSession.extensions.removeExtension(id);
-    this.active.delete(id);
-    const current = this.saved.get();
-    if (Array.isArray(current)) this.saved.set(current.filter(entry => entry.directory !== item.directory));
+    try { this.browserSession.extensions.removeExtension(id); } finally {
+      this.active.delete(id);
+      const current = this.saved.get();
+      if (Array.isArray(current)) this.saved.set(current.filter(entry => entry.directory !== item.directory));
+    }
   }
 }

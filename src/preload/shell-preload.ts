@@ -4,10 +4,12 @@ import type { BrowserSettings } from '../shared/types';
 
 const api: BrowserApi = {
   getSnapshot: () => ipcRenderer.invoke('browser:get-snapshot'),
+  getPrivacyDashboard: (tabId) => ipcRenderer.invoke('browser:get-privacy-dashboard', tabId),
   createTab: (input) => ipcRenderer.invoke('browser:create-tab', input),
   activateTab: (tabId) => ipcRenderer.invoke('browser:activate-tab', tabId),
   openCurrentPageExternally: (tabId) => ipcRenderer.invoke('browser:open-page-externally', tabId),
   setSiteCookieException: (tabId, allow) => ipcRenderer.invoke('browser:set-site-cookie-exception', tabId, allow),
+  setSiteNotificationPermission: (tabId, decision) => ipcRenderer.invoke('browser:set-site-notification-permission', tabId, decision),
   setSiteAdBlockEnabled: (tabId, enabled) => ipcRenderer.invoke('browser:set-site-adblock-enabled', tabId, enabled),
   importBrowserFile: (kind) => ipcRenderer.invoke('browser:import-file', kind),
   tabAction: (tabId, action) => ipcRenderer.invoke('browser:tab-action', tabId, action),

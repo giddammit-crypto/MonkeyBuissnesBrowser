@@ -32,6 +32,11 @@ describe('popupUtils', () => {
       expect(parsed.menubar).toBe(false);
       expect(parsed.toolbar).toBe(false);
     });
+
+    it('treats bare feature flags as enabled', () => {
+      const parsed = parseWindowFeatures('menubar toolbar location status resizable scrollbars');
+      expect(parsed).toEqual({ menubar: true, toolbar: true, location: true, status: true, resizable: true, scrollbars: true });
+    });
   });
 
   describe('isAuthPopupUrl', () => {

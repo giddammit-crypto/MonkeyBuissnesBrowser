@@ -27,7 +27,7 @@ export function getChromiumIdentity(platform?: string): ChromiumIdentity {
     navigatorPlatform = 'Win32';
     brandPlatform = 'Windows';
     platformVersion = '10.0.0';
-  } else if (platform === 'darwin') {
+  } else if (currentPlatform === 'darwin') {
     userAgent = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_FULL_VERSION} Safari/537.36`;
     navigatorPlatform = 'MacIntel';
     brandPlatform = 'macOS';

@@ -329,8 +329,15 @@ export const BrowsecModal: React.FC<BrowsecModalProps> = ({
           <div
             className="browsec-smart-shortcut"
             onClick={() => setActiveTab("smart")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setActiveTab("smart");
+              }
+            }}
             role="button"
             tabIndex={0}
+            aria-label="Открыть умные настройки SmartSettings"
           >
             <div className="smart-shortcut-icon">
               <Sliders size={18} />
@@ -428,8 +435,16 @@ export const BrowsecModal: React.FC<BrowsecModalProps> = ({
                   key={c.code}
                   className={`country-item ${isSelected ? "selected" : ""}`}
                   onClick={() => handleSelectCountry(c.code)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      void handleSelectCountry(c.code);
+                    }
+                  }}
                   role="button"
                   tabIndex={0}
+                  aria-label={`${c.name} (${c.nameEn}), ${c.ping} миллисекунд`}
+                  aria-pressed={isSelected}
                 >
                   <span className="country-flag">{c.flag}</span>
                   <div className="country-names">

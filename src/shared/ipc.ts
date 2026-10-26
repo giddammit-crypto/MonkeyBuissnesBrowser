@@ -15,6 +15,8 @@ import type {
   TabSnapshot,
   VpnSnapshot,
   WorkspaceEntry,
+  NotificationPermissionDecision,
+  PrivacyDashboardSnapshot,
 } from './types';
 
 export interface ChromeBounds {
@@ -29,10 +31,12 @@ export type DownloadAction = 'pause' | 'resume' | 'cancel' | 'delete';
 
 export interface BrowserApi {
   getSnapshot(): Promise<BrowserSnapshot>;
+  getPrivacyDashboard(tabId?: string): Promise<PrivacyDashboardSnapshot>;
   createTab(input?: { url?: string; isPrivate?: boolean }): Promise<TabSnapshot>;
   activateTab(tabId: string): Promise<void>;
   openCurrentPageExternally(tabId: string): Promise<void>;
   setSiteCookieException(tabId: string, allow: boolean): Promise<void>;
+  setSiteNotificationPermission(tabId: string, decision: NotificationPermissionDecision | 'ask'): Promise<void>;
   setSiteAdBlockEnabled(tabId: string, enabled: boolean): Promise<void>;
   importBrowserFile(kind: ImportFileKind): Promise<ImportFileReport | null>;
   tabAction(tabId: string, action: TabAction): Promise<void>;

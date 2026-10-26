@@ -11,6 +11,16 @@ export function getSiteKey(rawUrl: string): string | null {
   } catch { return null; }
 }
 
+/** Canonical secure origin used for per-site permissions such as notifications. */
+export function normalizePermissionOrigin(rawUrl: string): string | null {
+  if (typeof rawUrl !== 'string' || rawUrl.length > 4096) return null;
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) return null;
+    return url.origin;
+  } catch { return null; }
+}
+
 export function normalizeCookieExceptions(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((entry): entry is string => typeof entry === 'string' && entry.length <= 2048).map(getSiteKey).filter((entry): entry is string => Boolean(entry)))].slice(0, 100);
