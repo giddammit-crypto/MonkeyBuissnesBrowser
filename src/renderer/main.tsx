@@ -289,10 +289,13 @@ async function imageAsWallpaper(file: globalThis.File): Promise<Blob> {
   }
 }
 
-const quickLinks = [
-  { label: "Почта", url: "https://mail.yandex.ru/" },
-  { label: "Новости", url: "https://news.google.com/" },
-  { label: "Видео", url: "https://www.youtube.com/" },
+const DEFAULT_STARTER_BOOKMARKS = [
+  { id: "starter-yandex", title: "Яндекс", url: "https://ya.ru/" },
+  { id: "starter-google", title: "Google", url: "https://www.google.com/" },
+  { id: "starter-youtube", title: "YouTube", url: "https://www.youtube.com/" },
+  { id: "starter-vk", title: "ВКонтакте", url: "https://vk.com/" },
+  { id: "starter-mail", title: "Почта", url: "https://mail.yandex.ru/" },
+  { id: "starter-github", title: "GitHub", url: "https://github.com/" },
 ];
 function Brand({ large = false }: { large?: boolean }): React.JSX.Element {
   return (
@@ -1628,6 +1631,22 @@ function App(): React.JSX.Element {
               }}
               onBookmarks={() => openPanel("bookmarks")}
               onSettings={() => openPanel("settings")}
+              onSaveBookmark={async (input) => {
+                try {
+                  await window.browserApi.saveBookmark(input);
+                  setToast({ tone: "success", message: "Закладка сохранена" });
+                } catch (e) {
+                  showError(e);
+                }
+              }}
+              onRemoveBookmark={async (id) => {
+                try {
+                  await window.browserApi.removeBookmark(id);
+                  setToast({ tone: "info", message: "Закладка удалена" });
+                } catch (e) {
+                  showError(e);
+                }
+              }}
             />
           )}
           {panel === "home" && currentTab?.lifecycle === "crashed" && (
@@ -2041,6 +2060,8 @@ function NewTabPage({
   onOpen,
   onBookmarks,
   onSettings,
+  onSaveBookmark,
+  onRemoveBookmark,
 }: {
   snapshot: BrowserSnapshot;
   privateMode: boolean;
@@ -2048,7 +2069,15 @@ function NewTabPage({
   onOpen: (url: string) => void;
   onBookmarks: () => void;
   onSettings: () => void;
+  onSaveBookmark?: (input: { url: string; title: string }) => Promise<void>;
+  onRemoveBookmark?: (id: string) => Promise<void>;
 }): React.JSX.Element {
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [newUrl, setNewUrl] = useState("");
+  const [newTitle, setNewTitle] = useState("");
+  const [addError, setAddError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const hostname = (url: string): string => {
     try {
       return new URL(url).hostname.replace(/^www\./, "");
@@ -2062,6 +2091,67 @@ function NewTabPage({
   const recent = privateMode ? [] : snapshot.history.slice(0, 3);
   const background = normalizeNewTabBackground(snapshot.settings.newTabBackground);
   const [customWallpaper] = useCustomWallpaper();
+
+  const activeBookmarks = useMemo(() => {
+    if (snapshot.bookmarks.length > 0) {
+      return snapshot.bookmarks.slice(0, 16);
+    }
+    return DEFAULT_STARTER_BOOKMARKS;
+  }, [snapshot.bookmarks]);
+
+  const handleDeleteBookmark = async (bookmark: { id: string; title: string; url: string }) => {
+    if (snapshot.bookmarks.length > 0) {
+      if (onRemoveBookmark) {
+        await onRemoveBookmark(bookmark.id);
+      }
+    } else {
+      if (onSaveBookmark) {
+        const remaining = DEFAULT_STARTER_BOOKMARKS.filter((item) => item.id !== bookmark.id);
+        for (const item of remaining) {
+          await onSaveBookmark({ url: item.url, title: item.title });
+        }
+      }
+    }
+  };
+
+  const handleSaveBookmarkForm = async (event: React.FormEvent) => {
+    event.preventDefault();
+    let trimmedUrl = newUrl.trim();
+    if (!trimmedUrl) {
+      setAddError("Укажите адрес страницы");
+      return;
+    }
+    if (!/^https?:\/\//i.test(trimmedUrl)) {
+      trimmedUrl = `https://${trimmedUrl}`;
+    }
+    try {
+      new URL(trimmedUrl);
+    } catch {
+      setAddError("Некорректный адрес URL");
+      return;
+    }
+    const finalTitle = newTitle.trim() || hostname(trimmedUrl);
+    setIsSubmitting(true);
+    setAddError("");
+    try {
+      if (snapshot.bookmarks.length === 0 && onSaveBookmark) {
+        for (const item of DEFAULT_STARTER_BOOKMARKS) {
+          await onSaveBookmark({ url: item.url, title: item.title });
+        }
+      }
+      if (onSaveBookmark) {
+        await onSaveBookmark({ url: trimmedUrl, title: finalTitle });
+      }
+      setNewUrl("");
+      setNewTitle("");
+      setAddModalOpen(false);
+    } catch {
+      setAddError("Не удалось сохранить закладку");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <div className={`new-tab-page ${privateMode ? "private-newtab" : ""}`} data-new-tab-background={background} data-background={background}>
       {background !== "plain" && (
@@ -2147,24 +2237,66 @@ function NewTabPage({
         </form>
         {!privateMode && (
           <div className="quick-links" aria-label="Быстрый доступ">
-            {quickLinks.map((link) => (
+            {activeBookmarks.map((bookmark) => (
+              <div className="quick-link-tile" key={bookmark.id}>
+                <button
+                  type="button"
+                  className="quick-link-btn"
+                  title={`${bookmark.title}\n${bookmark.url}`}
+                  onClick={() => onOpen(bookmark.url)}
+                >
+                  <span className="quick-link-symbol">
+                    <SiteFavicon
+                      url={bookmark.url}
+                      favicon={(bookmark as any).favicon}
+                      size={24}
+                    />
+                  </span>
+                  <span className="quick-link-label">{bookmark.title}</span>
+                </button>
+                <button
+                  type="button"
+                  className="quick-link-delete-btn"
+                  title={`Удалить «${bookmark.title}»`}
+                  aria-label={`Удалить «${bookmark.title}»`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDeleteBookmark(bookmark);
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+            <div className="quick-link-tile quick-link-add-tile">
               <button
-                key={link.label}
-                title={link.url}
-                onClick={() => onOpen(link.url)}
+                type="button"
+                className="quick-link-btn quick-link-add-btn"
+                title="Добавить сайт в закладки"
+                onClick={() => {
+                  setAddError("");
+                  setAddModalOpen(true);
+                }}
+              >
+                <span className="quick-link-symbol quick-link-add-symbol">
+                  <Plus size={20} />
+                </span>
+                <span className="quick-link-label">Добавить</span>
+              </button>
+            </div>
+            <div className="quick-link-tile quick-link-all-tile">
+              <button
+                type="button"
+                className="quick-link-btn"
+                title="Все закладки"
+                onClick={onBookmarks}
               >
                 <span className="quick-link-symbol">
-                  <SiteFavicon url={link.url} size={20} />
+                  <Bookmark size={20} />
                 </span>
-                <span className="quick-link-label">{link.label}</span>
+                <span className="quick-link-label">Все</span>
               </button>
-            ))}
-            <button onClick={onBookmarks}>
-              <span className="quick-link-symbol">
-                <Bookmark size={20} />
-              </span>
-              <span className="quick-link-label">Сохранённое</span>
-            </button>
+            </div>
           </div>
         )}
         {privateMode ? (
@@ -2207,38 +2339,75 @@ function NewTabPage({
                     {snapshot.bookmarks.length}
                   </span>
                 </div>
-                <button className="text-button" onClick={onBookmarks}>
-                  Все закладки <ChevronRight size={15} />
-                </button>
+                <div className="section-heading-actions">
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => {
+                      setAddError("");
+                      setAddModalOpen(true);
+                    }}
+                  >
+                    <Plus size={14} /> Добавить
+                  </button>
+                  <button className="text-button" onClick={onBookmarks}>
+                    Все закладки <ChevronRight size={15} />
+                  </button>
+                </div>
               </div>
               {snapshot.bookmarks.length > 0 ? (
                 <div className="saved-grid">
-                  {snapshot.bookmarks.slice(0, 4).map((bookmark) => (
-                    <button
-                      key={bookmark.id}
-                      className="saved-card"
-                      title={`${bookmark.title}\n${bookmark.url}`}
-                      onClick={() => onOpen(bookmark.url)}
-                    >
-                      <span className="saved-site-icon">
-                        <SiteFavicon url={bookmark.url} favicon={bookmark.favicon} size={18} />
-                      </span>
-                      <span>
-                        <strong>{bookmark.title}</strong>
-                        <small>{hostname(bookmark.url)}</small>
-                      </span>
-                      <ArrowRight size={15} />
-                    </button>
+                  {snapshot.bookmarks.slice(0, 6).map((bookmark) => (
+                    <div key={bookmark.id} className="saved-card-wrap">
+                      <button
+                        className="saved-card"
+                        title={`${bookmark.title}\n${bookmark.url}`}
+                        onClick={() => onOpen(bookmark.url)}
+                      >
+                        <span className="saved-site-icon">
+                          <SiteFavicon url={bookmark.url} favicon={bookmark.favicon} size={18} />
+                        </span>
+                        <span>
+                          <strong>{bookmark.title}</strong>
+                          <small>{hostname(bookmark.url)}</small>
+                        </span>
+                        <ArrowRight size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        className="saved-card-delete-btn"
+                        title={`Удалить «${bookmark.title}»`}
+                        aria-label={`Удалить «${bookmark.title}»`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDeleteBookmark(bookmark);
+                        }}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
                   ))}
                 </div>
               ) : (
                 <div className="newtab-empty-saved">
                   <Star size={22} />
                   <strong>Важное всегда рядом</strong>
-                  <p>Сохраняйте страницы звездой в адресной строке.</p>
-                  <button className="text-button" onClick={onBookmarks}>
-                    Открыть закладки <ChevronRight size={15} />
-                  </button>
+                  <p>Сохраняйте страницы звездой в адресной строке или добавьте прямо сейчас.</p>
+                  <div className="empty-saved-actions">
+                    <button
+                      type="button"
+                      className="plain-button"
+                      onClick={() => {
+                        setAddError("");
+                        setAddModalOpen(true);
+                      }}
+                    >
+                      <Plus size={14} /> Добавить закладку
+                    </button>
+                    <button className="text-button" onClick={onBookmarks}>
+                      Открыть закладки <ChevronRight size={15} />
+                    </button>
+                  </div>
                 </div>
               )}
             </section>
@@ -2288,6 +2457,81 @@ function NewTabPage({
           </div>
         )}
       </div>
+      {addModalOpen && (
+        <div
+          className="newtab-modal-overlay"
+          role="presentation"
+          onClick={() => !isSubmitting && setAddModalOpen(false)}
+        >
+          <div
+            className="newtab-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="newtab-modal-title"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && !isSubmitting) setAddModalOpen(false);
+            }}
+          >
+            <div className="newtab-modal-header">
+              <div className="newtab-modal-title" id="newtab-modal-title">
+                <Bookmark size={18} />
+                <h3>Добавить закладку</h3>
+              </div>
+              <button
+                type="button"
+                className="newtab-modal-close"
+                title="Закрыть"
+                onClick={() => setAddModalOpen(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <form onSubmit={handleSaveBookmarkForm} className="newtab-modal-form">
+              <label>
+                <span>Адрес сайта (URL)</span>
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  placeholder="https://example.com"
+                  value={newUrl}
+                  onChange={(e) => setNewUrl(e.target.value)}
+                  disabled={isSubmitting}
+                />
+              </label>
+              <label>
+                <span>Название</span>
+                <input
+                  type="text"
+                  placeholder="Например: Мой сайт (необязательно)"
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  disabled={isSubmitting}
+                />
+              </label>
+              {addError && <p className="newtab-modal-error">{addError}</p>}
+              <div className="newtab-modal-actions">
+                <button
+                  type="button"
+                  className="plain-button"
+                  onClick={() => setAddModalOpen(false)}
+                  disabled={isSubmitting}
+                >
+                  Отмена
+                </button>
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? "Сохраняем…" : "Добавить"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       <footer className="newtab-footer">
         <span>
           <span className="mode-dot" />

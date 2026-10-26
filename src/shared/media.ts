@@ -54,11 +54,44 @@ export function isVideoPageUrl(rawUrl: string): boolean {
     const site = videoSiteForUrl(rawUrl);
     if (!site) return false;
     const pathname = url.pathname.toLowerCase();
-    if (site === 'youtube') return url.hostname.toLowerCase().endsWith('youtu.be') || /^\/(?:watch|shorts|live|embed)(?:\/|$)/.test(pathname) || url.searchParams.has('v');
-    if (site === 'rutube') return /^\/(?:video|shorts)(?:\/|$)/.test(pathname);
-    return /^\/(?:video|clip)(?:\/|$)/.test(pathname) || /(?:^|[?&#])z=(?:video|clip)/i.test(url.search);
+    if (site === 'youtube') return url.hostname.toLowerCase().endsWith('youtu.be') || /^\/(?:watch|shorts|live|embed)(?:[-_/\d]|$)/.test(pathname) || url.searchParams.has('v');
+    if (site === 'rutube') return /^\/(?:video|shorts)(?:[-_/\d]|$)/.test(pathname);
+    return /^\/(?:video|clip|clips|shorts)(?:[-_/\d]|$)/.test(pathname) || /(?:^|[?&#])z=(?:video|clip)/i.test(url.search) || /\/(?:video|clip)-?\d+_\d+/i.test(pathname);
   } catch {
     return false;
+  }
+}
+
+export function normalizeVideoUrl(rawUrl: string): string {
+  try {
+    const site = videoSiteForUrl(rawUrl);
+    if (!site) return rawUrl;
+    if (site === 'vk') {
+      const clipMatch = rawUrl.match(/(?:[?&#]|z=|\/)clip(-?\d+_\d+)/i);
+      const videoMatch = rawUrl.match(/(?:[?&#]|z=|\/)video(-?\d+_\d+)/i);
+      if (clipMatch) {
+        return `https://vk.com/clip${clipMatch[1]}`;
+      }
+      if (videoMatch) {
+        return `https://vk.com/video${videoMatch[1]}`;
+      }
+    } else if (site === 'youtube') {
+      const shortsMatch = rawUrl.match(/\/shorts\/([a-zA-Z0-9_-]{11})/);
+      const watchMatch = rawUrl.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+      const youtuBeMatch = rawUrl.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+      if (shortsMatch) {
+        return `https://www.youtube.com/shorts/${shortsMatch[1]}`;
+      }
+      if (watchMatch) {
+        return `https://www.youtube.com/watch?v=${watchMatch[1]}`;
+      }
+      if (youtuBeMatch) {
+        return `https://www.youtube.com/watch?v=${youtuBeMatch[1]}`;
+      }
+    }
+    return rawUrl;
+  } catch {
+    return rawUrl;
   }
 }
 

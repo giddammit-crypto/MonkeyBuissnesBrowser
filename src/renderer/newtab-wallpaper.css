@@ -702,3 +702,37 @@
   background: var(--wallpaper-panel-hover);
   border-color: #2dd4bf;
 }
+
+/* Wallpaper enhancements for visual bookmarks and modal */
+.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-btn:hover {
+  background: var(--wallpaper-panel-hover, rgba(255, 255, 255, 0.1));
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-label {
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-delete-btn,
+.new-tab-page:not([data-new-tab-background="plain"]) .saved-card-delete-btn {
+  background: rgba(30, 30, 35, 0.85);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-delete-btn:hover,
+.new-tab-page:not([data-new-tab-background="plain"]) .saved-card-delete-btn:hover {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #ffffff;
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .newtab-modal {
+  background: rgba(24, 24, 28, 0.92);
+  border-color: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isLikelyMediaUrl, isSafeMediaUrl, isVideoPageUrl, mediaKindForMime, mediaKindForUrl, videoSiteForUrl } from '../../src/shared/media';
+import { isLikelyMediaUrl, isSafeMediaUrl, isVideoPageUrl, mediaKindForMime, mediaKindForUrl, normalizeVideoUrl, videoSiteForUrl } from '../../src/shared/media';
 
 describe('media download URL helpers', () => {
   it('accepts direct public media URLs only', () => {
@@ -33,11 +33,27 @@ describe('media download URL helpers', () => {
     expect(videoSiteForUrl('https://rutube.ru/video/abc/')).toBe('rutube');
     expect(videoSiteForUrl('https://vk.com/video-1_2')).toBe('vk');
     expect(videoSiteForUrl('https://vkvideo.ru/video-1_2')).toBe('vk');
+    expect(videoSiteForUrl('https://vk.com/clip-1_2')).toBe('vk');
+    expect(videoSiteForUrl('https://vkvideo.ru/clip-1_2')).toBe('vk');
     expect(isVideoPageUrl('https://www.youtube.com/')).toBe(false);
     expect(isVideoPageUrl('https://rutube.ru/')).toBe(false);
     expect(isVideoPageUrl('https://rutube.ru/video/abc/')).toBe(true);
     expect(isVideoPageUrl('https://vk.com/feed')).toBe(false);
+    expect(isVideoPageUrl('https://vk.com/clip-123_456')).toBe(true);
+    expect(isVideoPageUrl('https://vkvideo.ru/clip-123_456')).toBe(true);
+    expect(isVideoPageUrl('https://vk.com/video-123_456')).toBe(true);
+    expect(isVideoPageUrl('https://vk.com/clips?z=clip-123_456')).toBe(true);
+    expect(isVideoPageUrl('https://www.youtube.com/shorts/abc123xyz00')).toBe(true);
     expect(isVideoPageUrl('https://youtube.com.evil.test/watch?v=abc')).toBe(false);
     expect(isVideoPageUrl('https://notvk.com/video-1_2')).toBe(false);
+  });
+
+  it('normalizes VK and YouTube video and clip URLs for downloader', () => {
+    expect(normalizeVideoUrl('https://vk.com/feed?z=clip-123456_7890')).toBe('https://vk.com/clip-123456_7890');
+    expect(normalizeVideoUrl('https://vk.com/al_feed.php?z=video-111_222')).toBe('https://vk.com/video-111_222');
+    expect(normalizeVideoUrl('https://vkvideo.ru/clip-999_888')).toBe('https://vk.com/clip-999_888');
+    expect(normalizeVideoUrl('https://www.youtube.com/shorts/abcdefghijk')).toBe('https://www.youtube.com/shorts/abcdefghijk');
+    expect(normalizeVideoUrl('https://youtu.be/abcdefghijk')).toBe('https://www.youtube.com/watch?v=abcdefghijk');
+    expect(normalizeVideoUrl('https://www.youtube.com/watch?v=abcdefghijk&t=10s')).toBe('https://www.youtube.com/watch?v=abcdefghijk');
   });
 });

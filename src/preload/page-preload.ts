@@ -209,6 +209,45 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           pvBottom.appendChild(btn);
         }
 
+        // VK Clip download button
+        const vkClipActions = document.querySelector(
+          '.ShortsOverlay, [class*="ShortsOverlay"], .ShortsItem__actions, [class*="ShortsItem__actions"], .ShortsSlide__actions, [class*="ClipViewer"]'
+        );
+        if (vkClipActions && !document.querySelector('.soul-vk-clip-btn')) {
+          const clipBtn = document.createElement('a');
+          clipBtn.className = 'soul-vk-clip-btn';
+          clipBtn.textContent = '⬇ Скачать клип';
+          clipBtn.style.cssText = 'color:#fff;background:#2563eb;margin:6px 0;cursor:pointer;font-weight:600;font-size:12px;display:inline-flex;align-items:center;justify-content:center;padding:6px 12px;border-radius:16px;box-shadow:0 2px 8px rgba(0,0,0,0.3);text-decoration:none;z-index:9999;';
+          clipBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            let targetVideoUrl = window.location.href;
+            const pathname = window.location.pathname;
+            const search = window.location.search;
+            const pathClipMatch = pathname.match(/\/(?:clip)(-?\d+_\d+)/);
+            const clipMatch = search.match(/(?:[?&#]|z=)clip(-?\d+_\d+)/);
+            if (clipMatch) {
+              targetVideoUrl = `https://vk.com/clip${clipMatch[1]}`;
+            } else if (pathClipMatch) {
+              targetVideoUrl = `https://vk.com/clip${pathClipMatch[1]}`;
+            } else {
+              const activeClipEl = document.querySelector('[class*="ShortsItem--active"] [data-clip-id], [class*="active"] [data-clip-id], [data-clip-id]:hover, [data-clip-id]');
+              const clipId = activeClipEl?.getAttribute('data-clip-id') || activeClipEl?.getAttribute('data-id');
+              if (clipId) {
+                targetVideoUrl = `https://vk.com/clip${clipId.startsWith('-') || clipId.includes('_') ? clipId : '-' + clipId}`;
+              }
+            }
+            ipcRenderer.send('page:download-media', {
+              url: targetVideoUrl,
+              filename: (document.title.replace(/[\\/:*?"<>|]/g, '') || 'vk-clip') + '.mp4',
+              isAudio: false,
+            });
+            clipBtn.textContent = '✓ Загрузка...';
+            setTimeout(() => { clipBtn.textContent = '⬇ Скачать клип'; }, 3000);
+          };
+          vkClipActions.appendChild(clipBtn);
+        }
+
         // VK Video & Clip download button
         const vkVideoActions = document.querySelector('.videoplayer_controls, .VideoPage__actions, .mv_actions_block, .like_wrap, [data-video-id]');
         if (vkVideoActions && !document.querySelector('.soul-vk-vid-btn')) {
@@ -220,12 +259,19 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             e.preventDefault();
             let targetVideoUrl = window.location.href;
             const search = window.location.search;
-            const zMatch = search.match(/(?:z=)?video(-?\d+_\d+)/);
-            const clipMatch = search.match(/(?:z=)?clip(-?\d+_\d+)/);
-            if (zMatch) {
-              targetVideoUrl = `https://vk.com/video${zMatch[1]}`;
-            } else if (clipMatch) {
+            const pathname = window.location.pathname;
+            const zMatch = search.match(/(?:[?&#]|z=)?video(-?\d+_\d+)/);
+            const clipMatch = search.match(/(?:[?&#]|z=)?clip(-?\d+_\d+)/);
+            const pathClipMatch = pathname.match(/\/clip(-?\d+_\d+)/);
+            const pathVidMatch = pathname.match(/\/video(-?\d+_\d+)/);
+            if (clipMatch) {
               targetVideoUrl = `https://vk.com/clip${clipMatch[1]}`;
+            } else if (pathClipMatch) {
+              targetVideoUrl = `https://vk.com/clip${pathClipMatch[1]}`;
+            } else if (zMatch) {
+              targetVideoUrl = `https://vk.com/video${zMatch[1]}`;
+            } else if (pathVidMatch) {
+              targetVideoUrl = `https://vk.com/video${pathVidMatch[1]}`;
             } else {
               const modalEl = document.querySelector('#mv_box, [data-video-id]');
               const vidId = modalEl?.getAttribute('data-video-id');
@@ -322,6 +368,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // YouTube native stream downloader
     if (isHostOrSubdomain('youtube.com')) {
       const injectYtButton = () => {
+        // Standard video target
         const targetContainer = document.querySelector('#owner, #actions #top-level-buttons-computed, ytd-watch-metadata #actions');
         if (targetContainer && !document.querySelector('.soul-yt-dl-btn')) {
           const btn = document.createElement('button');
@@ -341,31 +388,56 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             btn.textContent = '✓ Скачивается';
             setTimeout(() => { btn.textContent = '⬇ Скачать MP4'; }, 3000);
           };
-           targetContainer.appendChild(btn);
-         }
-         if (targetContainer && !document.querySelector('.soul-yt-audio-dl-btn')) {
-           const audioBtn = document.createElement('button');
-           audioBtn.className = 'soul-yt-audio-dl-btn';
-           audioBtn.textContent = '♫ MP3';
-           audioBtn.title = 'Скачать аудиодорожку в MP3';
-           audioBtn.style.cssText = 'background:#f1f3f4;color:#202124;border:1px solid #dadce0;border-radius:18px;padding:0 14px;height:36px;font-size:13px;font-weight:600;cursor:pointer;margin-left:8px;display:inline-flex;align-items:center;gap:6px;';
-           audioBtn.onclick = (e) => {
-             e.preventDefault();
-             e.stopPropagation();
-             ipcRenderer.send('page:download-media', {
-               url: window.location.href,
-               filename: (document.title.replace(/[\\/:*?"<>|]/g, '') || 'youtube-audio') + '.mp3',
-               isAudio: true,
-             });
-             audioBtn.textContent = '✓ Скачивается';
-             setTimeout(() => { audioBtn.textContent = '♫ MP3'; }, 3000);
-           };
-           targetContainer.appendChild(audioBtn);
-         }
-       };
-       injectors.push(injectYtButton);
-       window.addEventListener('yt-navigate-finish', scheduleInjection);
-       window.addEventListener('spfdone', scheduleInjection);
+          targetContainer.appendChild(btn);
+        }
+        if (targetContainer && !document.querySelector('.soul-yt-audio-dl-btn')) {
+          const audioBtn = document.createElement('button');
+          audioBtn.className = 'soul-yt-audio-dl-btn';
+          audioBtn.textContent = '♫ MP3';
+          audioBtn.title = 'Скачать аудиодорожку в MP3';
+          audioBtn.style.cssText = 'background:#f1f3f4;color:#202124;border:1px solid #dadce0;border-radius:18px;padding:0 14px;height:36px;font-size:13px;font-weight:600;cursor:pointer;margin-left:8px;display:inline-flex;align-items:center;gap:6px;';
+          audioBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            ipcRenderer.send('page:download-media', {
+              url: window.location.href,
+              filename: (document.title.replace(/[\\/:*?"<>|]/g, '') || 'youtube-audio') + '.mp3',
+              isAudio: true,
+            });
+            audioBtn.textContent = '✓ Скачивается';
+            setTimeout(() => { audioBtn.textContent = '♫ MP3'; }, 3000);
+          };
+          targetContainer.appendChild(audioBtn);
+        }
+
+        // Shorts vertical target
+        const shortsActions = document.querySelector('ytd-reel-video-renderer[is-active] #actions, ytd-reel-player-overlay-renderer #actions, ytd-shorts #actions, #actions.ytd-reel-player-overlay-renderer');
+        if (shortsActions && !shortsActions.querySelector('.soul-yt-shorts-dl-btn')) {
+          const shortsBtn = document.createElement('button');
+          shortsBtn.className = 'soul-yt-shorts-dl-btn';
+          shortsBtn.textContent = '⬇ MP4';
+          shortsBtn.title = 'Скачать Shorts в высоком качестве';
+          shortsBtn.style.cssText = 'background:#065fd4;color:#ffffff;border:none;border-radius:18px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;margin:6px 0;display:inline-flex;align-items:center;justify-content:center;gap:4px;box-shadow:0 2px 8px rgba(6,95,212,0.3);';
+          shortsBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            ipcRenderer.send('page:download-media', {
+              url: window.location.href,
+              filename: (document.title.replace(/[\\/:*?"<>|]/g, '') || 'youtube-shorts') + '.mp4',
+              isAudio: false,
+            });
+            shortsBtn.textContent = '✓ Загрузка';
+            setTimeout(() => { shortsBtn.textContent = '⬇ MP4'; }, 3000);
+          };
+          shortsActions.appendChild(shortsBtn);
+        }
+      };
+      injectors.push(injectYtButton);
+      window.addEventListener('yt-navigate-finish', scheduleInjection);
+      window.addEventListener('spfdone', scheduleInjection);
+      window.addEventListener('yt-action', scheduleInjection);
+      window.addEventListener('yt-visibility-refresh', scheduleInjection);
+      window.addEventListener('yt-page-data-updated', scheduleInjection);
     }
 
     // Rutube does not expose a stable action toolbar across its player layouts.
