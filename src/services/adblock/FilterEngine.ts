@@ -12,13 +12,57 @@ interface FilterRule {
 }
 
 const builtInRules: FilterRule[] = [
+  // Google advertising & telemetry
   { token: 'doubleclick.net', kind: 'host' },
   { token: 'googlesyndication.com', kind: 'host' },
   { token: 'adservice.google.com', kind: 'host' },
+  { token: 'googleadservices.com', kind: 'host' },
+  { token: 'pagead2.googlesyndication.com', kind: 'host' },
+  { token: 'stats.g.doubleclick.net', kind: 'host' },
+  { token: 'admob.com', kind: 'host' },
+  { token: '2mdn.net', kind: 'host' },
+  // Yandex advertising & metrics
+  { token: 'an.yandex.ru', kind: 'host' },
+  { token: 'yabs.yandex.ru', kind: 'host' },
+  { token: 'adstat.yandex.ru', kind: 'host' },
+  { token: 'bs.yandex.ru', kind: 'host' },
+  { token: 'adfox.ru', kind: 'host' },
+  { token: 'awaps.yandex.net', kind: 'host' },
+  { token: 'direct.yandex.ru', kind: 'host' },
+  // VK & Mail.ru advertising
+  { token: 'ads.vk.com', kind: 'host' },
+  { token: 'ad.mail.ru', kind: 'host' },
+  { token: 'target.my.com', kind: 'host' },
+  { token: 'top-fwz1.mail.ru', kind: 'host' },
+  { token: 'counter.yadro.ru', kind: 'host' },
+  { token: 'tns-counter.ru', kind: 'host' },
+  // Global ad exchanges & trackers
   { token: 'ads-twitter.com', kind: 'host' },
+  { token: 'criteo.com', kind: 'host' },
+  { token: 'criteo.net', kind: 'host' },
+  { token: 'taboola.com', kind: 'host' },
+  { token: 'outbrain.com', kind: 'host' },
+  { token: 'adroll.com', kind: 'host' },
+  { token: 'rubiconproject.com', kind: 'host' },
+  { token: 'adnxs.com', kind: 'host' },
+  { token: 'smartadserver.com', kind: 'host' },
+  { token: 'pubmatic.com', kind: 'host' },
+  { token: 'openx.net', kind: 'host' },
+  { token: 'casalemedia.com', kind: 'host' },
+  { token: 'popads.net', kind: 'host' },
+  { token: 'mgid.com', kind: 'host' },
+  { token: 'scorecardresearch.com', kind: 'host' },
+  { token: 'quantserve.com', kind: 'host' },
+  { token: 'moatads.com', kind: 'host' },
+  { token: 'advertising.com', kind: 'host' },
+  { token: 'adtechus.com', kind: 'host' },
+  // Path rules
   { token: '/ads/', kind: 'path' },
   { token: '/adserver/', kind: 'path' },
-  { token: '/tracking/', kind: 'path' },
+  { token: '/pagead/', kind: 'path' },
+  { token: '/api/stats/ads', kind: 'path' },
+  { token: '/ptracking', kind: 'path' },
+  { token: '/get_midroll_info', kind: 'path' },
   { token: 'pixel.gif', kind: 'path' },
 ];
 
@@ -40,7 +84,7 @@ export class FilterEngine {
   }
 
   shouldBlock(rawUrl: string, resourceType?: string): boolean {
-    if (!this.enabled || resourceType === 'mainFrame' || resourceType === 'subFrame') return false;
+    if (!this.enabled || resourceType === 'mainFrame') return false;
     let url: URL;
     try {
       url = new URL(rawUrl);
@@ -50,7 +94,7 @@ export class FilterEngine {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
     const host = url.hostname.toLowerCase();
     const pathAndQuery = `${url.pathname}${url.search}`.toLowerCase();
-    const blocked = this.rules.some((rule) => rule.kind === 'host' ? (host === rule.token || host.endsWith(`.${rule.token}`)) : pathAndQuery.includes(rule.token));
+    const blocked = this.rules.some((rule) => rule.kind === 'host' ? (host === rule.token || host.endsWith(`.${rule.token}`)) : (pathAndQuery.includes(rule.token) || rawUrl.toLowerCase().includes(rule.token)));
     if (blocked) {
       this.blockedTotal += 1;
       this.blockedByHost.set(host, (this.blockedByHost.get(host) ?? 0) + 1);

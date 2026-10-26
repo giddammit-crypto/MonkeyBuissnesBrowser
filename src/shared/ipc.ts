@@ -1,5 +1,7 @@
 import type {
   BookmarkEntry,
+  BrowsecCountry,
+  BrowsecState,
   BrowserSettings,
   BrowserSnapshot,
   DownloadEntry,
@@ -23,7 +25,7 @@ export interface ChromeBounds {
 }
 
 export type TabAction = 'mute' | 'pin' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'print' | 'duplicate' | 'hibernate';
-export type DownloadAction = 'pause' | 'resume' | 'cancel';
+export type DownloadAction = 'pause' | 'resume' | 'cancel' | 'delete';
 
 export interface BrowserApi {
   getSnapshot(): Promise<BrowserSnapshot>;
@@ -37,6 +39,7 @@ export interface BrowserApi {
   findInPage(tabId: string, text: string, forward?: boolean): Promise<void>;
   stopFindInPage(tabId: string): Promise<void>;
   controlDownload(downloadId: string, action: DownloadAction): Promise<void>;
+  deleteDownload(downloadId: string, deleteFile?: boolean): Promise<void>;
   setPrivateProxy(proxy: string): Promise<void>;
   closePrivateTabs(): Promise<void>;
   closeTab(tabId: string): Promise<void>;
@@ -63,12 +66,22 @@ export interface BrowserApi {
   updateSettings(patch: Partial<BrowserSettings>): Promise<BrowserSettings>;
   createWorkspace(name: string): Promise<WorkspaceEntry>;
   switchWorkspace(workspaceId: string): Promise<void>;
+  deleteWorkspace(workspaceId: string): Promise<void>;
   listLocalExtensions(): Promise<Array<{ id: string; name: string; version: string; directory: string }>>;
   installLocalExtension(): Promise<{ id: string; name: string; version: string; directory: string } | null>;
   removeLocalExtension(id: string): Promise<void>;
   getVpnSnapshot(): Promise<VpnSnapshot>;
   importVpnConfig(): Promise<VpnSnapshot>;
   clearVpnConfig(): Promise<VpnSnapshot>;
+  getBrowsecSnapshot(): Promise<BrowsecState>;
+  getBrowsecCountries(): Promise<BrowsecCountry[]>;
+  toggleBrowsec(enabled?: boolean): Promise<BrowsecState>;
+  setBrowsecCountry(code: string): Promise<BrowsecState>;
+  setBrowsecWebRtcLeakProtection(enabled: boolean): Promise<BrowsecState>;
+  addBrowsecSmartRule(domain: string, country: string): Promise<BrowsecState>;
+  removeBrowsecSmartRule(domain: string): Promise<BrowsecState>;
+  toggleBrowsecSmartRule(domain: string): Promise<BrowsecState>;
+  updateBrowsec(patch: Partial<BrowsecState>): Promise<BrowsecState>;
   clearHistoryAndCookies(): Promise<void>;
   discoverImportProfiles(): Promise<ImportProfile[]>;
   importBrowserData(input: { profileId: string; data: ImportDataKind[] }): Promise<ImportReport>;
@@ -76,9 +89,16 @@ export interface BrowserApi {
   deleteSavedPassword(passwordId: string): Promise<boolean>;
   fillSavedPassword(tabId: string, passwordId: string): Promise<{ filled: boolean; reason?: string }>;
   setChromeBounds(bounds: ChromeBounds): Promise<void>;
+  setPopoverOpen(open: boolean): Promise<void>;
+  reorderTab(tabId: string, targetTabId: string): Promise<void>;
+  downloadMediaUrl(url: string, filename?: string, isAudio?: boolean): Promise<void>;
+  addGoogleAccount(email: string, name?: string): Promise<void>;
+  switchGoogleAccount(accountId: string): Promise<void>;
+  removeGoogleAccount(accountId: string): Promise<void>;
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<void>;
   closeWindow(): Promise<void>;
   onSnapshotChanged(callback: (snapshot: BrowserSnapshot) => void): () => void;
   onTabEvent(callback: (event: { type: string; tab?: TabSnapshot; message?: string }) => void): () => void;
+  onBrowsecSnapshot(callback: (snapshot: BrowsecState) => void): () => void;
 }

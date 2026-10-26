@@ -1,22 +1,22 @@
 {
-  "name": "monkeybuissnesbrowser",
+  "name": "soulm8te",
   "version": "0.5.0",
-  "description": "SOUL-M8TE — Electron browser with private sessions, tab sleeping and native Chromium tabs.",
+  "description": "soulm8te — Electron browser with private sessions, tab sleeping and native Chromium tabs.",
   "main": "dist/main/main/main.js",
   "author": {
-    "name": "MonkeyBuissnesBrowser",
-    "email": "maintainers@monkeybuissnesbrowser.invalid"
+    "name": "soulm8te",
+    "email": "maintainers@soulm8te.invalid"
   },
-  "homepage": "https://monkeybuissnesbrowser.invalid",
-  "desktopName": "monkeybuissnesbrowser",
+  "homepage": "https://soulm8te.invalid",
+  "desktopName": "soulm8te",
   "license": "MIT",
   "private": true,
   "scripts": {
     "build": "npm run build:main && npm run build:renderer",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
-    "dev": "npm run build && electron .",
-    "start": "electron .",
+    "dev": "npm run build && electron --no-sandbox --class=soulm8te --name=soulm8te .",
+    "start": "npm run build && electron --no-sandbox --class=soulm8te --name=soulm8te .",
     "lint": "npm run typecheck",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "test": "vitest run",
@@ -46,8 +46,8 @@
     "vitest": "5.0.5"
   },
   "build": {
-    "appId": "com.monkeybuissnes.browser",
-    "productName": "SOUL-M8TE",
+    "appId": "com.soulm8te.browser",
+    "productName": "soulm8te",
     "asar": true,
     "files": [
       "dist/**/*",
@@ -60,8 +60,8 @@
         "deb"
       ],
       "category": "Network",
-      "maintainer": "MonkeyBuissnesBrowser <maintainers@monkeybuissnesbrowser.invalid>",
-      "icon": "assets/icons/png/app-icon-512.png"
+      "maintainer": "soulm8te <maintainers@soulm8te.invalid>",
+      "icon": "assets/icons/png"
     },
     "win": {
       "target": [
@@ -79,7 +79,7 @@
     "directories": {
       "output": "release"
     },
-    "artifactName": "SOUL-M8TE-${version}-${os}-${arch}.${ext}"
+    "artifactName": "soulm8te-${version}-${os}-${arch}.${ext}"
   },
   "engines": {
     "node": ">=24.0.0"

@@ -1,7 +1,11 @@
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import { spawn, type ChildProcess } from 'node:child_process';
 import {
   app,
   BaseWindow,
+  BrowserWindow,
   clipboard,
   dialog,
   Menu,
@@ -10,17 +14,22 @@ import {
   shell,
   WebContentsView,
 } from 'electron';
+import { computePopupWindowBounds, isPopupWindowRequest, parseWindowFeatures, type ParsedWindowFeatures } from './popupUtils';
 import type { ChromeBounds, TabAction, DownloadAction } from '../../shared/ipc';
 import { FilterEngine, SessionAdBlock } from '../../services/adblock/FilterEngine';
 import { MemoryManager } from '../../services/memory/MemoryManager';
 import { VpnConfigStore } from '../../services/vpn/VpnConfigStore';
+import { BrowsecService } from '../../services/browsec/BrowsecService';
 import { LocalExtensionManager } from '../../services/extensions/LocalExtensionManager';
 import { isSafeMediaUrl, mediaKindForMime, mediaKindForUrl } from '../../shared/media';
 import { isSafeWebUrl, parseOmniboxInput } from '../../shared/omnibox';
 import { normalizeNewTabBackground } from '../../shared/background';
 import { canRequestStorageAccess, getExternalPageUrl, getSiteKey, normalizeCookieExceptions, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
+import { getClientHintHeaders, getChromeUserAgent } from '../../shared/chromiumIdentity';
 import type {
   BookmarkEntry,
+  BrowsecCountry,
+  BrowsecState,
   BrowserSettings,
   BrowserSnapshot,
   DownloadEntry,
@@ -34,8 +43,9 @@ import type {
   ImportProfile,
   ImportReport,
   ImportedPasswordSummary,
+  GoogleAccount,
 } from '../../shared/types';
-import { BrowserStores, buildStoredSession } from '../persistence/BrowserStores';
+import { BrowserStores, buildStoredSession, defaultBrowsecCountries } from '../persistence/BrowserStores';
 import { PasswordStore } from '../persistence/PasswordStore';
 import { fillSavedCredential } from '../passwords/PasswordAutofill';
 import { BrowserDataImporter, type ImportedCookie } from '../import/BrowserDataImporter';
@@ -46,6 +56,8 @@ const pagePreloadPath = path.resolve(__dirname, '../../preload/page-preload.js')
 type TabRecord = TabSnapshot & {
   view?: WebContentsView;
   webContentsId?: number;
+  hasDownloadableMedia?: boolean;
+  capturedAudioFilename?: string;
 };
 
 const NEW_TAB_URL = 'browser://newtab';
@@ -59,6 +71,7 @@ export class BrowserController {
   readonly downloads: DownloadEntry[];
   readonly tabs = new Map<string, TabRecord>();
   readonly browserSession: Electron.Session;
+  readonly browsec: BrowsecService;
   readonly passwords: PasswordStore;
   readonly importer: BrowserDataImporter;
   readonly adBlock = new SessionAdBlock(new FilterEngine());
@@ -87,9 +100,13 @@ export class BrowserController {
   private privateAdBlock = new SessionAdBlock(new FilterEngine());
   private readonly sessionDownloadHandlers = new Map<Electron.Session, (event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents) => void>();
   private readonly liveDownloads = new Map<string, { item: Electron.DownloadItem; tabId?: string }>();
+  private readonly ytDlpProcesses = new Map<string, { child: ChildProcess; isPaused: boolean }>();
   private readonly closedTabs: Array<Pick<TabSnapshot, 'url' | 'workspaceId' | 'isPinned' | 'isMuted'>> = [];
   private readonly popupOpeners = new Map<string, string>();
+  private readonly popupWindows = new Set<Electron.BrowserWindow>();
+  private readonly popupToTab = new Map<number, string>();
   private readonly findQueries = new Map<string, string>();
+  private readonly capturedMediaStreams = new Map<number, { video?: string; audio?: string }>();
   private readonly extensionsManager: LocalExtensionManager;
 
   constructor() {
@@ -100,6 +117,29 @@ export class BrowserController {
     this.importer = new BrowserDataImporter(this.stores, this.passwords, (cookies) => this.setImportedCookies(cookies));
     this.browserSession = session.fromPartition('persist:northstar-default');
     this.extensionsManager = new LocalExtensionManager(this.browserSession, app.getPath('userData'));
+    this.browsec = new BrowsecService(app.getPath('userData'));
+    this.browsec.setWebContentsProvider(() => {
+      const contents: Electron.WebContents[] = [];
+      if (this.shellView && !this.shellView.webContents.isDestroyed()) {
+        contents.push(this.shellView.webContents);
+      }
+      for (const tab of this.tabs.values()) {
+        if (tab.view && !tab.view.webContents.isDestroyed()) {
+          contents.push(tab.view.webContents);
+        }
+      }
+      for (const popup of this.popupWindows) {
+        if (!popup.isDestroyed() && !popup.webContents.isDestroyed()) {
+          contents.push(popup.webContents);
+        }
+      }
+      return contents;
+    });
+    this.browsec.onSnapshot((snapshot) => {
+      this.shellView?.webContents.send('browsec:snapshot', snapshot);
+      this.emitSnapshot();
+    });
+    void this.browsec.registerSession(this.browserSession);
     this.configureSession(this.browserSession);
   }
 
@@ -112,6 +152,7 @@ export class BrowserController {
   }
 
   async createWindow(): Promise<void> {
+    const appIconPath = path.join(app.getAppPath(), 'assets/icons/png/app-icon-512.png');
     this.window = new BaseWindow({
       width: 1440,
       height: 900,
@@ -120,9 +161,11 @@ export class BrowserController {
       show: false,
       frame: false,
       backgroundColor: '#171C23',
-      title: 'SOUL-M8TE',
-      icon: path.join(app.getAppPath(), 'assets/icons/png/app-icon-512.png'),
+      title: 'soulm8te',
+      icon: appIconPath,
     });
+    const appIcon = nativeImage.createFromPath(appIconPath);
+    if (!appIcon.isEmpty()) this.window.setIcon(appIcon);
 
     this.shellView = new WebContentsView({
       webPreferences: {
@@ -133,6 +176,7 @@ export class BrowserController {
         webSecurity: true,
       },
     });
+    this.shellView.setBackgroundColor('#00000000');
     this.shellContentsId = this.shellView.webContents.id;
     this.shellView.webContents.on('will-navigate', (event) => event.preventDefault());
     this.shellView.webContents.on('will-redirect', (event) => event.preventDefault());
@@ -189,8 +233,10 @@ export class BrowserController {
       tabIds.push(tab.id);
       tabsByWorkspace.set(tab.workspaceId, tabIds);
     }
+    const gData = this.stores.googleAccounts.get();
+    const activeGoogleAccount = gData.accounts.find((a) => a.id === gData.activeId) || gData.accounts[0] || null;
     return {
-      tabs: Array.from(this.tabs.values()).map(({ view: _view, webContentsId: _id, ...tab }) => tab),
+      tabs: Array.from(this.tabs.values()).map((tab) => this.toSnapshot(tab)),
       activeTabId: this.activeTabId,
       privacy: { privateTabCount: [...this.tabs.values()].filter((tab) => tab.isPrivate).length, proxy: this.privateProxy },
       history: this.stores.history.get(),
@@ -199,7 +245,10 @@ export class BrowserController {
       workspaces: storedWorkspaces.map((workspace) => ({ ...workspace, tabIds: tabsByWorkspace.get(workspace.id) ?? [] })),
       settings: this.stores.settings.get(),
       vpn: this.vpn.getSnapshot(),
+      browsec: this.browsec.getSnapshot(),
       adBlock: this.adBlock.engine.stats(),
+      googleAccounts: gData.accounts,
+      activeGoogleAccount,
       performance: this.memoryManager.metrics()
         ? {
             sampledAt: this.memoryManager.metrics()!.sampledAt,
@@ -225,6 +274,7 @@ export class BrowserController {
       isLoading: !isInternal && !input.lazy,
       ...emptyNavigation(url),
       isMuted: false,
+      isAudible: false,
       isPinned: false,
       isPrivate,
       isInternal,
@@ -283,7 +333,17 @@ export class BrowserController {
     }
     this.tabs.delete(tabId);
     this.findQueries.delete(tabId);
+    const openerId = this.popupOpeners.get(tabId);
     this.popupOpeners.delete(tabId);
+    for (const [popupId, openerTabId] of this.popupToTab.entries()) {
+      if (openerTabId === tabId) {
+        for (const popup of this.popupWindows) {
+          if (popup.id === popupId && !popup.isDestroyed()) {
+            popup.close();
+          }
+        }
+      }
+    }
     this.memoryManager.removeTab(tabId);
     this.detachView(tab);
     // Clearing is scoped to the whole private session: closing a popup must not
@@ -291,13 +351,17 @@ export class BrowserController {
     if (tab.isPrivate && ![...this.tabs.values()].some((entry) => entry.isPrivate)) await this.endPrivateSession();
     if (this.tabs.size === 0) await this.createTab({ url: NEW_TAB_URL, isPrivate: false, active: true });
     else if (this.activeTabId === tabId) {
-      const remaining = [...this.tabs.values()];
-      const reversed = remaining.slice().reverse();
-      const fallback = reversed.find((entry) => entry.workspaceId === tab.workspaceId && entry.isPrivate === tab.isPrivate)
-        ?? reversed.find((entry) => entry.isPrivate === tab.isPrivate)
-        ?? reversed.find((entry) => entry.workspaceId === tab.workspaceId)
-        ?? reversed[0];
-      if (fallback) this.activateTab(fallback.id);
+      if (openerId && this.tabs.has(openerId)) {
+        this.activateTab(openerId);
+      } else {
+        const remaining = [...this.tabs.values()];
+        const reversed = remaining.slice().reverse();
+        const fallback = reversed.find((entry) => entry.workspaceId === tab.workspaceId && entry.isPrivate === tab.isPrivate)
+          ?? reversed.find((entry) => entry.isPrivate === tab.isPrivate)
+          ?? reversed.find((entry) => entry.workspaceId === tab.workspaceId)
+          ?? reversed[0];
+        if (fallback) this.activateTab(fallback.id);
+      }
     }
     this.emitSnapshot();
   }
@@ -413,14 +477,84 @@ export class BrowserController {
   }
 
   controlDownload(downloadId: string, action: DownloadAction): void {
-    const download = this.liveDownloads.get(downloadId);
+    if (action === 'delete') {
+      this.deleteDownload(downloadId, false);
+      return;
+    }
+
     const entry = this.downloads.find((item) => item.id === downloadId);
-    if (!download || !entry) return;
-    if (action === 'cancel') download.item.cancel();
-    else if (action === 'pause') download.item.pause();
-    else if (action === 'resume' && (download.item.isPaused() || download.item.canResume())) download.item.resume();
-    entry.isPaused = action === 'pause';
-    this.emitSnapshot();
+    if (!entry) return;
+
+    // Check yt-dlp process
+    const ytProc = this.ytDlpProcesses.get(downloadId);
+    if (ytProc) {
+      if (action === 'pause') {
+        try { ytProc.child.kill('SIGSTOP'); } catch {}
+        ytProc.isPaused = true;
+        entry.isPaused = true;
+        entry.canResume = true;
+      } else if (action === 'resume') {
+        try { ytProc.child.kill('SIGCONT'); } catch {}
+        ytProc.isPaused = false;
+        entry.isPaused = false;
+      } else if (action === 'cancel') {
+        try { ytProc.child.kill('SIGTERM'); } catch {}
+        this.ytDlpProcesses.delete(downloadId);
+        entry.state = 'cancelled';
+        entry.isLive = false;
+        entry.isPaused = false;
+        entry.canResume = false;
+        entry.error = 'Загрузка отменена.';
+        this.persistDownloads(true);
+      }
+      this.emitSnapshot();
+      return;
+    }
+
+    // Check Electron download item
+    const download = this.liveDownloads.get(downloadId);
+    if (download) {
+      if (action === 'cancel') {
+        download.item.cancel();
+        entry.state = 'cancelled';
+        entry.isLive = false;
+        entry.isPaused = false;
+        entry.canResume = false;
+        entry.error = 'Загрузка отменена.';
+        this.persistDownloads(true);
+      } else if (action === 'pause') {
+        download.item.pause();
+        entry.isPaused = true;
+        entry.canResume = true;
+      } else if (action === 'resume' && (download.item.isPaused() || download.item.canResume())) {
+        download.item.resume();
+        entry.isPaused = false;
+      }
+      this.emitSnapshot();
+    }
+  }
+
+  deleteDownload(downloadId: string, deleteFile = false): void {
+    const ytProc = this.ytDlpProcesses.get(downloadId);
+    if (ytProc) {
+      try { ytProc.child.kill('SIGKILL'); } catch {}
+      this.ytDlpProcesses.delete(downloadId);
+    }
+    const live = this.liveDownloads.get(downloadId);
+    if (live) {
+      try { live.item.cancel(); } catch {}
+      this.liveDownloads.delete(downloadId);
+    }
+    const index = this.downloads.findIndex((item) => item.id === downloadId);
+    if (index !== -1) {
+      const entry = this.downloads[index];
+      if (deleteFile && entry.path && fs.existsSync(entry.path)) {
+        try { fs.unlinkSync(entry.path); } catch {}
+      }
+      this.downloads.splice(index, 1);
+      this.persistDownloads(true);
+      this.emitSnapshot();
+    }
   }
 
   markFormState(contentsId: number, dirty: boolean): void {
@@ -523,7 +657,7 @@ export class BrowserController {
   toggleBookmark(tabId: string): BookmarkEntry | null {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.isInternal) return null;
-    const bookmark = this.stores.toggleBookmark({ url: tab.url, title: tab.title });
+    const bookmark = this.stores.toggleBookmark({ url: tab.url, title: tab.title, favicon: tab.favicon });
     this.emitSnapshot();
     return bookmark;
   }
@@ -597,8 +731,8 @@ export class BrowserController {
         sidebarCollapsed: typeof patch.sidebarCollapsed === 'boolean' ? patch.sidebarCollapsed : current.sidebarCollapsed,
         searchEngine,
         newTabBackground: normalizeNewTabBackground(patch.newTabBackground === undefined ? current.newTabBackground : patch.newTabBackground),
-        appearancePreset: patch.appearancePreset === 'detroit' || patch.appearancePreset === 'classic' ? patch.appearancePreset : current.appearancePreset ?? 'classic',
-        accentColor: ['blue', 'teal', 'violet', 'rose'].includes(patch.accentColor ?? '') ? patch.accentColor : current.accentColor ?? 'blue',
+        appearancePreset: patch.appearancePreset === 'detroit' || patch.appearancePreset === 'classic' || patch.appearancePreset === 'cyberpink' || patch.appearancePreset === 'cyberpink-fuji' ? patch.appearancePreset : current.appearancePreset ?? 'classic',
+        accentColor: ['blue', 'teal', 'violet', 'rose', 'pink'].includes(patch.accentColor ?? '') ? patch.accentColor : current.accentColor ?? 'blue',
         wallpaperDim: typeof patch.wallpaperDim === 'number' && Number.isFinite(patch.wallpaperDim) ? Math.max(0, Math.min(75, Math.round(patch.wallpaperDim))) : current.wallpaperDim ?? 0,
         sleepAfterMinutes,
         adBlockEnabled: typeof patch.adBlockEnabled === 'boolean' ? patch.adBlockEnabled : current.adBlockEnabled ?? true,
@@ -610,6 +744,26 @@ export class BrowserController {
     });
     this.adBlock.engine.setEnabled(next.adBlockEnabled !== false);
     this.privateAdBlock.engine.setEnabled(next.adBlockEnabled !== false);
+    const bg = next.newTabBackground ?? 'portrait';
+    let appearance = next.appearancePreset ?? 'classic';
+    if (!appearance || appearance === 'classic') {
+      if (bg === 'cyberpink') appearance = 'cyberpink';
+      else if (bg === 'cyberpink-fuji') appearance = 'cyberpink-fuji';
+      else if (bg === 'portrait') appearance = 'detroit';
+    }
+    const themePayload = {
+      theme: next.theme ?? 'dark',
+      wallpaper: bg,
+      appearance,
+      accent: next.accentColor ?? (bg === 'cyberpink' ? 'pink' : bg === 'cyberpink-fuji' ? 'violet' : 'blue'),
+    };
+    for (const tab of this.tabs.values()) {
+      if (tab.view?.webContents && !tab.view.webContents.isDestroyed()) {
+        try {
+          tab.view.webContents.send('page:theme-updated', themePayload);
+        } catch {}
+      }
+    }
     this.emitSnapshot();
     return next;
   }
@@ -640,6 +794,30 @@ export class BrowserController {
       return;
     }
     await this.createTab({ url: NEW_TAB_URL, isPrivate, active: true });
+  }
+
+  async deleteWorkspace(workspaceId: string): Promise<void> {
+    const existing = this.stores.workspaces.get();
+    if (existing.length <= 1) {
+      throw new Error('Нельзя удалить единственное пространство.');
+    }
+    const target = existing.find((w) => w.id === workspaceId);
+    if (!target) return;
+    const fallback = existing.find((w) => w.id !== workspaceId)!;
+
+    for (const tab of this.tabs.values()) {
+      if (tab.workspaceId === workspaceId) {
+        tab.workspaceId = fallback.id;
+      }
+    }
+
+    this.stores.workspaces.set(existing.filter((w) => w.id !== workspaceId));
+
+    if (this.activeWorkspaceId === workspaceId) {
+      await this.switchWorkspace(fallback.id);
+    } else {
+      this.emitSnapshot();
+    }
   }
 
   listLocalExtensions(): ReturnType<LocalExtensionManager['list']> { return this.extensionsManager.list(); }
@@ -786,6 +964,282 @@ export class BrowserController {
     this.refreshViewBounds();
   }
 
+  setPopoverOpen(open: boolean): void {
+    if (!this.window || this.window.isDestroyed() || this.disposed) return;
+    const activeTab = this.tabs.get(this.activeTabId);
+    if (open) {
+      if (this.shellView && !this.shellView.webContents.isDestroyed()) {
+        this.window.contentView.removeChildView(this.shellView);
+        this.window.contentView.addChildView(this.shellView);
+        this.shellView.webContents.focus();
+      }
+    } else {
+      if (activeTab?.view && !activeTab.view.webContents.isDestroyed()) {
+        this.window.contentView.removeChildView(activeTab.view);
+        this.window.contentView.addChildView(activeTab.view);
+        this.applyBounds(activeTab);
+        activeTab.view.webContents.focus();
+      }
+    }
+  }
+
+  reorderTab(tabId: string, targetTabId: string): void {
+    const entries = [...this.tabs.entries()];
+    const sourceIndex = entries.findIndex(([id]) => id === tabId);
+    if (sourceIndex === -1) return;
+    const targetIndex = entries.findIndex(([id]) => id === targetTabId);
+    if (targetIndex === -1 || sourceIndex === targetIndex) return;
+    const [removed] = entries.splice(sourceIndex, 1);
+    entries.splice(targetIndex, 0, removed);
+    this.tabs.clear();
+    for (const [id, tab] of entries) {
+      this.tabs.set(id, tab);
+    }
+    this.emitSnapshot();
+    this.persistSession();
+  }
+
+  private async getCookieArgsForUrl(targetUrl: string): Promise<{ args: string[]; cleanup: () => void }> {
+    try {
+      const u = new URL(targetUrl);
+      const host = u.hostname.replace(/^www\./, '');
+      const domainFilter = host.includes('.') ? `.${host.split('.').slice(-2).join('.')}` : host;
+      const cookies = await this.browserSession.cookies.get({ domain: domainFilter });
+      if (!cookies || cookies.length === 0) {
+        return { args: [], cleanup: () => {} };
+      }
+      const lines = [
+        '# Netscape HTTP Cookie File',
+        '# Generated by Soulm8te Browser',
+      ];
+      for (const c of cookies) {
+        const domain = c.domain?.startsWith('.') ? c.domain : `.${c.domain || host}`;
+        const flag = 'TRUE';
+        const cookiePath = c.path || '/';
+        const secure = c.secure ? 'TRUE' : 'FALSE';
+        const expiration = c.expirationDate ? Math.round(c.expirationDate) : Math.round(Date.now() / 1000 + 86400 * 30);
+        lines.push(`${domain}\t${flag}\t${cookiePath}\t${secure}\t${expiration}\t${c.name}\t${c.value}`);
+      }
+      const tmpPath = path.join(os.tmpdir(), `soulm8te_cookies_${crypto.randomUUID()}.txt`);
+      fs.writeFileSync(tmpPath, lines.join('\n'), 'utf8');
+      return {
+        args: ['--cookies', tmpPath],
+        cleanup: () => {
+          try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch {}
+        },
+      };
+    } catch {
+      return { args: [], cleanup: () => {} };
+    }
+  }
+
+  downloadMediaUrl(url: string, filename?: string, isAudio = false): void {
+    if (!url || !isSafeWebUrl(url)) return;
+    const activeTab = this.tabs.get(this.activeTabId);
+    const activeStream = activeTab?.webContentsId ? this.capturedMediaStreams.get(activeTab.webContentsId) : undefined;
+
+    // 1. Audio request handling (VK music, direct mp3/m3u8, page audio)
+    if (isAudio) {
+      if (activeStream?.audio && (url === activeTab?.url || url.includes('vk.com') || url.includes('vkuseraudio.net'))) {
+        const audioUrl = activeStream.audio;
+        const customName = filename || activeTab?.capturedAudioFilename;
+        if (audioUrl.includes('.m3u8')) {
+          void this.downloadWithYtDlp(audioUrl, customName, true);
+        } else if (activeTab?.view?.webContents && !activeTab.view.webContents.isDestroyed()) {
+          this.downloadMedia(activeTab.view.webContents, audioUrl);
+        } else {
+          void this.downloadWithYtDlp(audioUrl, customName, true);
+        }
+        return;
+      }
+      if (url.includes('vkuseraudio.net') || url.endsWith('.mp3') || url.includes('.mp3?')) {
+        if (url.includes('.m3u8')) {
+          void this.downloadWithYtDlp(url, filename, true);
+        } else if (activeTab?.view?.webContents && !activeTab.view.webContents.isDestroyed()) {
+          this.downloadMedia(activeTab.view.webContents, url);
+        } else {
+          void this.downloadWithYtDlp(url, filename, true);
+        }
+        return;
+      }
+    }
+
+    // 2. Normalize VK modal URLs (feed, im, wall with z=video... or z=clip...)
+    let normalizedUrl = url;
+    if (url.includes('vk.com') || url.includes('vkvideo.ru')) {
+      const videoMatch = url.match(/(?:z=)?video(-?\d+_\d+)/);
+      const clipMatch = url.match(/(?:z=)?clip(-?\d+_\d+)/);
+      if (videoMatch) {
+        normalizedUrl = `https://vk.com/video${videoMatch[1]}`;
+      } else if (clipMatch) {
+        normalizedUrl = `https://vk.com/clip${clipMatch[1]}`;
+      }
+    }
+
+    const isVideoSite =
+      normalizedUrl.includes('youtube.com') ||
+      normalizedUrl.includes('youtu.be') ||
+      normalizedUrl.includes('vk.com/video') ||
+      normalizedUrl.includes('vkvideo.ru') ||
+      normalizedUrl.includes('vk.com/clip') ||
+      normalizedUrl.includes('rutube.ru') ||
+      normalizedUrl.includes('pinterest.com');
+
+    if (isVideoSite) {
+      void this.downloadWithYtDlp(normalizedUrl, filename, isAudio);
+      return;
+    }
+
+    const currentTab = this.tabs.get(this.activeTabId);
+    if (currentTab?.view?.webContents && !currentTab.view.webContents.isDestroyed()) {
+      this.downloadMedia(currentTab.view.webContents, normalizedUrl);
+    }
+  }
+
+  private async downloadWithYtDlp(url: string, customFilename?: string, isAudio = false): Promise<void> {
+    const localBin = path.join(os.homedir(), '.local/bin/yt-dlp');
+    const ytDlpPath = fs.existsSync(localBin) ? localBin : 'yt-dlp';
+
+    const id = crypto.randomUUID();
+    const downloadDir = app.getPath('downloads');
+    try {
+      fs.mkdirSync(downloadDir, { recursive: true });
+    } catch {}
+    const fallbackFilename = customFilename || (isAudio ? 'audio.mp3' : 'video.mp4');
+
+    const entry: DownloadEntry = {
+      id,
+      url,
+      filename: fallbackFilename,
+      kind: isAudio ? 'audio' : 'video',
+      isPrivate: false,
+      state: 'progressing',
+      receivedBytes: 0,
+      totalBytes: 0,
+      startedAt: Date.now(),
+      isLive: true,
+    };
+    this.downloads.unshift(entry);
+    this.emitSnapshot();
+
+    const args = [
+      '--no-warnings',
+      '--newline',
+      '--js-runtimes', 'node',
+      '-P', downloadDir,
+      '-o', '%(title)s.%(ext)s',
+    ];
+
+    if (url.includes('vk.com') || url.includes('vkvideo.ru') || url.includes('vkuservideo.net') || url.includes('vkuseraudio.net')) {
+      args.push('--referer', 'https://vk.com/');
+    }
+
+    const cookieInfo = await this.getCookieArgsForUrl(url);
+    if (cookieInfo.args.length > 0) {
+      args.push(...cookieInfo.args);
+    }
+
+    if (isAudio) {
+      args.push('-x', '--audio-format', 'mp3');
+    } else {
+      args.push('--merge-output-format', 'mp4', '-f', 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b');
+    }
+    args.push(url);
+
+    try {
+      const child = spawn(ytDlpPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      this.ytDlpProcesses.set(id, { child, isPaused: false });
+      let stderrText = '';
+
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderrText += chunk.toString();
+      });
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        const text = chunk.toString();
+        const destMatch = text.match(/Destination:\s*(.+)$/m) || text.match(/\[Merger\] Merging formats into "(.+)"/m) || text.match(/\[download\]\s+(.+?\.mp[34])/m);
+        if (destMatch && destMatch[1]) {
+          const filePath = destMatch[1].trim();
+          entry.path = filePath;
+          entry.filename = path.basename(filePath);
+        }
+        const progMatch = text.match(/\[download\]\s+([\d.]+)%(?:\s+of\s+~?([\d.]+)\s*([A-Za-z]+))?/);
+        if (progMatch) {
+          const pct = parseFloat(progMatch[1]);
+          if (!Number.isNaN(pct)) {
+            if (progMatch[2] && progMatch[3]) {
+              const num = parseFloat(progMatch[2]);
+              const unit = progMatch[3].toLowerCase();
+              let bytes = num;
+              if (unit.startsWith('g')) bytes = num * 1024 * 1024 * 1024;
+              else if (unit.startsWith('m')) bytes = num * 1024 * 1024;
+              else if (unit.startsWith('k')) bytes = num * 1024;
+              entry.totalBytes = Math.round(bytes);
+              entry.receivedBytes = Math.round((pct / 100) * entry.totalBytes);
+            } else if (entry.totalBytes > 0) {
+              entry.receivedBytes = Math.round((pct / 100) * entry.totalBytes);
+            }
+          }
+        }
+        if (entry.path && fs.existsSync(entry.path)) {
+          try {
+            const sz = fs.statSync(entry.path).size;
+            if (sz > 0) {
+              entry.receivedBytes = sz;
+              if (entry.totalBytes < sz) entry.totalBytes = sz;
+            }
+          } catch {}
+        }
+        this.emitSnapshot();
+      });
+
+      child.on('close', (code) => {
+        cookieInfo.cleanup();
+        this.ytDlpProcesses.delete(id);
+        entry.isLive = false;
+        entry.canResume = false;
+        entry.finishedAt = Date.now();
+        if (code === 0) {
+          entry.state = 'completed';
+          let finalSize = 0;
+          if (entry.path && fs.existsSync(entry.path)) {
+            try { finalSize = fs.statSync(entry.path).size; } catch {}
+          }
+          if (finalSize > 0) {
+            entry.receivedBytes = finalSize;
+            entry.totalBytes = finalSize;
+          } else if (entry.totalBytes > 0) {
+            entry.receivedBytes = entry.totalBytes;
+          }
+        } else {
+          entry.state = 'interrupted';
+          const errLine = stderrText.split('\n').filter(l => l.trim().startsWith('ERROR:')).pop() || '';
+          entry.error = errLine ? errLine.replace(/^ERROR:\s*/, '') : 'Не удалось завершить загрузку видео.';
+        }
+        this.persistDownloads(true);
+        this.emitSnapshot();
+      });
+
+      child.on('error', (err) => {
+        cookieInfo.cleanup();
+        this.ytDlpProcesses.delete(id);
+        entry.isLive = false;
+        entry.state = 'interrupted';
+        entry.error = err.message || 'Ошибка загрузчика';
+        this.persistDownloads(true);
+        this.emitSnapshot();
+      });
+    } catch (cause) {
+      cookieInfo.cleanup();
+      this.ytDlpProcesses.delete(id);
+      entry.isLive = false;
+      entry.state = 'interrupted';
+      entry.error = cause instanceof Error ? cause.message : 'Ошибка загрузки';
+      this.persistDownloads(true);
+      this.emitSnapshot();
+    }
+  }
+
   minimizeWindow(): void {
     this.window?.minimize();
   }
@@ -805,7 +1259,11 @@ export class BrowserController {
       this.privateSession = session.fromPartition(`private-${crypto.randomUUID()}`, { cache: false });
       this.privateAdBlock = new SessionAdBlock(new FilterEngine());
       this.configureSession(this.privateSession, true);
-      if (this.privateProxy) this.privateProxyReady = this.applyPrivateProxy(this.privateSession, this.privateProxy);
+      if (this.privateProxy) {
+        this.privateProxyReady = this.applyPrivateProxy(this.privateSession, this.privateProxy);
+      } else {
+        void this.browsec.registerSession(this.privateSession);
+      }
     }
     return this.privateSession;
   }
@@ -832,15 +1290,83 @@ export class BrowserController {
   }
 
   private async applyPrivateProxy(target: Electron.Session, value: string): Promise<void> {
-    // No DIRECT fallback and no implicit loopback bypass for a configured proxy.
-    await target.setProxy(value ? { mode: 'fixed_servers', proxyRules: value, proxyBypassRules: '<-loopback>' } : { mode: 'direct' });
+    if (value) {
+      this.browsec.unregisterSession(target);
+      await target.setProxy({ mode: 'fixed_servers', proxyRules: value, proxyBypassRules: '<-loopback>' });
+    } else {
+      await target.setProxy({ mode: 'direct' });
+      void this.browsec.registerSession(target);
+    }
     await target.closeAllConnections();
+  }
+
+  getBrowsecSnapshot(): BrowsecState {
+    return this.browsec.getSnapshot();
+  }
+
+  getBrowsecCountries(): BrowsecCountry[] {
+    return this.browsec.getCountries();
+  }
+
+  async toggleBrowsec(enabled?: boolean): Promise<BrowsecState> {
+    return this.browsec.toggle(enabled);
+  }
+
+  async setBrowsecCountry(code: string): Promise<BrowsecState> {
+    return this.browsec.setCountry(code);
+  }
+
+  async setBrowsecWebRtcLeakProtection(enabled: boolean): Promise<BrowsecState> {
+    return this.browsec.setWebRtcLeakProtection(enabled);
+  }
+
+  async addBrowsecSmartRule(domain: string, country: string): Promise<BrowsecState> {
+    return this.browsec.addSmartRule(domain, country);
+  }
+
+  async removeBrowsecSmartRule(domain: string): Promise<BrowsecState> {
+    return this.browsec.removeSmartRule(domain);
+  }
+
+  async toggleBrowsecSmartRule(domain: string): Promise<BrowsecState> {
+    return this.browsec.toggleSmartRule(domain);
+  }
+
+  async updateBrowsec(patch: Partial<BrowsecState>): Promise<BrowsecState> {
+    if (typeof patch.enabled === 'boolean') {
+      await this.browsec.toggle(patch.enabled);
+    }
+    const country = patch.country || patch.selectedCountry;
+    if (typeof country === 'string' && country) {
+      await this.browsec.setCountry(country);
+    }
+    const webrtc = typeof patch.webrtcProtection === 'boolean'
+      ? patch.webrtcProtection
+      : (typeof patch.webrtcLeakProtection === 'boolean' ? patch.webrtcLeakProtection : undefined);
+    if (typeof webrtc === 'boolean') {
+      await this.browsec.setWebRtcLeakProtection(webrtc);
+    }
+    if (Array.isArray(patch.smartRules)) {
+      for (const rule of patch.smartRules) {
+        if (rule && rule.domain) {
+          const ruleCountry = rule.country || rule.countryCode || 'direct';
+          await this.browsec.addSmartRule(rule.domain, ruleCountry);
+          if (rule.enabled === false) {
+            await this.browsec.toggleSmartRule(rule.domain);
+          }
+        }
+      }
+    }
+    return this.browsec.getSnapshot();
   }
 
   private async endPrivateSession(): Promise<void> {
     const target = this.privateSession;
     this.privateSession = undefined;
     this.privateAdBlock = new SessionAdBlock(new FilterEngine());
+    if (target) {
+      this.browsec.unregisterSession(target);
+    }
     for (const [id, download] of this.liveDownloads) {
       if (this.downloads.find((entry) => entry.id === id)?.isPrivate) download.item.cancel();
     }
@@ -862,9 +1388,9 @@ export class BrowserController {
   private configureSession(targetSession: Electron.Session, isPrivate = false): void {
     const blocker = isPrivate ? this.privateAdBlock : this.adBlock;
     blocker.engine.setEnabled(this.stores.settings.get().adBlockEnabled !== false);
-    blocker.install(targetSession);
-    // Remove Electron/app tokens for compatibility, without fabricating a device fingerprint.
-    targetSession.setUserAgent(targetSession.getUserAgent().replace(/\s(?:Electron|monkeybuissnesbrowser|SOUL-M8TE)\/[^\s]+/gi, ''));
+    this.browsec.applyWebRtcPolicyToSession(targetSession);
+    // Identify as native Google Chrome 134 on Linux/current OS without any Electron or custom app tokens.
+    targetSession.setUserAgent(getChromeUserAgent());
     const allowedPermissions = new Set<string>();
     const permissionKey = (origin: string, permission: string) => `${origin}:${permission}`;
     const storageKey = (top: string, origin: string): string => {
@@ -920,12 +1446,69 @@ export class BrowserController {
         googleSignInCompatibility: this.stores.settings.get().googleSignInCompatibility,
       });
     };
+    targetSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+      if (blocker.engine.shouldBlock(details.url, details.resourceType)) {
+        this.emitSnapshot();
+        callback({ cancel: true });
+        return;
+      }
+      if (details.webContentsId && details.url.includes('googlevideo.com/videoplayback')) {
+        try {
+          const rawUrl = new URL(details.url);
+          rawUrl.searchParams.delete('range');
+          const cleanUrl = rawUrl.toString();
+          const itag = rawUrl.searchParams.get('itag');
+          const current = this.capturedMediaStreams.get(details.webContentsId) || {};
+          if (itag === '18' || itag === '22') {
+            current.video = cleanUrl;
+          } else if (itag === '140' || itag === '251' || itag === '250' || itag === '249') {
+            current.audio = cleanUrl;
+          } else if (!current.video && itag && ['137', '136', '135', '134'].includes(itag)) {
+            current.video = cleanUrl;
+          }
+          this.capturedMediaStreams.set(details.webContentsId, current);
+        } catch {}
+      } else if (details.webContentsId && (
+        details.url.includes('vkuseraudio.net') ||
+        details.url.includes('audio_api_unavailable') ||
+        details.url.includes('.mp3') ||
+        details.url.includes('vkuservideo.net') ||
+        (details.resourceType === 'media' && !details.url.includes('googlevideo.com'))
+      )) {
+        try {
+          const current = this.capturedMediaStreams.get(details.webContentsId) || {};
+          if (details.url.includes('vkuservideo.net') || details.url.includes('.mp4')) {
+            current.video = details.url;
+          } else {
+            current.audio = details.url;
+          }
+          this.capturedMediaStreams.set(details.webContentsId, current);
+          const tab = [...this.tabs.values()].find((entry) => entry.webContentsId === details.webContentsId);
+          if (tab && !tab.hasDownloadableMedia) {
+            tab.hasDownloadableMedia = true;
+            this.emitSnapshot();
+          }
+        } catch {}
+      }
+      callback({});
+    });
     targetSession.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
       const headers = { ...details.requestHeaders };
       if (isPrivate) { headers.DNT = '1'; headers['Sec-GPC'] = '1'; }
       if (stripCookies(details)) {
         for (const key of Object.keys(headers)) if (key.toLowerCase() === 'cookie') delete headers[key];
       }
+      for (const key of Object.keys(headers)) {
+        const lower = key.toLowerCase();
+        if (['user-agent', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform'].includes(lower)) {
+          delete headers[key];
+        }
+      }
+      const clientHints = getClientHintHeaders();
+      headers['User-Agent'] = clientHints['User-Agent'];
+      headers['Sec-CH-UA'] = clientHints['Sec-CH-UA'];
+      headers['Sec-CH-UA-Mobile'] = clientHints['Sec-CH-UA-Mobile'];
+      headers['Sec-CH-UA-Platform'] = clientHints['Sec-CH-UA-Platform'];
       callback({ requestHeaders: headers });
     });
     targetSession.webRequest.onHeadersReceived({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
@@ -952,7 +1535,7 @@ export class BrowserController {
       ...popupOptions?.webPreferences,
       session: tabSession, preload: pagePreloadPath, nodeIntegration: false,
       contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false,
-      nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false, webviewTag: false,
+      nodeIntegrationInSubFrames: true, nodeIntegrationInWorker: false, webviewTag: false,
       backgroundThrottling: true, spellcheck: true,
     } });
     tab.view = view;
@@ -963,6 +1546,7 @@ export class BrowserController {
     if (tab.zoomFactor) view.webContents.setZoomFactor(tab.zoomFactor);
     this.window.contentView.addChildView(view);
     if (tab.isPrivate) view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
+    this.browsec.applyWebRtcPolicyToWebContents(view.webContents);
     this.installTabHandlers(tab);
     if (tab.id === this.activeTabId) this.applyBounds(tab);
     else view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
@@ -981,7 +1565,7 @@ export class BrowserController {
     const tab: TabRecord = {
       id, url, title: url === 'about:blank' ? 'Пустая страница' : 'Новая страница',
       isLoading: url !== 'about:blank', ...emptyNavigation(url),
-      isMuted: false, isPinned: false, isPrivate: opener.isPrivate, isInternal: false,
+      isMuted: false, isAudible: false, isPinned: false, isPrivate: opener.isPrivate, isInternal: false,
       lifecycle: active ? 'active' : 'background', workspaceId: opener.workspaceId,
     };
     this.tabs.set(id, tab);
@@ -998,6 +1582,130 @@ export class BrowserController {
     if (active) this.activateTab(id);
     this.emitSnapshot();
     return contents;
+  }
+
+  private createNativePopupWindow(
+    opener: TabRecord,
+    url: string,
+    options: Electron.BrowserWindowConstructorOptions,
+    features: ParsedWindowFeatures,
+  ): Electron.WebContents {
+    if (!this.window || this.disposed) throw new Error('Окно браузера недоступно');
+
+    const parentBounds = this.window.getBounds();
+    const bounds = computePopupWindowBounds(parentBounds, features);
+
+    const appIconPath = path.join(app.getAppPath(), 'assets/icons/png/app-icon-512.png');
+    const appIcon = nativeImage.createFromPath(appIconPath);
+
+    const popupWindow = new BrowserWindow({
+      ...options,
+      parent: this.window,
+      modal: false,
+      width: bounds.width,
+      height: bounds.height,
+      x: bounds.x,
+      y: bounds.y,
+      minWidth: 360,
+      minHeight: 400,
+      title: 'Авторизация',
+      autoHideMenuBar: true,
+      backgroundColor: '#1e1f29',
+      ...(appIcon && !appIcon.isEmpty() ? { icon: appIcon } : {}),
+      webPreferences: {
+        ...options.webPreferences,
+        session: opener.isPrivate ? this.ensurePrivateSession() : this.browserSession,
+        preload: pagePreloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        webviewTag: false,
+        spellcheck: true,
+        backgroundThrottling: false,
+      },
+    });
+
+    popupWindow.setMenu(null);
+    this.popupWindows.add(popupWindow);
+    this.popupToTab.set(popupWindow.id, opener.id);
+
+    const popupContents = popupWindow.webContents;
+    this.installShortcuts(popupContents);
+
+    if (opener.isPrivate) {
+      popupContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
+    }
+    this.browsec.applyWebRtcPolicyToWebContents(popupContents);
+
+    popupWindow.on('closed', () => {
+      this.popupWindows.delete(popupWindow);
+      this.popupToTab.delete(popupWindow.id);
+    });
+
+    popupContents.on('page-title-updated', (_event, title) => {
+      if (title && !popupWindow.isDestroyed()) {
+        popupWindow.setTitle(title);
+      }
+    });
+
+    popupContents.on('will-navigate', (event, targetUrl) => {
+      if (!isSafeWebUrl(targetUrl)) event.preventDefault();
+    });
+
+    popupContents.on('will-redirect', (event, targetUrl) => {
+      if (!isSafeWebUrl(targetUrl)) event.preventDefault();
+    });
+
+    popupContents.on('context-menu', (_event, params) => this.showContextMenu(popupContents, params));
+
+    popupContents.setWindowOpenHandler(({ url: nestedUrl, disposition: nestedDisp, features: nestedFeat }) => {
+      if (this.disposed || !this.window || this.window.isDestroyed()) return { action: 'deny' };
+      const safeNestedUrl = nestedUrl || 'about:blank';
+      if (safeNestedUrl !== 'about:blank' && !isSafeWebUrl(safeNestedUrl)) {
+        if (this.isAllowedExternalUrl(nestedUrl)) void shell.openExternal(nestedUrl).catch(() => undefined);
+        return { action: 'deny' };
+      }
+      const isNestedPopup = isPopupWindowRequest({ url: safeNestedUrl, disposition: nestedDisp, features: nestedFeat });
+      if (isNestedPopup) {
+        return {
+          action: 'allow',
+          outlivesOpener: true,
+          overrideBrowserWindowOptions: {
+            parent: popupWindow,
+            modal: false,
+            autoHideMenuBar: true,
+            title: 'Авторизация',
+            webPreferences: {
+              session: popupContents.session,
+              preload: pagePreloadPath,
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: true,
+              webSecurity: true,
+              allowRunningInsecureContent: false,
+              webviewTag: false,
+              spellcheck: true,
+              backgroundThrottling: false,
+            },
+          },
+          createWindow: (nestedOpts) => this.createNativePopupWindow(opener, safeNestedUrl, nestedOpts, parseWindowFeatures(nestedFeat)),
+        };
+      }
+      void this.createTab({ url: safeNestedUrl, isPrivate: opener.isPrivate, active: true });
+      return { action: 'deny' };
+    });
+
+    const nativePopupContents = (options as { webContents?: Electron.WebContents }).webContents;
+    if (!nativePopupContents && url && url !== 'about:blank') {
+      void popupContents.loadURL(url).catch(() => undefined);
+    }
+
+    popupWindow.show();
+    popupWindow.focus();
+
+    return popupContents;
   }
 
   private async loadUrl(contents: Electron.WebContents, url: string): Promise<void> {
@@ -1023,7 +1731,7 @@ export class BrowserController {
     const contents = tab.view?.webContents;
     if (!contents) return;
     this.installShortcuts(contents);
-    contents.setWindowOpenHandler(({ url, disposition }) => {
+    contents.setWindowOpenHandler(({ url, disposition, features }) => {
       if (this.disposed || !this.window || this.window.isDestroyed()) return { action: 'deny' };
       // A real about:blank popup is required by common login flows that open a
       // WindowProxy synchronously and assign its HTTPS location afterwards.
@@ -1032,14 +1740,56 @@ export class BrowserController {
         if (this.isAllowedExternalUrl(url)) void shell.openExternal(url).catch(() => undefined);
         return { action: 'deny' };
       }
+
+      const isPopup = isPopupWindowRequest({ url: popupUrl, disposition, features });
+
+      if (isPopup) {
+        const parsedFeatures = parseWindowFeatures(features);
+        return {
+          action: 'allow',
+          outlivesOpener: true,
+          overrideBrowserWindowOptions: {
+            parent: this.window,
+            modal: false,
+            autoHideMenuBar: true,
+            title: 'Авторизация',
+            backgroundColor: '#1e1f29',
+            webPreferences: {
+              session: contents.session,
+              preload: pagePreloadPath,
+              nodeIntegration: false,
+              nodeIntegrationInSubFrames: true,
+              nodeIntegrationInWorker: false,
+              contextIsolation: true,
+              sandbox: true,
+              webSecurity: true,
+              allowRunningInsecureContent: false,
+              webviewTag: false,
+              spellcheck: true,
+              backgroundThrottling: false,
+            },
+          },
+          createWindow: (options) => this.createNativePopupWindow(tab, popupUrl, options, parsedFeatures),
+        };
+      }
+
       return {
-        action: 'allow', outlivesOpener: true,
-        overrideBrowserWindowOptions: { webPreferences: {
-          session: contents.session, preload: pagePreloadPath, nodeIntegration: false,
-          nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false,
-          contextIsolation: true, sandbox: true, webSecurity: true,
-          allowRunningInsecureContent: false, webviewTag: false,
-        } },
+        action: 'allow',
+        outlivesOpener: true,
+        overrideBrowserWindowOptions: {
+          webPreferences: {
+            session: contents.session,
+            preload: pagePreloadPath,
+            nodeIntegration: false,
+            nodeIntegrationInSubFrames: true,
+            nodeIntegrationInWorker: false,
+            contextIsolation: true,
+            sandbox: true,
+            webSecurity: true,
+            allowRunningInsecureContent: false,
+            webviewTag: false,
+          },
+        },
         createWindow: (options) => this.createPopupTab(tab, popupUrl, disposition !== 'background-tab', options),
       };
     });
@@ -1084,8 +1834,16 @@ export class BrowserController {
       this.eventListener?.({ type: 'navigation-error', tab: this.toSnapshot(tab), message: `${errorDescription}: ${validatedURL}` });
       this.emitSnapshot();
     });
-    contents.on('media-started-playing', () => this.memoryManager.updateTab(tab.id, { audible: true }));
-    contents.on('media-paused', () => this.memoryManager.updateTab(tab.id, { audible: contents.isCurrentlyAudible() }));
+    contents.on('media-started-playing', () => {
+      tab.isAudible = true;
+      this.memoryManager.updateTab(tab.id, { audible: true });
+      this.emitSnapshot();
+    });
+    contents.on('media-paused', () => {
+      tab.isAudible = contents.isCurrentlyAudible();
+      this.memoryManager.updateTab(tab.id, { audible: tab.isAudible });
+      this.emitSnapshot();
+    });
     contents.on('enter-html-full-screen', () => {
       if (tab.id !== this.activeTabId || !this.window) return;
       this.fullscreenBeforeVideo = this.window.isFullScreen();
@@ -1109,6 +1867,9 @@ export class BrowserController {
         tab.lifecycle = 'crashed';
         this.emitSnapshot();
       }
+    });
+    (contents as unknown as NodeJS.EventEmitter).on('window-close', () => {
+      void this.closeTab(tab.id);
     });
   }
 
@@ -1306,15 +2067,19 @@ export class BrowserController {
     const linkedMediaKind = linkedMediaUrl ? mediaKindForUrl(linkedMediaUrl) : undefined;
     const template: Electron.MenuItemConstructorOptions[] = [];
 
+    const currentUrl = contents.getURL();
     if (params.mediaType === 'image') {
+      const finalImageUrl = mediaUrl && mediaUrl.includes('pinimg.com')
+        ? mediaUrl.replace(/\/(?:236|474|736)x\//, '/originals/')
+        : mediaUrl;
       template.push({
-        label: mediaUrl ? 'Сохранить изображение' : 'Изображение недоступно для сохранения',
-        enabled: Boolean(mediaUrl),
-        click: () => { if (mediaUrl) this.downloadMedia(contents, mediaUrl); },
+        label: finalImageUrl ? (mediaUrl?.includes('pinimg.com') ? 'Скачать фото Pinterest (в максимальном качестве)' : 'Сохранить изображение') : 'Изображение недоступно для сохранения',
+        enabled: Boolean(finalImageUrl),
+        click: () => { if (finalImageUrl) this.downloadMedia(contents, finalImageUrl); },
       });
     } else if (params.mediaType === 'video') {
       template.push({
-        label: mediaUrl ? 'Сохранить видео' : 'Видео не отдает прямой файл',
+        label: mediaUrl ? 'Сохранить видео' : 'Видеопоток защищён (используйте кнопку скачивания)',
         enabled: Boolean(mediaUrl),
         click: () => { if (mediaUrl) this.downloadMedia(contents, mediaUrl); },
       });
@@ -1331,6 +2096,100 @@ export class BrowserController {
       });
     }
 
+    // Smart native media downloaders for YouTube, VK, Pinterest (NO third-party sites)
+    if (currentUrl.includes('youtube.com') || currentUrl.includes('youtu.be')) {
+      const ytMatch = currentUrl.match(/(?:v=|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+      const videoId = ytMatch ? ytMatch[1] : null;
+      if (videoId) {
+        template.push({
+          label: 'Скачать видео YouTube (MP4)',
+          click: () => {
+            this.downloadMediaUrl(currentUrl, undefined, false);
+          },
+        });
+        template.push({
+          label: 'Скачать аудио YouTube (MP3/M4A)',
+          click: () => {
+            this.downloadMediaUrl(currentUrl, undefined, true);
+          },
+        });
+      }
+    } else if (currentUrl.includes('vk.com/video') || currentUrl.includes('vkvideo.ru') || currentUrl.includes('vk.com/clip') || currentUrl.includes('vk.com')) {
+      template.push({
+        label: 'Скачать видео VK (HD)',
+        click: () => {
+          this.downloadMediaUrl(currentUrl, undefined, false);
+        },
+      });
+      template.push({
+        label: 'Скачать фото VK',
+        click: () => {
+          void contents.executeJavaScript(`
+            (function() {
+              try {
+                const pv = document.getElementById('pv_photo');
+                if (pv) {
+                  const img = pv.querySelector('img');
+                  if (img && img.src) return img.src;
+                }
+              } catch {}
+              return null;
+            })()
+          `).then((vkPhotoUrl: unknown) => {
+            if (typeof vkPhotoUrl === 'string' && isSafeWebUrl(vkPhotoUrl)) {
+              this.downloadMedia(contents, vkPhotoUrl);
+            }
+          }).catch(() => undefined);
+        },
+      });
+    } else if (currentUrl.includes('pinterest.com') || (params.srcURL && params.srcURL.includes('pinimg.com'))) {
+      template.push({
+        label: 'Скачать фото Pinterest (в максимальном качестве)',
+        click: () => {
+          void contents.executeJavaScript(`
+            (function(x, y) {
+              try {
+                const el = document.elementFromPoint(x, y);
+                if (!el) return null;
+                const img = el.querySelector('img[src*="pinimg.com"]') || el.closest('[data-test-id="pin"]')?.querySelector('img') || (el.tagName === 'IMG' && el.src.includes('pinimg.com') ? el : null);
+                if (img && img.src) {
+                  return img.src.replace(/\\/(?:236|474|736)x\\//, '/originals/');
+                }
+              } catch {}
+              return null;
+            })(${params.x}, ${params.y})
+          `).then((pinPhotoUrl: unknown) => {
+            if (typeof pinPhotoUrl === 'string' && isSafeWebUrl(pinPhotoUrl)) {
+              this.downloadMedia(contents, pinPhotoUrl);
+            } else if (params.srcURL && isSafeWebUrl(params.srcURL)) {
+              const orig = params.srcURL.replace(/\/(?:236|474|736)x\//, '/originals/');
+              this.downloadMedia(contents, orig);
+            }
+          }).catch(() => undefined);
+        },
+      });
+      template.push({
+        label: 'Скачать видео Pinterest',
+        click: () => {
+          void contents.executeJavaScript(`
+            (function(x, y) {
+              try {
+                const el = document.elementFromPoint(x, y);
+                if (!el) return null;
+                const vid = el.querySelector('video') || el.closest('[data-test-id="pin"]')?.querySelector('video') || (el.tagName === 'VIDEO' ? el : null);
+                if (vid && vid.src && vid.src.startsWith('http')) return vid.src;
+              } catch {}
+              return null;
+            })(${params.x}, ${params.y})
+          `).then((pinVideoUrl: unknown) => {
+            if (typeof pinVideoUrl === 'string' && isSafeWebUrl(pinVideoUrl)) {
+              this.downloadMedia(contents, pinVideoUrl);
+            }
+          }).catch(() => undefined);
+        },
+      });
+    }
+
     if (template.length > 0) template.push({ type: 'separator' });
     if (params.isEditable) {
       template.push({ label: 'Вырезать', click: () => contents.cut() });
@@ -1339,6 +2198,21 @@ export class BrowserController {
       template.push({ type: 'separator' });
     } else if (params.selectionText) {
       template.push({ label: 'Копировать выделение', click: () => contents.copy() });
+      const query = params.selectionText.trim();
+      if (query) {
+        const querySnippet = query.length > 25 ? `${query.slice(0, 25)}…` : query;
+        template.push({
+          label: `Найти «${querySnippet}» в Google`,
+          click: () => {
+            const isPriv = [...this.tabs.values()].find((tab) => tab.webContentsId === contents.id)?.isPrivate ?? false;
+            void this.createTab({
+              url: `https://www.google.com/search?q=${encodeURIComponent(query)}`,
+              isPrivate: isPriv,
+              active: true,
+            });
+          },
+        });
+      }
       template.push({ type: 'separator' });
     }
     template.push({ label: 'Назад', enabled: contents.navigationHistory.canGoBack(), click: () => contents.navigationHistory.goBack() });
@@ -1352,6 +2226,25 @@ export class BrowserController {
       if (target) void this.copyText(target);
     } });
     if (mediaUrl) template.push({ label: 'Копировать адрес медиа', click: () => clipboard.writeText(mediaUrl) });
+
+    template.push({ type: 'separator' });
+    template.push({
+      label: 'Печать…',
+      accelerator: 'CmdOrCtrl+P',
+      click: () => contents.print(),
+    });
+    template.push({ type: 'separator' });
+    template.push({
+      label: 'Просмотреть код',
+      accelerator: 'CmdOrCtrl+Shift+I',
+      click: () => {
+        if (contents.isDevToolsOpened()) {
+          contents.closeDevTools();
+        } else {
+          contents.inspectElement(params.x, params.y);
+        }
+      },
+    });
 
     Menu.buildFromTemplate(template).popup({ window: this.window });
   }
@@ -1376,8 +2269,124 @@ export class BrowserController {
   }
 
   private toSnapshot(tab: TabRecord): TabSnapshot {
-    const { view: _view, webContentsId: _id, ...snapshot } = tab;
-    return snapshot;
+    const { view: _view, webContentsId, ...snapshot } = tab;
+    const stream = webContentsId ? this.capturedMediaStreams.get(webContentsId) : undefined;
+    const url = tab.url || '';
+    const isVideoSite = Boolean(
+      url && (
+        url.includes('youtube.com/watch') ||
+        url.includes('youtube.com/shorts') ||
+        url.includes('youtu.be/') ||
+        url.includes('vk.com/video') ||
+        url.includes('vkvideo.ru') ||
+        url.includes('vk.com/clip') ||
+        (url.includes('vk.com') && url.includes('z=video')) ||
+        (url.includes('vk.com') && url.includes('z=clip')) ||
+        url.includes('rutube.ru/video') ||
+        (url.includes('pinterest.') && url.includes('/pin/'))
+      )
+    );
+    const canDownloadMedia = Boolean(tab.hasDownloadableMedia || isVideoSite || Boolean(stream?.video) || Boolean(stream?.audio));
+    return {
+      ...snapshot,
+      canDownloadMedia,
+    };
+  }
+
+  markTabHasMedia(webContentsId: number, hasMedia: boolean): void {
+    const tab = [...this.tabs.values()].find((entry) => entry.webContentsId === webContentsId);
+    if (tab && tab.hasDownloadableMedia !== hasMedia) {
+      tab.hasDownloadableMedia = hasMedia;
+      this.emitSnapshot();
+    }
+  }
+
+  registerCapturedAudio(webContentsId: number, url: string, _title?: string, _artist?: string, filename?: string): void {
+    const current = this.capturedMediaStreams.get(webContentsId) || {};
+    current.audio = url;
+    this.capturedMediaStreams.set(webContentsId, current);
+    const tab = [...this.tabs.values()].find((entry) => entry.webContentsId === webContentsId);
+    if (tab) {
+      tab.hasDownloadableMedia = true;
+      if (filename) tab.capturedAudioFilename = filename;
+      this.emitSnapshot();
+    }
+  }
+
+  addGoogleAccount(email: string, name?: string): GoogleAccount {
+    const data = this.stores.googleAccounts.get();
+    const existing = data.accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
+    if (existing) {
+      existing.isActive = true;
+      if (name) existing.name = name;
+      data.activeId = existing.id;
+      data.accounts.forEach((a) => { if (a.id !== existing.id) a.isActive = false; });
+      this.stores.googleAccounts.set(data);
+      this.emitSnapshot();
+      return existing;
+    }
+    const newAccount: GoogleAccount = {
+      id: crypto.randomUUID(),
+      email,
+      name: name || email.split('@')[0],
+      isActive: true,
+      addedAt: Date.now(),
+    };
+    data.accounts.forEach((a) => { a.isActive = false; });
+    data.accounts.push(newAccount);
+    data.activeId = newAccount.id;
+    this.stores.googleAccounts.set(data);
+    this.emitSnapshot();
+    return newAccount;
+  }
+
+  switchGoogleAccount(accountId: string): void {
+    const data = this.stores.googleAccounts.get();
+    const acc = data.accounts.find((a) => a.id === accountId);
+    if (!acc) return;
+    data.accounts.forEach((a) => { a.isActive = a.id === accountId; });
+    data.activeId = accountId;
+    this.stores.googleAccounts.set(data);
+    this.emitSnapshot();
+  }
+
+  removeGoogleAccount(accountId: string): void {
+    const data = this.stores.googleAccounts.get();
+    data.accounts = data.accounts.filter((a) => a.id !== accountId);
+    if (data.activeId === accountId) {
+      data.activeId = data.accounts[0]?.id;
+      if (data.accounts[0]) data.accounts[0].isActive = true;
+    }
+    this.stores.googleAccounts.set(data);
+    this.emitSnapshot();
+  }
+
+  registerGoogleAccount(email: string, name?: string, avatar?: string): void {
+    if (!email || !email.includes('@')) return;
+    const data = this.stores.googleAccounts.get();
+    const existing = data.accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
+    if (existing) {
+      let changed = false;
+      if (name && existing.name !== name) { existing.name = name; changed = true; }
+      if (avatar && existing.avatar !== avatar) { existing.avatar = avatar; changed = true; }
+      if (changed) {
+        this.stores.googleAccounts.set(data);
+        this.emitSnapshot();
+      }
+      return;
+    }
+    const newAcc: GoogleAccount = {
+      id: crypto.randomUUID(),
+      email,
+      name: name || email.split('@')[0],
+      avatar,
+      isActive: data.accounts.length === 0,
+      addedAt: Date.now(),
+    };
+    data.accounts.push(newAcc);
+    if (!data.activeId) data.activeId = newAcc.id;
+    this.stores.googleAccounts.set(data);
+    this.emitSnapshot();
   }
 
   private installShortcuts(contents: Electron.WebContents): void {
@@ -1434,7 +2443,19 @@ export class BrowserController {
       });
       else if (input.alt && key === 'arrowleft' && tab) run(() => { void this.goBack(tab.id); });
       else if (input.alt && key === 'arrowright' && tab) run(() => { void this.goForward(tab.id); });
-      else if (key === 'f11') run(() => { if (this.htmlFullscreenTabId) this.exitPageFullscreen(); else if (this.window) this.window.setFullScreen(!this.window.isFullScreen()); });
+      else if (key === 'f11' || key === 'f12' || (modifier && input.shift && key === 'i')) run(() => {
+        const active = this.tabs.get(this.activeTabId);
+        const targetContents = (active?.view && !active.view.webContents.isDestroyed())
+          ? active.view.webContents
+          : (this.shellView && !this.shellView.webContents.isDestroyed())
+            ? this.shellView.webContents
+            : contents;
+        if (targetContents.isDevToolsOpened()) {
+          targetContents.closeDevTools();
+        } else {
+          targetContents.openDevTools({ mode: 'detach' });
+        }
+      });
       // Shell dialogs/find own Escape even while the underlying site is loading.
       else if (key === 'escape' && tab?.isLoading && contents.id === tab.webContentsId) run(() => { void this.stop(tab.id); });
     });
@@ -1467,6 +2488,11 @@ export class BrowserController {
     if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
     if (this.sessionPersistTimer) clearTimeout(this.sessionPersistTimer);
     if (this.downloadPersistTimer) clearTimeout(this.downloadPersistTimer);
+    for (const popup of this.popupWindows) {
+      if (!popup.isDestroyed()) popup.destroy();
+    }
+    this.popupWindows.clear();
+    this.popupToTab.clear();
     for (const [target, handler] of this.sessionDownloadHandlers) target.removeListener('will-download', handler);
     this.sessionDownloadHandlers.clear();
     for (const { item } of this.liveDownloads.values()) item.cancel();

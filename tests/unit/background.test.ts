@@ -28,7 +28,7 @@ describe('local new-tab background choices', () => {
     expect(new BrowserStores(directory).settings.get().newTabBackground).toBe('portrait');
   });
 
-  it('preserves Detroit appearance, accent and dimming across restart', () => {
+  it('preserves Detroit and Cyberpunk appearance, accent and dimming across restart', () => {
     const directory = root();
     const stores = new BrowserStores(directory);
     stores.settings.set({
@@ -39,6 +39,16 @@ describe('local new-tab background choices', () => {
     });
     expect(new BrowserStores(directory).settings.get()).toMatchObject({
       appearancePreset: 'detroit', accentColor: 'violet', wallpaperDim: 35,
+    });
+
+    stores.settings.set({
+      ...stores.settings.get(),
+      appearancePreset: 'cyberpink',
+      accentColor: 'pink',
+      newTabBackground: 'cyberpink',
+    });
+    expect(new BrowserStores(directory).settings.get()).toMatchObject({
+      appearancePreset: 'cyberpink', accentColor: 'pink', newTabBackground: 'cyberpink',
     });
   });
   it('normalizes malformed persisted appearance settings', () => {

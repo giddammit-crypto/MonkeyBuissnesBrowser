@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
@@ -38,6 +38,10 @@ import {
   Star,
   Trash2,
   Upload,
+  User,
+  LogIn,
+  LogOut,
+  VenetianMask,
   Volume2,
   VolumeX,
   X,
@@ -45,6 +49,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import type {
+  BrowsecCountry,
   BrowserSnapshot,
   DownloadEntry,
   ImportDataKind,
@@ -55,16 +60,26 @@ import type {
 } from "../shared/types";
 import { getGoogleAuthNotice, getSiteKey } from "../shared/sitePolicy";
 import { normalizeNewTabBackground } from "../shared/background";
+import { getOmniboxSuggestions } from "../shared/omniboxSuggestions";
 import logoLight from "./assets/soul/logo-light.png";
 import logoDark from "./assets/soul/logo-dark.png";
 import portrait from "./assets/soul/portrait.webp";
 import chloeWallpaper from "./assets/soul/chloe-wallpaper.webp";
+import cyberpinkWallpaper from "./assets/soul/cyberpink-wallpaper.webp";
+import cyberpinkFujiWallpaper from "./assets/soul/cyberpink-fuji-wallpaper.webp";
+import cyberButterflyWallpaper from "./assets/soul/cyber-butterfly-wallpaper.jpg";
+import tokyoNightWallpaper from "./assets/soul/tokyo-night-wallpaper.jpg";
+import celestialPalaceWallpaper from "./assets/soul/celestial-palace-wallpaper.jpg";
+import chloeIcon from "./assets/soul/chloe-icon-512.png";
 import symbol from "./assets/soul/symbol.svg";
 import "./styles.css";
 import "./newtab-wallpaper.css";
 import { userFacingError } from "./userFacingError";
+import BrowsecModal from "./BrowsecModal";
+import GoogleAccountPopover from "./GoogleAccountPopover";
+import TabSearch from "./TabSearch";
+import SiteFavicon from "./SiteFavicon";
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
-const TabSearch = React.lazy(()=>import("./TabSearch"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
 type Panel = "home" | "bookmarks" | "history" | "downloads" | "settings";
@@ -135,8 +150,8 @@ const quickLinks = [
 function Brand({ large = false }: { large?: boolean }): React.JSX.Element {
   return (
     <span className={`brand ${large ? "brand-large" : ""}`}>
-      <img className="brand-on-light" src={logoLight} alt="SOUL-M8TE Browser" />
-      <img className="brand-on-dark" src={logoDark} alt="SOUL-M8TE Browser" />
+      <img className="brand-on-light" src={logoLight} alt="soulm8te Browser" />
+      <img className="brand-on-dark" src={logoDark} alt="soulm8te Browser" />
     </span>
   );
 }
@@ -145,7 +160,8 @@ function App(): React.JSX.Element {
   const [panel, setPanel] = useState<Panel>("home");
   const [address, setAddress] = useState("");
   const [editingAddress, setEditingAddress] = useState(false);
-  const [popover, setPopover] = useState<"menu" | "protection" | null>(null);
+  const [popover, setPopover] = useState<"menu" | "protection" | "browsec" | "google-account" | null>(null);
+  const [browsecCountries, setBrowsecCountries] = useState<BrowsecCountry[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [authNoticeDismissed, setAuthNoticeDismissed] = useState(false);
@@ -161,10 +177,49 @@ function App(): React.JSX.Element {
   const currentTab = snapshot?.tabs.find(
     (tab) => tab.id === snapshot.activeTabId,
   );
+  const canDownloadVideo = Boolean(currentTab?.canDownloadMedia);
   const authNotice = getGoogleAuthNotice(currentTab?.url ?? "");
   useEffect(() => setAuthNoticeDismissed(false), [currentTab?.id, currentTab?.url]);
   const currentSite = getSiteKey(currentTab?.url ?? "");
   const sidebarCollapsed = snapshot?.settings.sidebarCollapsed ?? false;
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
+  const omniboxSuggestions = useMemo(() => {
+    if (!editingAddress || !address.trim()) return [];
+    return getOmniboxSuggestions(address, {
+      history: snapshot?.history,
+      bookmarks: snapshot?.bookmarks,
+      searchEngineUrl: snapshot?.settings?.searchEngine,
+      maxResults: 7,
+    });
+  }, [editingAddress, address, snapshot?.history, snapshot?.bookmarks, snapshot?.settings?.searchEngine]);
+
+  useEffect(() => {
+    void window.browserApi.getBrowsecCountries().then(setBrowsecCountries).catch(console.error);
+    const unsub = window.browserApi.onBrowsecSnapshot?.((browsecState) => {
+      setSnapshot((prev) => (prev ? { ...prev, browsec: browsecState } : prev));
+    });
+    return unsub;
+  }, []);
+
+  const currentBrowsecCountry = useMemo(() => {
+    const code = snapshot?.browsec?.country || snapshot?.browsec?.selectedCountry || "nl";
+    return browsecCountries.find((c) => c.code === code) || browsecCountries[0];
+  }, [browsecCountries, snapshot?.browsec]);
+
+  const activeDownloads = useMemo(() => {
+    return snapshot?.downloads.filter(
+      (item) => item.isLive || item.state === "progressing" || item.state === "queued",
+    ) ?? [];
+  }, [snapshot?.downloads]);
+  const isDownloading = activeDownloads.length > 0;
+  const downloadProgress = useMemo(() => {
+    if (!isDownloading) return 0;
+    const itemsWithTotal = activeDownloads.filter((d) => d.totalBytes > 0);
+    if (itemsWithTotal.length === 0) return 0;
+    const total = itemsWithTotal.reduce((sum, d) => sum + d.totalBytes, 0);
+    const received = itemsWithTotal.reduce((sum, d) => sum + d.receivedBytes, 0);
+    return Math.min(100, Math.round((received / total) * 100));
+  }, [activeDownloads, isDownloading]);
   const showError = useCallback(
     (error: unknown) =>
       setToast({
@@ -279,10 +334,35 @@ function App(): React.JSX.Element {
     return () => media.removeEventListener("change", apply);
   }, [snapshot?.settings.theme]);
   useEffect(() => {
-    document.documentElement.dataset.appearance = snapshot?.settings.appearancePreset ?? "classic";
-    document.documentElement.dataset.accent = snapshot?.settings.accentColor ?? "blue";
+    const bg = snapshot?.settings.newTabBackground ?? "portrait";
+    let appearance = snapshot?.settings.appearancePreset ?? "classic";
+    if (bg === "cyberpink") {
+      appearance = "cyberpink";
+    } else if (bg === "cyberpink-fuji") {
+      appearance = "cyberpink-fuji";
+    } else if (bg === "cyber-butterfly") {
+      appearance = "cyber-butterfly";
+    } else if (bg === "tokyo-night") {
+      appearance = "tokyo-night";
+    } else if (bg === "celestial-palace") {
+      appearance = "celestial-palace";
+    } else if (bg === "portrait" && appearance === "classic") {
+      appearance = "detroit";
+    }
+
+    document.documentElement.dataset.appearance = appearance;
+    document.documentElement.dataset.wallpaper = bg;
+    document.documentElement.dataset.accent = snapshot?.settings.accentColor ?? (
+      bg === "cyberpink" || appearance === "cyberpink"
+        ? "pink"
+        : bg === "cyberpink-fuji" || appearance === "cyberpink-fuji" || bg === "cyber-butterfly" || appearance === "cyber-butterfly"
+          ? "violet"
+          : bg === "celestial-palace" || appearance === "celestial-palace"
+            ? "teal"
+            : "blue"
+    );
     document.documentElement.style.setProperty("--wallpaper-dim", String((snapshot?.settings.wallpaperDim ?? 0) / 100));
-  }, [snapshot?.settings.appearancePreset, snapshot?.settings.accentColor, snapshot?.settings.wallpaperDim]);
+  }, [snapshot?.settings.appearancePreset, snapshot?.settings.newTabBackground, snapshot?.settings.accentColor, snapshot?.settings.wallpaperDim]);
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -290,8 +370,6 @@ function App(): React.JSX.Element {
       const b = viewport.getBoundingClientRect();
       const hidden =
         panel !== "home" ||
-        Boolean(popover) ||
-        tabSearchOpen ||
         currentTab?.lifecycle === "crashed";
       run(
         window.browserApi.setChromeBounds(
@@ -317,7 +395,6 @@ function App(): React.JSX.Element {
   }, [
     panel,
     popover,
-    tabSearchOpen,
     toast,
     sidebarCollapsed,
     findOpen,
@@ -326,34 +403,17 @@ function App(): React.JSX.Element {
     run,
   ]);
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || tabSearchOpen) return;
-      setPopover(null);
-      setToast(null);
-      if (findOpen && currentTab) {
-        setFindOpen(false);
-        run(window.browserApi.stopFindInPage(currentTab.id));
-      } else if (panel !== "home") setPanel("home");
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [currentTab?.id, findOpen, panel, tabSearchOpen, run]);
-
-  if (!snapshot)
-    return (
-      <div className="boot-screen">
-        <img src={symbol} alt="" />
-        <span>Запуск SOUL-M8TE…</span>
-      </div>
-    );
+    const isPopoverOpen = Boolean(popover) || tabSearchOpen;
+    void window.browserApi.setPopoverOpen(isPopoverOpen);
+  }, [popover, tabSearchOpen]);
   const isPrivate = currentTab?.isPrivate ?? false;
-  const bookmarked = snapshot.bookmarks.some(
+  const bookmarked = snapshot?.bookmarks.some(
     (bookmark) => bookmark.url === currentTab?.url,
-  );
-  const createTab = (privateMode = isPrivate) => {
+  ) ?? false;
+  const createTab = (privateMode = isPrivate, url?: string) => {
     setPanel("home");
     setPopover(null);
-    run(window.browserApi.createTab({ isPrivate: privateMode }));
+    run(window.browserApi.createTab({ isPrivate: privateMode, url }));
   };
   const navigate = (value: string) => {
     if (!currentTab) return;
@@ -374,14 +434,100 @@ function App(): React.JSX.Element {
       run(window.browserApi.findInPage(currentTab.id, findText, forward));
   };
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const modifier = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+
+      if (event.key === "Escape") {
+        if (tabSearchOpen) return;
+        setPopover(null);
+        setToast(null);
+        if (findOpen && currentTab) {
+          setFindOpen(false);
+          run(window.browserApi.stopFindInPage(currentTab.id));
+        } else if (panel !== "home") setPanel("home");
+        return;
+      }
+
+      const activeElement = document.activeElement;
+      const isInputFocused =
+        activeElement instanceof HTMLInputElement ||
+        activeElement instanceof HTMLTextAreaElement;
+
+      // Google Chrome keyboard shortcuts
+      if (modifier && event.shiftKey && (key === "n" || key === "p")) {
+        event.preventDefault();
+        createTab(true);
+      } else if (modifier && event.shiftKey && key === "t") {
+        event.preventDefault();
+        setPopover(null);
+        run(window.browserApi.reopenClosedTab());
+      } else if (modifier && key === "t") {
+        event.preventDefault();
+        createTab();
+      } else if (modifier && key === "w") {
+        event.preventDefault();
+        if (currentTab) run(window.browserApi.closeTab(currentTab.id));
+      } else if (modifier && key === "h") {
+        event.preventDefault();
+        openPanel("history");
+      } else if (modifier && key === "j") {
+        event.preventDefault();
+        openPanel("downloads");
+      } else if (modifier && key === "d" && !isInputFocused) {
+        event.preventDefault();
+        if (currentTab) run(window.browserApi.toggleBookmark(currentTab.id));
+      } else if (modifier && key === "f" && !isInputFocused) {
+        event.preventDefault();
+        setFindOpen(true);
+        setPanel("home");
+        setPopover(null);
+      } else if ((modifier && key === "r") || key === "f5") {
+        event.preventDefault();
+        if (currentTab) run(window.browserApi.reload(currentTab.id));
+      } else if (modifier && (key === "+" || key === "=")) {
+        event.preventDefault();
+        if (currentTab) action("zoom-in");
+      } else if (modifier && key === "-") {
+        event.preventDefault();
+        if (currentTab) action("zoom-out");
+      } else if (modifier && key === "0") {
+        event.preventDefault();
+        if (currentTab) action("zoom-reset");
+      } else if ((modifier && key === "l") || key === "f6") {
+        event.preventDefault();
+        addressRef.current?.focus();
+        addressRef.current?.select();
+      } else if (modifier && !event.shiftKey && !event.altKey && /^[1-9]$/.test(key) && snapshot) {
+        event.preventDefault();
+        const visible = snapshot.tabs
+          .filter((entry) => entry.workspaceId === (currentTab?.workspaceId ?? "personal") && entry.isPrivate === isPrivate)
+          .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+        const selected = visible[key === "9" ? visible.length - 1 : Number(key) - 1];
+        if (selected) run(window.browserApi.activateTab(selected.id));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [currentTab, findOpen, panel, tabSearchOpen, isPrivate, snapshot, run, openPanel]);
+
+  if (!snapshot)
+    return (
+      <div className="boot-screen">
+        <img src={symbol} alt="" />
+        <span>Запуск soulm8te…</span>
+      </div>
+    );
+
   return (
     <div
       className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${findOpen ? "find-open" : ""} ${isPrivate ? "private-mode" : ""}`}
     >
       <div className="window-titlebar">
         <div className="title-brand">
-          <img src={symbol} alt="" />
-          <span>SOUL-M8TE</span>
+          <img className="title-brand-icon" src={chloeIcon} alt="soulm8te" />
+          <span>soulm8te</span>
           <span className="title-caption">Browser</span>
         </div>
         <div className="window-actions">
@@ -409,9 +555,13 @@ function App(): React.JSX.Element {
           </button>
         </div>
       </div>
-      <button className="tab-search-trigger icon-button" data-tab-search-trigger aria-label="Поиск по вкладкам" title="Поиск по вкладкам · Ctrl+Shift+A" onClick={() => { setTabSearchOpen(true); setPopover(null); }}><Search size={16}/></button>
       <TabStrip
         snapshot={snapshot}
+        tabSearchOpen={tabSearchOpen}
+        onToggleSearch={() => {
+          setTabSearchOpen((open) => !open);
+          setPopover(null);
+        }}
         onActivate={(id) => {
           setPanel("home");
           run(window.browserApi.activateTab(id));
@@ -470,6 +620,12 @@ function App(): React.JSX.Element {
             navigate(address);
           }}
         >
+          {isPrivate && (
+            <span className="omnibox-incognito-badge" title="Приватный режим инкогнито">
+              <VenetianMask size={13} />
+              <span>Инкогнито</span>
+            </span>
+          )}
           <span
             className="omnibox-leading"
             title={
@@ -492,14 +648,64 @@ function App(): React.JSX.Element {
             ref={addressRef}
             data-omnibox
             value={address}
-            onChange={(event) => setAddress(event.target.value)}
-            onFocus={() => setEditingAddress(true)}
-            onBlur={() => setEditingAddress(false)}
+            onChange={(event) => {
+              setAddress(event.target.value);
+              setSelectedSuggestionIndex(-1);
+            }}
+            onFocus={() => {
+              setEditingAddress(true);
+              setSelectedSuggestionIndex(-1);
+            }}
+            onBlur={() => {
+              setTimeout(() => setEditingAddress(false), 140);
+            }}
+            onKeyDown={(event) => {
+              if (omniboxSuggestions.length > 0) {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setSelectedSuggestionIndex((prev) => (prev + 1) % omniboxSuggestions.length);
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setSelectedSuggestionIndex((prev) => (prev <= 0 ? omniboxSuggestions.length - 1 : prev - 1));
+                  return;
+                }
+                if (event.key === "Escape") {
+                  setEditingAddress(false);
+                  setSelectedSuggestionIndex(-1);
+                  return;
+                }
+                if (event.key === "Enter") {
+                  if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < omniboxSuggestions.length) {
+                    event.preventDefault();
+                    const target = omniboxSuggestions[selectedSuggestionIndex];
+                    navigate(target.url);
+                    setEditingAddress(false);
+                    setSelectedSuggestionIndex(-1);
+                    return;
+                  }
+                }
+              }
+            }}
             placeholder="Поиск или адрес страницы"
             aria-label="Адресная строка"
             spellCheck={false}
             autoComplete="off"
           />
+          {Math.round((currentTab?.zoomFactor ?? 1) * 100) !== 100 && (
+            <button
+              type="button"
+              className="omnibox-zoom-badge"
+              title="Сбросить масштаб (100%) · Ctrl+0"
+              aria-label={`Масштаб ${Math.round((currentTab?.zoomFactor ?? 1) * 100)}%. Нажмите для сброса`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => action("zoom-reset")}
+            >
+              <ZoomIn size={13} />
+              <span>{Math.round((currentTab?.zoomFactor ?? 1) * 100)}%</span>
+            </button>
+          )}
           <button
             type="button"
             className={`icon-button bookmark-button ${bookmarked ? "active" : ""}`}
@@ -517,15 +723,53 @@ function App(): React.JSX.Element {
           >
             <Star size={17} fill={bookmarked ? "currentColor" : "none"} />
           </button>
+          {editingAddress && omniboxSuggestions.length > 0 && (
+            <div className="omnibox-suggestions-dropdown" role="listbox">
+              {omniboxSuggestions.map((item, index) => (
+                <div
+                  key={item.id}
+                  role="option"
+                  aria-selected={index === selectedSuggestionIndex}
+                  className={`omnibox-suggestion-item ${index === selectedSuggestionIndex ? "selected" : ""}`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    navigate(item.url);
+                    setEditingAddress(false);
+                    setSelectedSuggestionIndex(-1);
+                  }}
+                >
+                  <span className="omnibox-suggestion-icon">
+                    {item.kind === "popular" ? (
+                      <Globe2 size={16} />
+                    ) : item.kind === "bookmark" ? (
+                      <Star size={16} fill="currentColor" />
+                    ) : item.kind === "history" ? (
+                      <History size={16} />
+                    ) : (
+                      <Search size={16} />
+                    )}
+                  </span>
+                  <span className="omnibox-suggestion-title">{item.title}</span>
+                  <span className="omnibox-suggestion-domain">{item.domain}</span>
+                  <span className={`omnibox-suggestion-badge badge-${item.kind}`}>{item.badge}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </form>
         <div className="toolbar-actions">
           <button
-            className="icon-button"
-            title="Загрузки · Ctrl+J"
+            className={`icon-button download-header-btn ${canDownloadVideo ? "has-video-available" : ""}`}
+            title={canDownloadVideo ? "Доступно видео для скачивания с текущего сайта!" : "Загрузки · Ctrl+J"}
             aria-label="Загрузки"
             onClick={() => openPanel("downloads")}
           >
             <Download size={18} />
+            {canDownloadVideo && (
+              <span className="download-video-badge" title="Видео готово к скачиванию">
+                <CheckCircle2 size={11} strokeWidth={2.8} />
+              </span>
+            )}
           </button>
           <button
             className={`icon-button ${popover === "protection" ? "selected" : ""}`}
@@ -541,6 +785,23 @@ function App(): React.JSX.Element {
             <Shield size={18} />
           </button>
           <button
+            className={`browsec-toolbar-btn ${snapshot.browsec?.enabled ? "is-active" : ""} ${popover === "browsec" ? "selected" : ""}`}
+            title={`soulm8te VPN · ${currentBrowsecCountry?.name || "Локация"} (${snapshot.browsec?.enabled ? "ВКЛ" : "ВЫКЛ"})`}
+            aria-label="soulm8te VPN"
+            aria-expanded={popover === "browsec"}
+            onClick={() =>
+              setPopover((value) => (value === "browsec" ? null : "browsec"))
+            }
+          >
+            <span className="browsec-btn-shield">
+              <Shield size={15} fill={snapshot.browsec?.enabled ? "currentColor" : "none"} />
+            </span>
+            <span className="browsec-btn-flag">{currentBrowsecCountry?.flag || "🇳🇱"}</span>
+            <span className="browsec-btn-status">
+              {snapshot.browsec?.enabled ? "ON" : "OFF"}
+            </span>
+          </button>
+          <button
             className={`mode-chip ${isPrivate ? "is-private" : ""}`}
             onClick={() => createTab(!isPrivate)}
             title={
@@ -551,6 +812,27 @@ function App(): React.JSX.Element {
           >
             <span className="mode-dot" />
             {isPrivate ? "Приватная" : "Личная"}
+          </button>
+          <button
+            className={`google-account-toolbar-btn ${snapshot.activeGoogleAccount ? "has-account" : ""} ${popover === "google-account" ? "selected" : ""}`}
+            title={snapshot.activeGoogleAccount ? `Google: ${snapshot.activeGoogleAccount.name || snapshot.activeGoogleAccount.email}` : "Войти через Google"}
+            aria-label="Аккаунт Google"
+            aria-expanded={popover === "google-account"}
+            onClick={() => setPopover((val) => val === "google-account" ? null : "google-account")}
+          >
+            {snapshot.activeGoogleAccount?.avatar ? (
+              <img src={snapshot.activeGoogleAccount.avatar} alt="" className="google-avatar-img" />
+            ) : (
+              <svg className="google-g-icon" viewBox="0 0 24 24" width="16" height="16">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+              </svg>
+            )}
+            <span className="google-btn-label">
+              {snapshot.activeGoogleAccount ? (snapshot.activeGoogleAccount.name ? snapshot.activeGoogleAccount.name.split(' ')[0] : snapshot.activeGoogleAccount.email.split('@')[0]) : "Google"}
+            </span>
           </button>
           <button
             className={`icon-button ${popover === "menu" ? "selected" : ""}`}
@@ -570,7 +852,7 @@ function App(): React.JSX.Element {
             role="dialog"
             aria-label="Меню браузера"
           >
-            <div className="popover-heading">SOUL-M8TE</div>
+            <div className="popover-heading">soulm8te</div>
             <MenuAction
               icon={<Plus size={16} />}
               label="Новая вкладка"
@@ -801,6 +1083,27 @@ function App(): React.JSX.Element {
             )}
           </div>
         )}
+        {popover === "browsec" && (
+          <BrowsecModal
+            state={snapshot.browsec}
+            countries={browsecCountries}
+            onUpdate={async (patch) => {
+              const updated = await window.browserApi.updateBrowsec(patch);
+              setSnapshot((prev) => (prev ? { ...prev, browsec: updated } : prev));
+            }}
+            onClose={() => setPopover(null)}
+          />
+        )}
+        {popover === "google-account" && (
+          <GoogleAccountPopover
+            snapshot={snapshot}
+            onClose={() => setPopover(null)}
+            onCreateTab={(url) => {
+              createTab(false, url);
+              setPopover(null);
+            }}
+          />
+        )}
       </header>
       {findOpen && (
         <form
@@ -897,19 +1200,37 @@ function App(): React.JSX.Element {
             active={panel === "downloads"}
             collapsed={sidebarCollapsed}
             onClick={() => openPanel("downloads")}
+            isDownloading={isDownloading}
+            downloadProgress={downloadProgress}
+            hasVideoBadge={canDownloadVideo}
           />
         </nav>
         <div className="sidebar-divider" />
         {!sidebarCollapsed && <div className="sidebar-label">Пространства</div>}
         <div className="workspace-list">
           {snapshot.workspaces.map((workspace) => (
-            <button
+            <div
               key={workspace.id}
-              className={`workspace-row ${workspace.id === currentTab?.workspaceId ? "active" : ""}`}
-              title={workspace.name}
+              role="button"
+              tabIndex={0}
+              className={`workspace-row ${workspace.id === (currentTab?.workspaceId ?? "personal") ? "active" : ""}`}
+              title={snapshot.workspaces.length > 1 ? `${workspace.name} (ПКМ — удалить)` : workspace.name}
               onClick={() => {
                 setPanel("home");
                 run(window.browserApi.switchWorkspace(workspace.id));
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                if (snapshot.workspaces.length > 1) {
+                  run(window.browserApi.deleteWorkspace(workspace.id));
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setPanel("home");
+                  run(window.browserApi.switchWorkspace(workspace.id));
+                }
               }}
             >
               <span
@@ -918,13 +1239,27 @@ function App(): React.JSX.Element {
               />
               {!sidebarCollapsed && (
                 <>
-                  <span>
+                  <span className="workspace-name">
                     {workspace.name === "Personal" ? "Личное" : workspace.name}
                   </span>
                   <small>{workspace.tabIds.length}</small>
+                  {snapshot.workspaces.length > 1 && (
+                    <button
+                      type="button"
+                      className="workspace-delete-btn"
+                      title={`Удалить пространство «${workspace.name}»`}
+                      aria-label={`Удалить пространство ${workspace.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        run(window.browserApi.deleteWorkspace(workspace.id));
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
                 </>
               )}
-            </button>
+            </div>
           ))}
           {workspaceOpen && !sidebarCollapsed ? (
             <form
@@ -1064,7 +1399,14 @@ function App(): React.JSX.Element {
             /></React.Suspense>
           )}
           {panel === "downloads" && (
-            <DownloadsPanel downloads={snapshot.downloads.filter(item=>Boolean(item.isPrivate)===isPrivate)} isPrivate={isPrivate} run={run} />
+            <DownloadsPanel
+              downloads={snapshot.downloads.filter((item) => Boolean(item.isPrivate) === isPrivate)}
+              isPrivate={isPrivate}
+              run={run}
+              currentTabUrl={currentTab?.url}
+              currentTabTitle={currentTab?.title}
+              canDownloadVideo={canDownloadVideo}
+            />
           )}
           {panel === "settings" && (
             <SettingsPanel
@@ -1082,7 +1424,18 @@ function App(): React.JSX.Element {
           )}
         </div>
       </main>
-      {tabSearchOpen && <React.Suspense fallback={<div className="tab-search-backdrop"><p role="status">Открываем поиск по вкладкам…</p></div>}><TabSearch snapshot={snapshot} onActivate={async id=>{setPanel("home"); await window.browserApi.activateTab(id);}} onCloseTab={id=>window.browserApi.closeTab(id)} onDismiss={()=>setTabSearchOpen(false)} onError={showError}/></React.Suspense>}
+      {tabSearchOpen && snapshot && (
+        <TabSearch
+          snapshot={snapshot}
+          onActivate={async (id) => {
+            setPanel("home");
+            await window.browserApi.activateTab(id);
+          }}
+          onCloseTab={(id) => window.browserApi.closeTab(id)}
+          onDismiss={() => setTabSearchOpen(false)}
+          onError={showError}
+        />
+      )}
       {popover && (
         <button
           className="popover-dismiss"
@@ -1117,30 +1470,44 @@ function App(): React.JSX.Element {
 }
 function TabStrip({
   snapshot,
+  tabSearchOpen,
+  onToggleSearch,
   onActivate,
   onClose,
   onCreate,
 }: {
   snapshot: BrowserSnapshot;
+  tabSearchOpen?: boolean;
+  onToggleSearch?: () => void;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
   onCreate: () => void;
 }): React.JSX.Element {
   const listRef = useRef<HTMLDivElement>(null);
   const [overflow, setOverflow] = useState({ left: false, right: false });
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
   const hasOverflow = overflow.left || overflow.right;
   const active = snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId);
   const tabs = snapshot.tabs
     .filter((tab) => tab.workspaceId === active?.workspaceId)
     .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+  const unpinnedCount = tabs.filter((t) => !t.isPinned).length;
+  const dynamicTabWidth = unpinnedCount <= 10 ? 212 : Math.max(38, Math.round(212 - (unpinnedCount - 10) * 7.5));
+  const dynamicActiveTabWidth = unpinnedCount <= 10 ? 240 : Math.max(48, Math.round(240 - (unpinnedCount - 10) * 8.5));
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
-    const update = () =>
-      setOverflow({
-        left: list.scrollLeft > 2,
-        right: list.scrollWidth - list.clientWidth - list.scrollLeft > 2,
+    const update = () => {
+      const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
+      setOverflow((prev) => {
+        const nextLeft = prev.left ? list.scrollLeft > 4 : list.scrollLeft > 14;
+        const remainingRight = maxScroll - list.scrollLeft;
+        const nextRight = prev.right ? remainingRight > 4 : remainingRight > 14;
+        if (prev.left === nextLeft && prev.right === nextRight) return prev;
+        return { left: nextLeft, right: nextRight };
       });
+    };
     list
       .querySelector<HTMLElement>(".tab-container.active")
       ?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -1198,12 +1565,44 @@ function TabStrip({
         ref={listRef}
         role="tablist"
         aria-label="Вкладки"
+        style={{
+          "--tab-dynamic-width": `${dynamicTabWidth}px`,
+          "--tab-active-width": `${dynamicActiveTabWidth}px`,
+        } as React.CSSProperties}
       >
         {tabs.map((tab, index) => (
           <div
             key={tab.id}
+            data-private={tab.isPrivate ? "true" : undefined}
+            draggable={!tab.isPinned}
+            onDragStart={(event) => {
+              event.dataTransfer.setData("text/plain", tab.id);
+              event.dataTransfer.effectAllowed = "move";
+              setDraggingId(tab.id);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              if (dragOverId !== tab.id) setDragOverId(tab.id);
+            }}
+            onDragLeave={() => {
+              if (dragOverId === tab.id) setDragOverId(null);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const sourceId = event.dataTransfer.getData("text/plain") || draggingId;
+              setDraggingId(null);
+              setDragOverId(null);
+              if (sourceId && sourceId !== tab.id) {
+                void window.browserApi.reorderTab(sourceId, tab.id).catch(console.error);
+              }
+            }}
+            onDragEnd={() => {
+              setDraggingId(null);
+              setDragOverId(null);
+            }}
             onContextMenu={(event) => { event.preventDefault(); void window.browserApi.showTabMenu(tab.id).catch(console.error); }}
-            className={`tab-container ${tab.id === snapshot.activeTabId ? "active" : ""} ${tab.isPrivate ? "private-tab" : ""} ${tab.isPinned ? "pinned-tab" : ""} ${tab.lifecycle === "hibernated" ? "sleeping-tab" : ""}`}
+            className={`tab-container ${tab.id === snapshot.activeTabId ? "active" : ""} ${tab.isPrivate ? "private-tab" : ""} ${tab.isPinned ? "pinned-tab" : ""} ${tab.lifecycle === "hibernated" ? "sleeping-tab" : ""} ${draggingId === tab.id ? "dragging-tab" : ""} ${dragOverId === tab.id && draggingId !== tab.id ? "drag-over-tab" : ""}`}
           >
             <button
               className="tab"
@@ -1225,9 +1624,11 @@ function TabStrip({
                 {tab.isLoading ? (
                   <LoaderCircle size={15} className="spin" />
                 ) : tab.isPrivate ? (
-                  <Shield size={15} />
+                  <span className="tab-private-badge">
+                    <VenetianMask size={14} />
+                  </span>
                 ) : tab.isInternal ? (
-                  <img src={symbol} alt="" />
+                  <img src={chloeIcon} alt="" className="tab-internal-icon" />
                 ) : tab.favicon ? (
                   <img src={tab.favicon} alt="" referrerPolicy="no-referrer" />
                 ) : (
@@ -1236,7 +1637,20 @@ function TabStrip({
               </span>
               <span className="tab-title">{tab.title || "Новая вкладка"}</span>
               {tab.isPinned && <Pin size={12} className="tab-state-icon" />}
-              {tab.isMuted && <VolumeX size={13} className="tab-state-icon" />}
+              {(tab.isAudible || tab.isMuted) && (
+                <button
+                  type="button"
+                  className={`tab-audio-button ${tab.isMuted ? "muted" : "audible"}`}
+                  title={tab.isMuted ? "Включить звук на вкладке" : "Отключить звук на вкладке"}
+                  aria-label={tab.isMuted ? "Включить звук" : "Отключить звук"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void window.browserApi.tabAction(tab.id, "mute").catch(console.error);
+                  }}
+                >
+                  {tab.isMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                </button>
+              )}
               {tab.lifecycle === "hibernated" && (
                 <span className="sleep-indicator">Спит</span>
               )}
@@ -1263,14 +1677,27 @@ function TabStrip({
           <ArrowRight size={15} />
         </button>
       )}
-      <button
-        className="new-tab-button"
-        title="Новая вкладка · Ctrl+T"
-        aria-label="Новая вкладка"
-        onClick={onCreate}
-      >
-        <Plus size={19} />
-      </button>
+      <div className="tab-strip-end-actions">
+        <button
+          className="new-tab-button"
+          title="Новая вкладка · Ctrl+T"
+          aria-label="Новая вкладка"
+          onClick={onCreate}
+        >
+          <Plus size={19} />
+        </button>
+        {onToggleSearch && (
+          <button
+            className={`tab-search-trigger icon-button ${tabSearchOpen ? "selected" : ""}`}
+            data-tab-search-trigger
+            aria-label="Поиск по вкладкам"
+            title="Поиск по вкладкам · Ctrl+Shift+A"
+            onClick={onToggleSearch}
+          >
+            <Search size={16} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1280,23 +1707,49 @@ function NavItem({
   active,
   collapsed,
   onClick,
+  isDownloading,
+  downloadProgress,
+  hasVideoBadge,
 }: {
   icon: React.ReactNode;
   label: string;
   active: boolean;
   collapsed: boolean;
   onClick: () => void;
+  isDownloading?: boolean;
+  downloadProgress?: number;
+  hasVideoBadge?: boolean;
 }): React.JSX.Element {
   return (
     <button
-      className={`nav-item ${active ? "active" : ""}`}
-      title={collapsed ? label : undefined}
+      className={`nav-item ${active ? "active" : ""} ${isDownloading ? "is-downloading" : ""}`}
+      title={collapsed ? (isDownloading && downloadProgress ? `${label} (${downloadProgress}%)` : label) : undefined}
       aria-label={label}
       aria-current={active ? "page" : undefined}
       onClick={onClick}
     >
-      {icon}
+      <span className="nav-icon" style={{ position: "relative" }}>
+        {icon}
+        {hasVideoBadge && (
+          <span className="nav-video-badge" title="Видео готово к скачиванию">
+            <CheckCircle2 size={11} strokeWidth={2.8} />
+          </span>
+        )}
+      </span>
       {!collapsed && <span>{label}</span>}
+      {!collapsed && isDownloading && (
+        <span className="sidebar-dl-badge">
+          {downloadProgress && downloadProgress > 0 ? `${downloadProgress}%` : "↓"}
+        </span>
+      )}
+      {isDownloading && (
+        <div className="sidebar-dl-bar">
+          <div
+            className="sidebar-dl-fill"
+            style={{ width: `${Math.max(8, downloadProgress ?? 20)}%` }}
+          />
+        </div>
+      )}
     </button>
   );
 }
@@ -1351,7 +1804,29 @@ function NewTabPage({
   const [customWallpaper] = useCustomWallpaper();
   return (
     <div className={`new-tab-page ${privateMode ? "private-newtab" : ""}`} data-new-tab-background={background} data-background={background}>
-      {background === "portrait" && <div className="newtab-wallpaper" data-newtab-wallpaper aria-hidden="true"><img src={customWallpaper ?? (snapshot.settings.appearancePreset === "detroit" ? chloeWallpaper : portrait)} alt="" decoding="async" draggable={false} /></div>}
+      {background !== "plain" && (
+        <div className="newtab-wallpaper" data-newtab-wallpaper aria-hidden="true">
+          <img
+            src={
+              customWallpaper ??
+              (background === "cyber-butterfly" || (background === "portrait" && snapshot.settings.appearancePreset === "cyber-butterfly")
+                ? cyberButterflyWallpaper
+                : background === "tokyo-night" || (background === "portrait" && snapshot.settings.appearancePreset === "tokyo-night")
+                  ? tokyoNightWallpaper
+                  : background === "celestial-palace" || (background === "portrait" && snapshot.settings.appearancePreset === "celestial-palace")
+                    ? celestialPalaceWallpaper
+                    : background === "cyberpink" || (background === "portrait" && snapshot.settings.appearancePreset === "cyberpink")
+                      ? cyberpinkWallpaper
+                      : background === "cyberpink-fuji" || (background === "portrait" && snapshot.settings.appearancePreset === "cyberpink-fuji")
+                        ? cyberpinkFujiWallpaper
+                        : chloeWallpaper)
+            }
+            alt=""
+            decoding="async"
+            draggable={false}
+          />
+        </div>
+      )}
       <div className="newtab-topline">
         <span>
           {new Intl.DateTimeFormat("ru-RU", {
@@ -1412,22 +1887,14 @@ function NewTabPage({
         </form>
         {!privateMode && (
           <div className="quick-links" aria-label="Быстрый доступ">
-            {quickLinks.map((link, index) => (
+            {quickLinks.map((link) => (
               <button
                 key={link.label}
                 title={link.url}
                 onClick={() => onOpen(link.url)}
               >
                 <span className="quick-link-symbol">
-                  {index === 0 ? (
-                    <span className="mail-shortcut-symbol" aria-hidden="true">
-                      @
-                    </span>
-                  ) : index === 1 ? (
-                    <File size={20} />
-                  ) : (
-                    <Play size={20} />
-                  )}
+                  <SiteFavicon url={link.url} size={20} />
                 </span>
                 <span className="quick-link-label">{link.label}</span>
               </button>
@@ -1494,7 +1961,7 @@ function NewTabPage({
                       onClick={() => onOpen(bookmark.url)}
                     >
                       <span className="saved-site-icon">
-                        <Globe2 size={17} />
+                        <SiteFavicon url={bookmark.url} favicon={bookmark.favicon} size={18} />
                       </span>
                       <span>
                         <strong>{bookmark.title}</strong>
@@ -1532,7 +1999,9 @@ function NewTabPage({
                       title={`${entry.title}\n${entry.url}`}
                       onClick={() => onOpen(entry.url)}
                     >
-                      <span className="recent-page-dot" />
+                      <span className="recent-page-icon">
+                        <SiteFavicon url={entry.url} favicon={(entry as any).favicon} size={16} />
+                      </span>
                       <span>
                         <strong>{entry.title}</strong>
                         <small>{hostname(entry.url)}</small>
@@ -1564,7 +2033,7 @@ function NewTabPage({
           <span className="mode-dot" />
           {privateMode ? "Временная сессия" : "Ваш цифровой союзник"}
         </span>
-        <span>SOUL-M8TE Browser</span>
+        <span>soulm8te Browser</span>
       </footer>
     </div>
   );
@@ -1620,14 +2089,24 @@ function DownloadsPanel({
   downloads,
   run,
   isPrivate,
+  currentTabUrl,
+  currentTabTitle,
+  canDownloadVideo,
 }: {
   downloads: DownloadEntry[];
   isPrivate: boolean;
   run: (promise: Promise<unknown>) => void;
+  currentTabUrl?: string;
+  currentTabTitle?: string;
+  canDownloadVideo?: boolean;
 }): React.JSX.Element {
-  const [query,setQuery]=useState("");
-  const visible=downloads.filter(item=>`${item.filename} ${item.url}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
-  const hasFinished=downloads.some(item=>!item.isLive && !["queued","progressing"].includes(item.state));
+  const [query, setQuery] = useState("");
+  const visible = downloads.filter((item) =>
+    `${item.filename} ${item.url}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  );
+  const hasFinished = downloads.some(
+    (item) => !item.isLive && !["queued", "progressing"].includes(item.state),
+  );
   return (
     <section className="utility-panel">
       <PanelHeader
@@ -1635,19 +2114,80 @@ function DownloadsPanel({
         title="Загрузки"
         subtitle="Сохранённые файлы и текущие загрузки"
       />
-      <div className="manager-filters"><label className="panel-search"><Search size={18}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Найти файл" aria-label="Поиск в загрузках"/><span>{visible.length}</span></label><button className="plain-button" disabled={!hasFinished} title="Удаляет завершённые записи из списка; файлы остаются на диске" onClick={()=>run(window.browserApi.clearFinishedDownloads(isPrivate))}><Trash2 size={16}/>Очистить список</button></div>
+      {canDownloadVideo && currentTabUrl && (
+        <div className="download-media-banner">
+          <div className="download-media-banner-info">
+            <CheckCircle2 size={22} className="media-ready-icon" />
+            <div>
+              <strong>Доступно видео для скачивания</strong>
+              <p>{currentTabTitle || currentTabUrl}</p>
+            </div>
+          </div>
+          <div className="download-media-banner-actions">
+            <button
+              className="google-btn-primary"
+              style={{ width: "auto", padding: "0 14px", height: "32px", fontSize: "12px" }}
+              onClick={() => {
+                void window.browserApi.downloadMediaUrl(currentTabUrl, undefined, false);
+              }}
+            >
+              <Download size={14} />
+              Скачать MP4
+            </button>
+            <button
+              className="google-btn-secondary"
+              style={{ width: "auto", padding: "0 12px", height: "32px", fontSize: "12px" }}
+              onClick={() => {
+                void window.browserApi.downloadMediaUrl(currentTabUrl, undefined, true);
+              }}
+            >
+              <Music2 size={14} />
+              Аудио MP3
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="manager-filters">
+        <label className="panel-search">
+          <Search size={18} />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Найти файл"
+            aria-label="Поиск в загрузках"
+          />
+          <span>{visible.length}</span>
+        </label>
+        <button
+          className="plain-button"
+          disabled={!hasFinished}
+          title="Удаляет завершённые записи из списка; файлы остаются на диске"
+          onClick={() => run(window.browserApi.clearFinishedDownloads(isPrivate))}
+        >
+          <Trash2 size={16} />
+          Очистить список
+        </button>
+      </div>
       {visible.length === 0 ? (
         <EmptyState
           icon={<Download size={28} />}
-          title={query.trim()?"Ничего не найдено":"Загрузок пока нет"}
-          description={query.trim()?"Попробуйте другое название или адрес файла.":"Сохранённые файлы и их состояние появятся здесь."}
+          title={query.trim() ? "Ничего не найдено" : "Загрузок пока нет"}
+          description={
+            query.trim()
+              ? "Попробуйте другое название или адрес файла."
+              : "Сохранённые файлы и их состояние появятся здесь."
+          }
         />
       ) : (
         <div className="download-list">
           {visible.map((download) => {
-            const active = download.isLive ||
-              download.state === "queued" || download.state === "progressing";
-            const resumable = download.isPaused || (download.state === "interrupted" && download.canResume);
+            const active =
+              download.isLive ||
+              download.state === "queued" ||
+              download.state === "progressing";
+            const resumable =
+              download.isPaused ||
+              (download.state === "interrupted" && download.canResume);
             const percent =
               download.totalBytes > 0
                 ? Math.min(
@@ -1694,10 +2234,16 @@ function DownloadsPanel({
                   <div className="download-meta">
                     <span>{status}</span>
                     <span>
-                      {formatBytes(download.receivedBytes)}
-                      {download.totalBytes > 0
-                        ? ` / ${formatBytes(download.totalBytes)}`
-                        : ""}
+                      {download.state === "completed"
+                        ? formatBytes(
+                            Math.max(
+                              download.totalBytes || 0,
+                              download.receivedBytes || 0,
+                            ),
+                          )
+                        : download.totalBytes > 0
+                          ? `${formatBytes(download.receivedBytes)} / ${formatBytes(download.totalBytes)}`
+                          : formatBytes(download.receivedBytes)}
                     </span>
                   </div>
                   {active && (
@@ -1755,6 +2301,16 @@ function DownloadsPanel({
                       >
                         <X size={17} />
                       </button>
+                      <button
+                        className="icon-button danger-hover"
+                        aria-label="Удалить загрузку"
+                        title="Удалить"
+                        onClick={() =>
+                          run(window.browserApi.deleteDownload(download.id, false))
+                        }
+                      >
+                        <Trash2 size={17} />
+                      </button>
                     </>
                   )}
                   {download.state === "completed" && (
@@ -1781,7 +2337,29 @@ function DownloadsPanel({
                       >
                         <FolderOpen size={17} />
                       </button>
+                      <button
+                        className="icon-button danger-hover"
+                        aria-label="Удалить запись"
+                        title="Удалить из списка"
+                        onClick={() =>
+                          run(window.browserApi.deleteDownload(download.id, false))
+                        }
+                      >
+                        <Trash2 size={17} />
+                      </button>
                     </>
+                  )}
+                  {!active && download.state !== "completed" && (
+                    <button
+                      className="icon-button danger-hover"
+                      aria-label="Удалить запись"
+                      title="Удалить из списка"
+                      onClick={() =>
+                        run(window.browserApi.deleteDownload(download.id, false))
+                      }
+                    >
+                      <Trash2 size={17} />
+                    </button>
                   )}
                 </div>
               </article>
@@ -1948,7 +2526,7 @@ function ImportDataCard(): React.JSX.Element {
       </div>
       <p className="import-guidance">
         Перед переносом закройте исходный браузер, чтобы его данные не менялись
-        во время чтения. Существующие записи SOUL-M8TE сохраняются.
+        во время чтения. Существующие записи soulm8te сохраняются.
       </p>
       <div className="import-controls">
         <label className="import-field">
@@ -2073,7 +2651,7 @@ function ImportDataCard(): React.JSX.Element {
           <strong>CSV содержит пароли в открытом виде</strong>
           <p>
             Не отправляйте этот файл другим людям и не храните в общих папках.
-            После переноса удалите ненужный CSV из места экспорта. SOUL-M8TE
+            После переноса удалите ненужный CSV из места экспорта. soulm8te
             сохраняет пароли только при доступном системном шифровании.
             Автоматическое фоновое заполнение не поддерживается. Ручное заполнение доступно в разделе паролей после подтверждения.
           </p>
@@ -2282,14 +2860,36 @@ function SettingsPanel({
           <label className="setting-row">
             <span>
               <strong>Фон новой вкладки</strong>
-              <small>Локальное изображение или однотонный фон.</small>
+              <small>Локальное изображение или однотонный фон. Тема браузера автоматически подстраивается под цвета обоев.</small>
             </span>
             <select
               aria-label="Фон новой вкладки"
               value={settings.newTabBackground}
-              onChange={event => update({ newTabBackground: normalizeNewTabBackground(event.target.value) })}
+              onChange={event => {
+                const bg = normalizeNewTabBackground(event.target.value);
+                if (bg === "cyber-butterfly") {
+                  update({ newTabBackground: bg, appearancePreset: "cyber-butterfly", accentColor: "violet" });
+                } else if (bg === "tokyo-night") {
+                  update({ newTabBackground: bg, appearancePreset: "tokyo-night", accentColor: "blue" });
+                } else if (bg === "celestial-palace") {
+                  update({ newTabBackground: bg, appearancePreset: "celestial-palace", accentColor: "teal" });
+                } else if (bg === "cyberpink") {
+                  update({ newTabBackground: bg, appearancePreset: "cyberpink", accentColor: "pink" });
+                } else if (bg === "cyberpink-fuji") {
+                  update({ newTabBackground: bg, appearancePreset: "cyberpink-fuji", accentColor: "violet" });
+                } else if (bg === "portrait") {
+                  update({ newTabBackground: bg, appearancePreset: "detroit", accentColor: "blue" });
+                } else {
+                  update({ newTabBackground: bg, appearancePreset: "classic" });
+                }
+              }}
             >
               <option value="portrait">Фирменный портрет / Detroit</option>
+              <option value="cyber-butterfly">Кибер-бабочки (Неон)</option>
+              <option value="tokyo-night">Ночной Токио (Cyber Blue)</option>
+              <option value="celestial-palace">Белый дворец (Небесный бирюзовый)</option>
+              <option value="cyberpink">Cyberpunk · Терминал</option>
+              <option value="cyberpink-fuji">Cyberpunk · Фудзи</option>
               <option value="plain">Однотонный</option>
             </select>
           </label>
@@ -2298,22 +2898,49 @@ function SettingsPanel({
               <strong>Установленная версия</strong>
               <small>Если здесь нет новых настроек, запущена старая сборка. После обновления GitHub приложение нужно пересобрать и переустановить.</small>
             </span>
-            <strong>SOUL-M8TE 0.5.0</strong>
+            <strong>soulm8te 0.5.0</strong>
           </div>
           <label className="setting-row">
-            <span><strong>Стиль оформления</strong><small>Отдельный стиль Detroit · Хлоя. Исходные светлая и тёмная темы не изменяются.</small></span>
-            <select aria-label="Стиль оформления" value={settings.appearancePreset ?? "classic"} onChange={event => update({ appearancePreset: event.target.value as "classic" | "detroit" })}>
-              <option value="classic">Классический SOUL-M8TE</option>
+            <span><strong>Стиль оформления</strong><small>Отдельный стиль Detroit · Хлоя или Cyberpunk. Исходные темы не изменяются.</small></span>
+            <select
+              aria-label="Стиль оформления"
+              value={settings.appearancePreset ?? "classic"}
+              onChange={event => {
+                const val = event.target.value as "classic" | "detroit" | "cyberpink" | "cyberpink-fuji" | "cyber-butterfly" | "tokyo-night" | "celestial-palace";
+                if (val === "cyber-butterfly") {
+                  update({ appearancePreset: "cyber-butterfly", accentColor: "violet", newTabBackground: "cyber-butterfly" });
+                } else if (val === "tokyo-night") {
+                  update({ appearancePreset: "tokyo-night", accentColor: "blue", newTabBackground: "tokyo-night" });
+                } else if (val === "celestial-palace") {
+                  update({ appearancePreset: "celestial-palace", accentColor: "teal", newTabBackground: "celestial-palace" });
+                } else if (val === "cyberpink") {
+                  update({ appearancePreset: "cyberpink", accentColor: "pink", newTabBackground: "cyberpink" });
+                } else if (val === "cyberpink-fuji") {
+                  update({ appearancePreset: "cyberpink-fuji", accentColor: "violet", newTabBackground: "cyberpink-fuji" });
+                } else if (val === "detroit") {
+                  update({ appearancePreset: "detroit", accentColor: "blue", newTabBackground: "portrait" });
+                } else {
+                  update({ appearancePreset: "classic", newTabBackground: "plain" });
+                }
+              }}
+            >
+              <option value="classic">Классический soulm8te</option>
               <option value="detroit">Detroit · Хлоя</option>
+              <option value="cyber-butterfly">Кибер-бабочки</option>
+              <option value="tokyo-night">Ночной Токио</option>
+              <option value="celestial-palace">Белый дворец</option>
+              <option value="cyberpink">Cyberpunk · Неон</option>
+              <option value="cyberpink-fuji">Cyberpunk · Фудзи</option>
             </select>
           </label>
           <label className="setting-row">
             <span><strong>Акцентный цвет</strong><small>Отдельная персонализация; светлая и тёмная темы остаются прежними.</small></span>
-            <select aria-label="Акцентный цвет" value={settings.accentColor ?? "blue"} onChange={event => update({ accentColor: event.target.value as "blue" | "teal" | "violet" | "rose" })}>
+            <select aria-label="Акцентный цвет" value={settings.accentColor ?? "blue"} onChange={event => update({ accentColor: event.target.value as "blue" | "teal" | "violet" | "rose" | "pink" })}>
               <option value="blue">Классический синий</option>
               <option value="teal">Бирюзовый</option>
               <option value="violet">Фиолетовый</option>
               <option value="rose">Розовый</option>
+              <option value="pink">Розовый / Неон</option>
             </select>
           </label>
           <label className="setting-row">
@@ -2641,11 +3268,14 @@ function SettingsPanel({
           ))}
         </div>
         <div className="about-card">
-          <img src={portrait} alt="Портретный знак SOUL-M8TE" />
+          <div className="about-icon-wrapper">
+            <img className="about-brand-icon" src={chloeIcon} alt="soulm8te" />
+            <span className="about-led-indicator" title="Detroit Android LED status: active" />
+          </div>
           <div>
-            <strong>SOUL-M8TE Browser</strong>
-            <p>Ваш цифровой союзник.</p>
-            <small>Интерфейс по SOUL-M8TE Brand Guidelines 1.0</small>
+            <strong>soulm8te Browser</strong>
+            <p>Ваш цифровой союзник · Detroit: Become Human</p>
+            <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.5.0</small>
           </div>
         </div>
       </div>

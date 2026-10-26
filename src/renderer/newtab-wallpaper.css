@@ -29,20 +29,34 @@
   inset: 0;
   content: "";
   background: linear-gradient(90deg, rgb(247 248 250 / 96%) 0%, rgb(247 248 250 / 93%) 31%, rgb(247 248 250 / 69%) 53%, rgb(247 248 250 / 7%) 76%, rgb(247 248 250 / 2%) 100%);
+  pointer-events: none !important;
 }
-.new-tab-page[data-new-tab-background="portrait"] > :not(.newtab-wallpaper) {
+.new-tab-page:not([data-new-tab-background="plain"]) > :not(.newtab-wallpaper),
+.new-tab-page[data-new-tab-background="portrait"] > :not(.newtab-wallpaper),
+.new-tab-page[data-new-tab-background="cyberpink"] > :not(.newtab-wallpaper),
+.new-tab-page[data-new-tab-background="cyberpink-fuji"] > :not(.newtab-wallpaper),
+.new-tab-page[data-new-tab-background="custom"] > :not(.newtab-wallpaper) {
   position: relative;
-  z-index: 1;
+  z-index: 10;
+  pointer-events: auto;
 }
+.new-tab-page:not([data-new-tab-background="plain"]) .newtab-center,
 .new-tab-page[data-new-tab-background="portrait"] .newtab-center {
   width: min(66%, 940px);
   max-width: none;
   margin: 0;
   padding-top: 20px;
+  position: relative;
+  z-index: 10;
+  pointer-events: auto;
 }
+.new-tab-page:not([data-new-tab-background="plain"]) .hero-search,
 .new-tab-page[data-new-tab-background="portrait"] .hero-search {
   background: var(--wallpaper-panel);
   border-color: var(--wallpaper-line);
+  position: relative;
+  z-index: 11;
+  pointer-events: auto;
 }
 .new-tab-page[data-new-tab-background="portrait"] .newtab-workspace {
   gap: 20px;
@@ -149,36 +163,407 @@
 .custom-wallpaper-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .custom-wallpaper-setting [role="status"] { flex-basis: 100%; }
 
-/* Additional appearance choices are opt-in; default accent remains untouched. */
-:root[data-accent="teal"] { --accent: #087f7c; --accent-soft: #d7f3f0; }
-:root[data-accent="violet"] { --accent: #7654b2; --accent-soft: #eee6f8; }
-:root[data-accent="rose"] { --accent: #ab4568; --accent-soft: #fae5ed; }
-:root[data-theme="dark"][data-accent="teal"] { --accent: #74d5cc; --accent-soft: #204340; }
-:root[data-theme="dark"][data-accent="violet"] { --accent: #c5a6ff; --accent-soft: #3c3152; }
-:root[data-theme="dark"][data-accent="rose"] { --accent: #ffacc5; --accent-soft: #50303d; }
+/* Accent color choices - high specificity so they always take precedence */
+:root[data-accent="teal"], :root[data-wallpaper][data-accent="teal"], :root[data-appearance][data-accent="teal"] {
+  --accent: #087f7c;
+  --signal: #14b8a6;
+  --accent-soft: rgba(8, 127, 124, 0.16);
+}
+:root[data-theme="dark"][data-accent="teal"], :root[data-theme="dark"][data-wallpaper][data-accent="teal"], :root[data-theme="dark"][data-appearance][data-accent="teal"] {
+  --accent: #2dd4bf;
+  --signal: #14b8a6;
+  --accent-soft: rgba(45, 212, 191, 0.22);
+}
+
+:root[data-accent="violet"], :root[data-wallpaper][data-accent="violet"], :root[data-appearance][data-accent="violet"] {
+  --accent: #7654b2;
+  --signal: #a855f7;
+  --accent-soft: rgba(118, 84, 178, 0.16);
+}
+:root[data-theme="dark"][data-accent="violet"], :root[data-theme="dark"][data-wallpaper][data-accent="violet"], :root[data-theme="dark"][data-appearance][data-accent="violet"] {
+  --accent: #c084fc;
+  --signal: #a855f7;
+  --accent-soft: rgba(192, 132, 252, 0.22);
+}
+
+:root[data-accent="rose"], :root[data-wallpaper][data-accent="rose"], :root[data-appearance][data-accent="rose"] {
+  --accent: #ab4568;
+  --signal: #f43f5e;
+  --accent-soft: rgba(171, 69, 104, 0.16);
+}
+:root[data-theme="dark"][data-accent="rose"], :root[data-theme="dark"][data-wallpaper][data-accent="rose"], :root[data-theme="dark"][data-appearance][data-accent="rose"] {
+  --accent: #fb7185;
+  --signal: #f43f5e;
+  --accent-soft: rgba(251, 113, 133, 0.22);
+}
+
+:root[data-accent="pink"], :root[data-wallpaper][data-accent="pink"], :root[data-appearance][data-accent="pink"] {
+  --accent: #ff2a85;
+  --signal: #ff4081;
+  --accent-soft: rgba(255, 42, 133, 0.16);
+}
+:root[data-theme="dark"][data-accent="pink"], :root[data-theme="dark"][data-wallpaper][data-accent="pink"], :root[data-theme="dark"][data-appearance][data-accent="pink"] {
+  --accent: #ff4081;
+  --signal: #ff2a85;
+  --accent-soft: rgba(255, 64, 129, 0.24);
+}
+
+:root[data-accent="blue"], :root[data-wallpaper][data-accent="blue"], :root[data-appearance][data-accent="blue"] {
+  --accent: #0284c7;
+  --signal: #00d2ff;
+  --accent-soft: rgba(2, 132, 199, 0.16);
+}
+:root[data-theme="dark"][data-accent="blue"], :root[data-theme="dark"][data-wallpaper][data-accent="blue"], :root[data-theme="dark"][data-appearance][data-accent="blue"] {
+  --accent: #00d2ff;
+  --signal: #38bdf8;
+  --accent-soft: rgba(0, 210, 255, 0.2);
+}
 .newtab-wallpaper::before {
   content: ""; position: absolute; inset: 0; z-index: 1;
   background: rgb(0 0 0 / var(--wallpaper-dim, 0)); pointer-events: none;
 }
-.newtab-wallpaper::after { z-index: 2; }
+.newtab-wallpaper::after { z-index: 2; pointer-events: none !important; }
 .settings-panel input[type="range"] { accent-color: var(--accent); max-width: 180px; }
 
-/* Detroit is an optional layout treatment layered onto the existing palette. */
-:root[data-appearance="detroit"] .app-shell {
+/* Detroit appearance preset */
+:root[data-appearance="detroit"],
+:root[data-wallpaper="portrait"] {
+  --accent: #00d2ff;
+  --signal: #38bdf8;
+  --accent-soft: rgb(0 210 255 / 15%);
+}
+:root[data-theme="dark"][data-appearance="detroit"],
+:root[data-theme="dark"][data-wallpaper="portrait"] {
+  --canvas: #0c1017;
+  --surface: #121824;
+  --surface-subtle: #192233;
+  --chrome: #0f141e;
+  --border: #233145;
+  --border-strong: #364b68;
+  --accent: #38bdf8;
+  --signal: #00d2ff;
+  --accent-soft: rgb(0 210 255 / 22%);
+}
+:root[data-appearance="detroit"] .app-shell,
+:root[data-wallpaper="portrait"] .app-shell {
   --chrome-height: 144px;
 }
-:root[data-appearance="detroit"] .window-titlebar {
+:root[data-appearance="detroit"] .window-titlebar,
+:root[data-wallpaper="portrait"] .window-titlebar {
   border-bottom: 1px solid var(--accent);
+  box-shadow: 0 1px 12px rgb(0 210 255 / 15%);
 }
-:root[data-appearance="detroit"] .new-tab-page[data-new-tab-background="portrait"] .hero-search {
+:root[data-appearance="detroit"] .tab-container.active:after,
+:root[data-wallpaper="portrait"] .tab-container.active:after {
+  background: linear-gradient(90deg, var(--accent), var(--signal));
+  box-shadow: 0 0 10px var(--accent);
+}
+:root[data-appearance="detroit"] .new-tab-page[data-new-tab-background="portrait"] .hero-search,
+:root[data-wallpaper="portrait"] .new-tab-page[data-new-tab-background="portrait"] .hero-search {
   border-width: 1px;
-  box-shadow: 0 10px 32px rgb(0 0 0 / 11%);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 11%), 0 0 14px rgb(0 210 255 / 12%);
 }
-:root[data-appearance="detroit"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img {
+:root[data-appearance="detroit"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img,
+:root[data-wallpaper="portrait"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img {
   object-position: 77% center;
 }
 @media (max-width: 1150px) {
-  :root[data-appearance="detroit"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img {
+  :root[data-appearance="detroit"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img,
+  :root[data-wallpaper="portrait"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img {
     object-position: 82% center;
   }
+}
+
+/* Cyberpunk appearance preset */
+:root[data-appearance="cyberpink"],
+:root[data-wallpaper="cyberpink"] {
+  --accent: #ff2a85;
+  --signal: #ff4081;
+  --accent-soft: rgb(255 42 133 / 16%);
+}
+:root[data-theme="dark"][data-appearance="cyberpink"],
+:root[data-theme="dark"][data-wallpaper="cyberpink"] {
+  --canvas: #0a0b10;
+  --surface: #12131b;
+  --surface-subtle: #191b26;
+  --chrome: #0d0e14;
+  --border: #2c2538;
+  --border-strong: #4f2f4e;
+  --accent: #ff4081;
+  --signal: #ff2a85;
+  --accent-soft: rgb(255 64 129 / 22%);
+  --shadow: 0 12px 36px rgb(0 0 0 / 45%);
+}
+:root[data-appearance="cyberpink"] .window-titlebar,
+:root[data-wallpaper="cyberpink"] .window-titlebar {
+  border-bottom: 1px solid var(--accent);
+  box-shadow: 0 1px 14px rgb(255 42 133 / 22%);
+}
+:root[data-appearance="cyberpink"] .tab-container.active:after,
+:root[data-wallpaper="cyberpink"] .tab-container.active:after {
+  background: linear-gradient(90deg, #ff2a85, #ff758c, #ff4081);
+  box-shadow: 0 0 12px rgb(255 42 133 / 85%);
+}
+:root[data-appearance="cyberpink"] .omnibox:focus-within,
+:root[data-wallpaper="cyberpink"] .omnibox:focus-within {
+  border-color: #ff4081;
+  box-shadow: 0 0 0 3px rgb(255 64 129 / 25%), 0 0 16px rgb(255 42 133 / 30%);
+}
+
+/* Cyberpunk Fuji appearance preset */
+:root[data-appearance="cyberpink-fuji"],
+:root[data-wallpaper="cyberpink-fuji"] {
+  --accent: #c084fc;
+  --signal: #d946ef;
+  --accent-soft: rgb(192 132 252 / 18%);
+}
+:root[data-theme="dark"][data-appearance="cyberpink-fuji"],
+:root[data-theme="dark"][data-wallpaper="cyberpink-fuji"] {
+  --canvas: #0b0914;
+  --surface: #130f24;
+  --surface-subtle: #1c1635;
+  --chrome: #0e0a1a;
+  --border: #31214d;
+  --border-strong: #593582;
+  --accent: #c084fc;
+  --signal: #d946ef;
+  --accent-soft: rgb(192 132 252 / 24%);
+  --shadow: 0 12px 36px rgb(0 0 0 / 50%);
+}
+:root[data-appearance="cyberpink-fuji"] .window-titlebar,
+:root[data-wallpaper="cyberpink-fuji"] .window-titlebar {
+  border-bottom: 1px solid var(--accent);
+  box-shadow: 0 1px 14px rgb(192 132 252 / 24%);
+}
+:root[data-appearance="cyberpink-fuji"] .tab-container.active:after,
+:root[data-wallpaper="cyberpink-fuji"] .tab-container.active:after {
+  background: linear-gradient(90deg, #c084fc, #e879f9, #d946ef);
+  box-shadow: 0 0 12px rgb(217 70 239 / 85%);
+}
+:root[data-appearance="cyberpink-fuji"] .omnibox:focus-within,
+:root[data-wallpaper="cyberpink-fuji"] .omnibox:focus-within {
+  border-color: #c084fc;
+  box-shadow: 0 0 0 3px rgb(192 132 252 / 25%), 0 0 16px rgb(217 70 239 / 30%);
+}
+
+/* Cyberpunk New Tab Wallpapers */
+.new-tab-page[data-new-tab-background="cyberpink"],
+.new-tab-page[data-new-tab-background="cyberpink-fuji"] {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: #0a0b10;
+  --wallpaper-panel: rgb(18 19 27 / 90%);
+  --wallpaper-panel-hover: rgb(28 30 42 / 96%);
+  --wallpaper-line: rgb(255 42 133 / 28%);
+}
+.new-tab-page[data-new-tab-background="cyberpink-fuji"] {
+  --wallpaper-line: rgb(192 132 252 / 28%);
+}
+.new-tab-page[data-new-tab-background="cyberpink"] .newtab-wallpaper::after,
+.new-tab-page[data-new-tab-background="cyberpink-fuji"] .newtab-wallpaper::after {
+  background: linear-gradient(90deg, rgb(10 11 16 / 95%) 0%, rgb(10 11 16 / 90%) 32%, rgb(10 11 16 / 65%) 56%, rgb(10 11 16 / 20%) 80%, rgb(10 11 16 / 5%) 100%);
+}
+.new-tab-page[data-new-tab-background="cyberpink"] .hero-search {
+  background: var(--wallpaper-panel);
+  border-color: var(--wallpaper-line);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 40%), 0 0 18px rgb(255 42 133 / 18%);
+}
+.new-tab-page[data-new-tab-background="cyberpink-fuji"] .hero-search {
+  background: var(--wallpaper-panel);
+  border-color: var(--wallpaper-line);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 40%), 0 0 18px rgb(192 132 252 / 22%);
+}
+.new-tab-page[data-new-tab-background="cyberpink"] .saved-card,
+.new-tab-page[data-new-tab-background="cyberpink"] .quick-link-symbol,
+.new-tab-page[data-new-tab-background="cyberpink-fuji"] .saved-card,
+.new-tab-page[data-new-tab-background="cyberpink-fuji"] .quick-link-symbol {
+  background: var(--wallpaper-panel);
+  border-color: var(--wallpaper-line);
+}
+.new-tab-page[data-new-tab-background="cyberpink"] .saved-card:hover {
+  background: var(--wallpaper-panel-hover);
+  border-color: #ff4081;
+}
+.new-tab-page[data-new-tab-background="cyberpink-fuji"] .saved-card:hover {
+  background: var(--wallpaper-panel-hover);
+  border-color: #c084fc;
+}
+
+/* Cyber Butterfly appearance preset */
+:root[data-appearance="cyber-butterfly"],
+:root[data-wallpaper="cyber-butterfly"] {
+  --accent: #a855f7;
+  --signal: #ec4899;
+  --accent-soft: rgb(168 85 247 / 18%);
+}
+:root[data-theme="dark"][data-appearance="cyber-butterfly"],
+:root[data-theme="dark"][data-wallpaper="cyber-butterfly"] {
+  --canvas: #0d0a17;
+  --surface: #141026;
+  --surface-subtle: #1c1636;
+  --chrome: #0e0a1a;
+  --border: #352654;
+  --border-strong: #6b359e;
+  --accent: #a855f7;
+  --signal: #ec4899;
+  --accent-soft: rgb(168 85 247 / 24%);
+  --shadow: 0 12px 36px rgb(0 0 0 / 52%);
+}
+:root[data-appearance="cyber-butterfly"] .window-titlebar,
+:root[data-wallpaper="cyber-butterfly"] .window-titlebar {
+  border-bottom: 1px solid var(--accent);
+  box-shadow: 0 1px 14px rgb(168 85 247 / 24%);
+}
+:root[data-appearance="cyber-butterfly"] .tab-container.active:after,
+:root[data-wallpaper="cyber-butterfly"] .tab-container.active:after {
+  background: linear-gradient(90deg, #a855f7, #c084fc, #ec4899);
+  box-shadow: 0 0 12px rgb(168 85 247 / 85%);
+}
+:root[data-appearance="cyber-butterfly"] .omnibox:focus-within,
+:root[data-wallpaper="cyber-butterfly"] .omnibox:focus-within {
+  border-color: #a855f7;
+  box-shadow: 0 0 0 3px rgb(168 85 247 / 25%), 0 0 16px rgb(236 72 153 / 30%);
+}
+
+/* Tokyo Night appearance preset */
+:root[data-appearance="tokyo-night"],
+:root[data-wallpaper="tokyo-night"] {
+  --accent: #00d2ff;
+  --signal: #3a7bd5;
+  --accent-soft: rgb(0 210 255 / 18%);
+}
+:root[data-theme="dark"][data-appearance="tokyo-night"],
+:root[data-theme="dark"][data-wallpaper="tokyo-night"] {
+  --canvas: #080d1a;
+  --surface: #0e162a;
+  --surface-subtle: #141f3b;
+  --chrome: #0a1020;
+  --border: #1e335a;
+  --border-strong: #2563eb;
+  --accent: #00d2ff;
+  --signal: #38bdf8;
+  --accent-soft: rgb(0 210 255 / 22%);
+  --shadow: 0 12px 36px rgb(0 0 0 / 55%);
+}
+:root[data-appearance="tokyo-night"] .window-titlebar,
+:root[data-wallpaper="tokyo-night"] .window-titlebar {
+  border-bottom: 1px solid var(--accent);
+  box-shadow: 0 1px 14px rgb(0 210 255 / 24%);
+}
+:root[data-appearance="tokyo-night"] .tab-container.active:after,
+:root[data-wallpaper="tokyo-night"] .tab-container.active:after {
+  background: linear-gradient(90deg, #00d2ff, #38bdf8, #3a7bd5);
+  box-shadow: 0 0 12px rgb(0 210 255 / 85%);
+}
+:root[data-appearance="tokyo-night"] .omnibox:focus-within,
+:root[data-wallpaper="tokyo-night"] .omnibox:focus-within {
+  border-color: #00d2ff;
+  box-shadow: 0 0 0 3px rgb(0 210 255 / 25%), 0 0 16px rgb(58 123 213 / 30%);
+}
+
+/* Celestial Palace appearance preset */
+:root[data-appearance="celestial-palace"],
+:root[data-wallpaper="celestial-palace"] {
+  --accent: #14b8a6;
+  --signal: #2dd4bf;
+  --accent-soft: rgb(20 184 166 / 18%);
+}
+:root[data-theme="dark"][data-appearance="celestial-palace"],
+:root[data-theme="dark"][data-wallpaper="celestial-palace"] {
+  --canvas: #061317;
+  --surface: #0a1f26;
+  --surface-subtle: #102d37;
+  --chrome: #08171c;
+  --border: #1b4550;
+  --border-strong: #0d9488;
+  --accent: #2dd4bf;
+  --signal: #14b8a6;
+  --accent-soft: rgb(45 212 191 / 22%);
+  --shadow: 0 12px 36px rgb(0 0 0 / 52%);
+}
+:root[data-appearance="celestial-palace"] .window-titlebar,
+:root[data-wallpaper="celestial-palace"] .window-titlebar {
+  border-bottom: 1px solid var(--accent);
+  box-shadow: 0 1px 14px rgb(45 212 191 / 24%);
+}
+:root[data-appearance="celestial-palace"] .tab-container.active:after,
+:root[data-wallpaper="celestial-palace"] .tab-container.active:after {
+  background: linear-gradient(90deg, #14b8a6, #2dd4bf, #5eead4);
+  box-shadow: 0 0 12px rgb(45 212 191 / 85%);
+}
+:root[data-appearance="celestial-palace"] .omnibox:focus-within,
+:root[data-wallpaper="celestial-palace"] .omnibox:focus-within {
+  border-color: #2dd4bf;
+  box-shadow: 0 0 0 3px rgb(45 212 191 / 25%), 0 0 16px rgb(20 184 166 / 30%);
+}
+
+/* New Wallpapers for New Tab Page */
+.new-tab-page[data-new-tab-background="cyber-butterfly"],
+.new-tab-page[data-new-tab-background="tokyo-night"],
+.new-tab-page[data-new-tab-background="celestial-palace"] {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: #0a0b12;
+  --wallpaper-panel: rgb(16 18 28 / 88%);
+  --wallpaper-panel-hover: rgb(26 30 46 / 95%);
+  --wallpaper-line: rgb(168 85 247 / 28%);
+}
+.new-tab-page[data-new-tab-background="tokyo-night"] {
+  background: #080d1a;
+  --wallpaper-panel: rgb(14 22 42 / 88%);
+  --wallpaper-panel-hover: rgb(22 34 62 / 95%);
+  --wallpaper-line: rgb(0 210 255 / 28%);
+}
+.new-tab-page[data-new-tab-background="celestial-palace"] {
+  background: #061317;
+  --wallpaper-panel: rgb(10 31 38 / 88%);
+  --wallpaper-panel-hover: rgb(18 48 58 / 95%);
+  --wallpaper-line: rgb(45 212 191 / 28%);
+}
+.new-tab-page[data-new-tab-background="cyber-butterfly"] .newtab-wallpaper::after {
+  background: linear-gradient(90deg, rgb(10 11 18 / 95%) 0%, rgb(10 11 18 / 88%) 32%, rgb(10 11 18 / 60%) 56%, rgb(10 11 18 / 15%) 80%, rgb(10 11 18 / 2%) 100%);
+}
+.new-tab-page[data-new-tab-background="tokyo-night"] .newtab-wallpaper::after {
+  background: linear-gradient(90deg, rgb(8 13 26 / 95%) 0%, rgb(8 13 26 / 88%) 32%, rgb(8 13 26 / 60%) 56%, rgb(8 13 26 / 15%) 80%, rgb(8 13 26 / 2%) 100%);
+}
+.new-tab-page[data-new-tab-background="celestial-palace"] .newtab-wallpaper::after {
+  background: linear-gradient(90deg, rgb(6 19 23 / 95%) 0%, rgb(6 19 23 / 88%) 32%, rgb(6 19 23 / 60%) 56%, rgb(6 19 23 / 15%) 80%, rgb(6 19 23 / 2%) 100%);
+}
+.new-tab-page[data-new-tab-background="cyber-butterfly"] .hero-search {
+  background: var(--wallpaper-panel);
+  border-color: var(--wallpaper-line);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 40%), 0 0 18px rgb(168 85 247 / 22%);
+}
+.new-tab-page[data-new-tab-background="tokyo-night"] .hero-search {
+  background: var(--wallpaper-panel);
+  border-color: var(--wallpaper-line);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 40%), 0 0 18px rgb(0 210 255 / 22%);
+}
+.new-tab-page[data-new-tab-background="celestial-palace"] .hero-search {
+  background: var(--wallpaper-panel);
+  border-color: var(--wallpaper-line);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 40%), 0 0 18px rgb(45 212 191 / 22%);
+}
+.new-tab-page[data-new-tab-background="cyber-butterfly"] .saved-card,
+.new-tab-page[data-new-tab-background="cyber-butterfly"] .quick-link-symbol,
+.new-tab-page[data-new-tab-background="tokyo-night"] .saved-card,
+.new-tab-page[data-new-tab-background="tokyo-night"] .quick-link-symbol,
+.new-tab-page[data-new-tab-background="celestial-palace"] .saved-card,
+.new-tab-page[data-new-tab-background="celestial-palace"] .quick-link-symbol {
+  background: var(--wallpaper-panel);
+  border-color: var(--wallpaper-line);
+}
+.new-tab-page[data-new-tab-background="cyber-butterfly"] .saved-card:hover {
+  background: var(--wallpaper-panel-hover);
+  border-color: #a855f7;
+}
+.new-tab-page[data-new-tab-background="tokyo-night"] .saved-card:hover {
+  background: var(--wallpaper-panel-hover);
+  border-color: #00d2ff;
+}
+.new-tab-page[data-new-tab-background="celestial-palace"] .saved-card:hover {
+  background: var(--wallpaper-panel-hover);
+  border-color: #2dd4bf;
 }

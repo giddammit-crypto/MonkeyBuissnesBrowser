@@ -9,12 +9,14 @@ export interface TabSnapshot {
   canGoBack: boolean;
   canGoForward: boolean;
   isMuted: boolean;
+  isAudible?: boolean;
   isPinned: boolean;
   isPrivate: boolean;
   isInternal: boolean;
   zoomFactor?: number;
   lifecycle: TabLifecycle;
   workspaceId: string;
+  canDownloadMedia?: boolean;
 }
 
 export interface HistoryEntry {
@@ -29,6 +31,7 @@ export interface BookmarkEntry {
   url: string;
   title: string;
   createdAt: number;
+  favicon?: string;
 }
 
 export interface DownloadEntry {
@@ -58,15 +61,15 @@ export interface WorkspaceEntry {
   tabIds: string[];
 }
 
-export type NewTabBackground = 'portrait' | 'plain';
+export type NewTabBackground = 'portrait' | 'plain' | 'cyberpink' | 'cyberpink-fuji' | 'cyber-butterfly' | 'tokyo-night' | 'celestial-palace';
 
 export interface BrowserSettings {
   theme: 'light' | 'dark' | 'system';
   sidebarCollapsed: boolean;
   searchEngine: string;
   newTabBackground: NewTabBackground;
-  appearancePreset?: 'classic' | 'detroit';
-  accentColor?: 'blue' | 'teal' | 'violet' | 'rose';
+  appearancePreset?: 'classic' | 'detroit' | 'cyberpink' | 'cyberpink-fuji' | 'cyber-butterfly' | 'tokyo-night' | 'celestial-palace';
+  accentColor?: 'blue' | 'teal' | 'violet' | 'rose' | 'pink';
   wallpaperDim?: number;
   sleepAfterMinutes: 5 | 15 | 30 | 60 | 0;
   adBlockEnabled?: boolean;
@@ -130,6 +133,52 @@ export interface VpnSnapshot {
   errors: string[];
 }
 
+export interface BrowsecServer {
+  host: string;
+  port: number;
+}
+
+export interface BrowsecCountry {
+  code: string;
+  name: string;
+  nameEn: string;
+  flag: string;
+  ping: number;
+  serverHost: string;
+  servers?: BrowsecServer[];
+  timezoneOffset?: number;
+}
+
+export interface BrowsecSmartRule {
+  id?: string;
+  domain: string;
+  country: string; // country code like 'nl', 'us', etc. or 'direct'
+  countryCode?: string; // alias for compatibility
+  enabled: boolean;
+}
+
+export interface BrowsecState {
+  enabled: boolean;
+  country: string;
+  selectedCountry?: string; // alias for compatibility
+  smartSettingsEnabled: boolean;
+  smartRules: BrowsecSmartRule[];
+  webrtcProtection?: boolean;
+  webrtcLeakProtection?: boolean; // alias for compatibility
+  countries?: BrowsecCountry[];
+}
+
+export type BrowsecSnapshot = BrowsecState;
+
+export interface GoogleAccount {
+  id: string;
+  email: string;
+  name: string;
+  avatar?: string;
+  isActive: boolean;
+  addedAt: number;
+}
+
 export interface BrowserSnapshot {
   tabs: TabSnapshot[];
   activeTabId: string;
@@ -140,6 +189,9 @@ export interface BrowserSnapshot {
   workspaces: WorkspaceEntry[];
   settings: BrowserSettings;
   vpn: VpnSnapshot;
+  browsec: BrowsecState;
+  googleAccounts?: GoogleAccount[];
+  activeGoogleAccount?: GoogleAccount | null;
   adBlock: {
     enabled: boolean;
     blockedTotal: number;

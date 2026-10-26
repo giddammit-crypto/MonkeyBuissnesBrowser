@@ -7,12 +7,21 @@ import {
 } from 'electron';
 import type { BrowserApi, ChromeBounds } from '../shared/ipc';
 import type { BrowserSettings } from '../shared/types';
+import { getChromeUserAgent } from '../shared/chromiumIdentity';
 import { BrowserController } from './tabs/BrowserController';
 
 // Branding must not silently create a new profile. Test/explicit CLI profiles
 // remain authoritative and the installed browser keeps its original user data.
-if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', path.join(app.getPath('appData'), 'MonkeyBuissnesBrowser'));
-app.setName('SOUL-M8TE');
+if (!app.commandLine.hasSwitch('user-data-dir')) {
+  const soulDir = path.join(app.getPath('appData'), 'soulm8te');
+  const legacyDir = path.join(app.getPath('appData'), 'MonkeyBuissnesBrowser');
+  app.setPath('userData', fs.existsSync(legacyDir) && !fs.existsSync(soulDir) ? legacyDir : soulDir);
+}
+app.setName('soulm8te');
+app.setAppUserModelId('soulm8te');
+app.userAgentFallback = getChromeUserAgent();
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -115,12 +124,22 @@ function registerIpc(): void {
   ipcMain.handle('browser:update-settings', (event, patch: Partial<BrowserSettings>) => requireShell(event).updateSettings(patch));
   ipcMain.handle('browser:create-workspace', (event, name: string) => requireShell(event).createWorkspace(name));
   ipcMain.handle('browser:switch-workspace', (event, workspaceId: string) => requireShell(event).switchWorkspace(workspaceId));
+  ipcMain.handle('browser:delete-workspace', (event, workspaceId: string) => requireShell(event).deleteWorkspace(workspaceId));
   ipcMain.handle('extensions:list', event => requireShell(event).listLocalExtensions());
   ipcMain.handle('extensions:install', event => requireShell(event).installLocalExtension());
   ipcMain.handle('extensions:remove', (event, id: string) => requireShell(event).removeLocalExtension(id));
   ipcMain.handle('vpn:get-snapshot', (event) => requireShell(event).getVpnSnapshot());
   ipcMain.handle('vpn:import', (event) => requireShell(event).importVpnConfig());
   ipcMain.handle('vpn:clear', (event) => requireShell(event).clearVpnConfig());
+  ipcMain.handle('browsec:get-snapshot', (event) => requireShell(event).getBrowsecSnapshot());
+  ipcMain.handle('browsec:get-countries', (event) => requireShell(event).getBrowsecCountries());
+  ipcMain.handle('browsec:toggle', (event, enabled?: boolean) => requireShell(event).toggleBrowsec(enabled));
+  ipcMain.handle('browsec:set-country', (event, code: string) => requireShell(event).setBrowsecCountry(code));
+  ipcMain.handle('browsec:set-webrtc-leak-protection', (event, enabled: boolean) => requireShell(event).setBrowsecWebRtcLeakProtection(enabled));
+  ipcMain.handle('browsec:add-smart-rule', (event, domain: string, country: string) => requireShell(event).addBrowsecSmartRule(domain, country));
+  ipcMain.handle('browsec:remove-smart-rule', (event, domain: string) => requireShell(event).removeBrowsecSmartRule(domain));
+  ipcMain.handle('browsec:toggle-smart-rule', (event, domain: string) => requireShell(event).toggleBrowsecSmartRule(domain));
+  ipcMain.handle('browsec:update', (event, patch: Partial<import('../shared/types').BrowsecState>) => requireShell(event).updateBrowsec(patch));
   ipcMain.handle('browser:clear-history-cookies', (event) => requireShell(event).clearHistoryAndCookies());
   ipcMain.handle('browser:discover-import-profiles', (event) => requireShell(event).discoverImportProfiles());
   ipcMain.handle('browser:import-data', (event, input: { profileId: string; data: import('../shared/types').ImportDataKind[] }) => requireShell(event).importBrowserData(input));
@@ -128,6 +147,57 @@ function registerIpc(): void {
   ipcMain.handle('browser:delete-saved-password', (event, id: string) => requireShell(event).deleteSavedPassword(id));
   ipcMain.handle('browser:fill-saved-password', (event, tabId: string, id: string) => requireShell(event).fillSavedPassword(tabId, id));
   ipcMain.handle('browser:set-chrome-bounds', (event, bounds: ChromeBounds) => requireShell(event).setChromeBounds(bounds));
+  ipcMain.handle('browser:set-popover-open', (event, open: boolean) => requireShell(event).setPopoverOpen(open));
+  ipcMain.handle('browser:reorder-tab', (event, tabId: string, targetTabId: string) => requireShell(event).reorderTab(tabId, targetTabId));
+  ipcMain.handle('browser:download-media-url', (event, url: string, filename?: string, isAudio?: boolean) => requireShell(event).downloadMediaUrl(url, filename, isAudio));
+  ipcMain.handle('browser:delete-download', (event, downloadId: string, deleteFile?: boolean) => requireShell(event).deleteDownload(downloadId, deleteFile));
+  ipcMain.handle('browser:add-google-account', (event, email: string, name?: string) => requireShell(event).addGoogleAccount(email, name));
+  ipcMain.handle('browser:switch-google-account', (event, accountId: string) => requireShell(event).switchGoogleAccount(accountId));
+  ipcMain.handle('browser:remove-google-account', (event, accountId: string) => requireShell(event).removeGoogleAccount(accountId));
+  ipcMain.on('page:download-media', (event, data: { url: string; filename?: string; isAudio?: boolean }) => {
+    if (data?.url && typeof data.url === 'string' && (data.url.startsWith('https://') || data.url.startsWith('http://'))) {
+      controller?.downloadMediaUrl(data.url, data.filename, data.isAudio);
+    }
+  });
+  ipcMain.on('page:media-detected', (event, data: { hasVideo?: boolean; hasAudio?: boolean }) => {
+    controller?.markTabHasMedia(event.sender.id, Boolean(data?.hasVideo || data?.hasAudio));
+  });
+  ipcMain.on('page:audio-stream-captured', (event, data: { url: string; title?: string; artist?: string; filename?: string }) => {
+    if (data?.url && typeof data.url === 'string') {
+      controller?.registerCapturedAudio(event.sender.id, data.url, data.title, data.artist, data.filename);
+    }
+  });
+  ipcMain.on('page:google-account-detected', (_event, data: { email: string; name?: string; avatar?: string }) => {
+    if (data?.email) {
+      controller?.registerGoogleAccount(data.email, data.name, data.avatar);
+    }
+  });
+  ipcMain.on('page:get-theme', (event) => {
+    const settings = controller?.stores.settings.get();
+    const bg = settings?.newTabBackground ?? 'portrait';
+    let appearance = settings?.appearancePreset ?? 'classic';
+    if (!appearance || appearance === 'classic') {
+      if (bg === 'cyberpink') appearance = 'cyberpink';
+      else if (bg === 'cyberpink-fuji') appearance = 'cyberpink-fuji';
+      else if (bg === 'cyber-butterfly') appearance = 'cyber-butterfly';
+      else if (bg === 'tokyo-night') appearance = 'tokyo-night';
+      else if (bg === 'celestial-palace') appearance = 'celestial-palace';
+      else if (bg === 'portrait') appearance = 'detroit';
+    }
+    event.returnValue = {
+      theme: settings?.theme ?? 'dark',
+      wallpaper: bg,
+      appearance,
+      accent: settings?.accentColor ?? (
+        bg === 'cyberpink' ? 'pink'
+        : bg === 'cyberpink-fuji' ? 'violet'
+        : bg === 'cyber-butterfly' ? 'violet'
+        : bg === 'tokyo-night' ? 'blue'
+        : bg === 'celestial-palace' ? 'teal'
+        : 'blue'
+      ),
+    };
+  });
   ipcMain.handle('window:minimize', (event) => requireShell(event).minimizeWindow());
   ipcMain.handle('window:toggle-maximize', (event) => requireShell(event).toggleMaximizeWindow());
   ipcMain.handle('window:close', (event) => requireShell(event).closeWindow());
@@ -152,6 +222,11 @@ void app.whenReady().then(createApplication);
 
 app.on('activate', () => {
   void createApplication();
+});
+
+app.on('login', (event, _webContents, _authInfo, _authResponseDetails, callback) => {
+  event.preventDefault();
+  callback('', '');
 });
 
 app.on('window-all-closed', () => {

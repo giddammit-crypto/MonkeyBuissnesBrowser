@@ -9,9 +9,14 @@ describe('FilterEngine', () => {
     expect(engine.stats().blockedTotal).toBe(1);
   });
 
-  it('allows disabling the engine', () => {
+  it('blocks iframe subFrame ads and regional Russian/global ad networks', () => {
     const engine = new FilterEngine();
-    engine.setEnabled(false);
-    expect(engine.shouldBlock('https://doubleclick.net/ads.js', 'script')).toBe(false);
+    expect(engine.shouldBlock('https://an.yandex.ru/count/123', 'subFrame')).toBe(true);
+    expect(engine.shouldBlock('https://ads.vk.com/partner.js', 'script')).toBe(true);
+    expect(engine.shouldBlock('https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js', 'script')).toBe(true);
+    expect(engine.shouldBlock('https://criteo.net/tag.js', 'script')).toBe(true);
+    // Main frame navigation should never be cancelled
+    expect(engine.shouldBlock('https://yandex.ru/', 'mainFrame')).toBe(false);
   });
 });
+

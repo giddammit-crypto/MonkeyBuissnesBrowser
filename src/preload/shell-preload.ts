@@ -14,6 +14,7 @@ const api: BrowserApi = {
   findInPage: (tabId, text, forward) => ipcRenderer.invoke('browser:find', tabId, text, forward),
   stopFindInPage: (tabId) => ipcRenderer.invoke('browser:stop-find', tabId),
   controlDownload: (downloadId, action) => ipcRenderer.invoke('browser:control-download', downloadId, action),
+  deleteDownload: (downloadId, deleteFile) => ipcRenderer.invoke('browser:delete-download', downloadId, deleteFile),
   setPrivateProxy: (proxy) => ipcRenderer.invoke('browser:private-proxy', proxy),
   closePrivateTabs: () => ipcRenderer.invoke('browser:close-private-tabs'),
   closeTab: (tabId) => ipcRenderer.invoke('browser:close-tab', tabId),
@@ -40,12 +41,22 @@ const api: BrowserApi = {
   updateSettings: (patch: Partial<BrowserSettings>) => ipcRenderer.invoke('browser:update-settings', patch),
   createWorkspace: (name) => ipcRenderer.invoke('browser:create-workspace', name),
   switchWorkspace: (workspaceId) => ipcRenderer.invoke('browser:switch-workspace', workspaceId),
+  deleteWorkspace: (workspaceId) => ipcRenderer.invoke('browser:delete-workspace', workspaceId),
   listLocalExtensions: () => ipcRenderer.invoke('extensions:list'),
   installLocalExtension: () => ipcRenderer.invoke('extensions:install'),
   removeLocalExtension: (id) => ipcRenderer.invoke('extensions:remove', id),
   getVpnSnapshot: () => ipcRenderer.invoke('vpn:get-snapshot'),
   importVpnConfig: () => ipcRenderer.invoke('vpn:import'),
   clearVpnConfig: () => ipcRenderer.invoke('vpn:clear'),
+  getBrowsecSnapshot: () => ipcRenderer.invoke('browsec:get-snapshot'),
+  getBrowsecCountries: () => ipcRenderer.invoke('browsec:get-countries'),
+  toggleBrowsec: (enabled?: boolean) => ipcRenderer.invoke('browsec:toggle', enabled),
+  setBrowsecCountry: (code: string) => ipcRenderer.invoke('browsec:set-country', code),
+  setBrowsecWebRtcLeakProtection: (enabled: boolean) => ipcRenderer.invoke('browsec:set-webrtc-leak-protection', enabled),
+  addBrowsecSmartRule: (domain: string, country: string) => ipcRenderer.invoke('browsec:add-smart-rule', domain, country),
+  removeBrowsecSmartRule: (domain: string) => ipcRenderer.invoke('browsec:remove-smart-rule', domain),
+  toggleBrowsecSmartRule: (domain: string) => ipcRenderer.invoke('browsec:toggle-smart-rule', domain),
+  updateBrowsec: (patch) => ipcRenderer.invoke('browsec:update', patch),
   clearHistoryAndCookies: () => ipcRenderer.invoke('browser:clear-history-cookies'),
   discoverImportProfiles: () => ipcRenderer.invoke('browser:discover-import-profiles'),
   importBrowserData: (input) => ipcRenderer.invoke('browser:import-data', input),
@@ -53,6 +64,12 @@ const api: BrowserApi = {
   deleteSavedPassword: (id) => ipcRenderer.invoke('browser:delete-saved-password', id),
   fillSavedPassword: (tabId, id) => ipcRenderer.invoke('browser:fill-saved-password', tabId, id),
   setChromeBounds: (bounds: ChromeBounds) => ipcRenderer.invoke('browser:set-chrome-bounds', bounds),
+  setPopoverOpen: (open: boolean) => ipcRenderer.invoke('browser:set-popover-open', open),
+  reorderTab: (tabId, targetTabId) => ipcRenderer.invoke('browser:reorder-tab', tabId, targetTabId),
+  downloadMediaUrl: (url, filename, isAudio) => ipcRenderer.invoke('browser:download-media-url', url, filename, isAudio),
+  addGoogleAccount: (email, name) => ipcRenderer.invoke('browser:add-google-account', email, name),
+  switchGoogleAccount: (accountId) => ipcRenderer.invoke('browser:switch-google-account', accountId),
+  removeGoogleAccount: (accountId) => ipcRenderer.invoke('browser:remove-google-account', accountId),
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
@@ -65,6 +82,11 @@ const api: BrowserApi = {
     const listener = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof callback>[0]) => callback(payload);
     ipcRenderer.on('browser:event', listener);
     return () => ipcRenderer.removeListener('browser:event', listener);
+  },
+  onBrowsecSnapshot: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof callback>[0]) => callback(snapshot);
+    ipcRenderer.on('browsec:snapshot', listener);
+    return () => ipcRenderer.removeListener('browsec:snapshot', listener);
   },
 };
 

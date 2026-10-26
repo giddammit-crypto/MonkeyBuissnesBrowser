@@ -47,3 +47,31 @@ describe('omnibox host parsing regressions', () => {
     expect(parseOmniboxInput('how: why', 'https://search.test/?q=')).toEqual({ kind: 'search', url: 'https://search.test/?q=how%3A%20why' });
   });
 });
+
+describe('getOmniboxSuggestions', () => {
+  it('returns empty array for blank query', async () => {
+    const { getOmniboxSuggestions } = await import('../../src/shared/omniboxSuggestions');
+    expect(getOmniboxSuggestions('')).toEqual([]);
+    expect(getOmniboxSuggestions('   ')).toEqual([]);
+  });
+
+  it('matches popular sites for russian and english queries', async () => {
+    const { getOmniboxSuggestions } = await import('../../src/shared/omniboxSuggestions');
+    const vkSug = getOmniboxSuggestions('вк');
+    expect(vkSug.some((s) => s.domain === 'vk.com')).toBe(true);
+
+    const pinSug = getOmniboxSuggestions('pin');
+    expect(pinSug.some((s) => s.domain === 'pinterest.com')).toBe(true);
+
+    const ytSug = getOmniboxSuggestions('you');
+    expect(ytSug.some((s) => s.domain === 'youtube.com')).toBe(true);
+  });
+
+  it('includes web search fallback as last item', async () => {
+    const { getOmniboxSuggestions } = await import('../../src/shared/omniboxSuggestions');
+    const results = getOmniboxSuggestions('cats and dogs');
+    const last = results[results.length - 1];
+    expect(last.kind).toBe('search');
+    expect(last.url).toContain('cats%20and%20dogs');
+  });
+});

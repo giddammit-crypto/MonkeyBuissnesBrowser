@@ -31,7 +31,10 @@ describe('site-aware cookie policy', () => {
       ['https://accounts.google.com/RotateCookies', 'https://www.youtube.com/'],
       ['https://accounts.youtube.com/CheckConnection', 'https://accounts.google.com/'],
       ['https://www.youtube.com/accounts/SetSID', 'https://accounts.google.com/'],
+      ['https://www.youtube.com/signin?action_handle_signin=true', 'https://accounts.google.com/'],
       ['https://accounts.google.com/ListAccounts', 'https://music.youtube.com/'],
+      ['https://www.youtube.com/youtubei/v1/verifyAccount', 'https://accounts.google.com/'],
+      ['https://youtubei.googleapis.com/youtubei/v1/account/account_menu', 'https://www.youtube.com/'],
     ]) {
       expect(isGoogleYouTubeSignInRequest(request, top)).toBe(true);
       expect(policy(request, top)).toBe(false);
@@ -48,11 +51,21 @@ describe('site-aware cookie policy', () => {
       ['http://accounts.google.com/', 'https://www.youtube.com/'],
       ['https://accounts.google.com:8443/', 'https://www.youtube.com/'],
       ['https://user:pass@accounts.google.com/', 'https://www.youtube.com/'],
-      ['https://www.youtube.com/youtubei/v1/browse', 'https://www.google.com/'],
       ['https://www.youtube.com/accounts-evil/SetSID', 'https://accounts.google.com/'],
     ]) {
       expect(isGoogleYouTubeSignInRequest(request, top)).toBe(false);
       expect(policy(request, top)).toBe(true);
+    }
+  });
+  it('allows Pinterest and federated Google sign-in and one-tap', () => {
+    for (const [request, top] of [
+      ['https://accounts.google.com/gsi/client', 'https://www.pinterest.com/'],
+      ['https://accounts.google.com/ListAccounts?source=gsi', 'https://ru.pinterest.com/'],
+      ['https://accounts.google.com/rotatecookies', 'https://pinterest.ru/'],
+      ['https://smartlock.google.com/iframe/request', 'https://www.pinterest.com/'],
+      ['https://apis.google.com/js/api.js', 'https://www.pinterest.com/'],
+    ]) {
+      expect(policy(request, top)).toBe(false);
     }
   });
   it('permits requesting storage access only in eligible secure normal contexts', () => {
@@ -79,6 +92,7 @@ describe('Google auth help and explicit external navigation', () => {
   it('opens a fresh supported sign-in entry for rejected YouTube logins without copying hostile continue URLs', () => {
     expect(getExternalPageUrl('https://accounts.google.com/v3/signin/rejected?continue=https%3A%2F%2Fwww.youtube.com%2F')).toBe('https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.youtube.com%2F');
     expect(getExternalPageUrl('https://accounts.google.com/signin/rejected?continue=https://evil.test')).not.toContain('evil.test');
+    expect(getExternalPageUrl('https://www.youtube.com/')).toBe('https://www.youtube.com/');
     expect(getExternalPageUrl('javascript:alert(1)')).toBeNull();
     expect(getExternalPageUrl('https://username:password@example.com')).toBeNull();
   });

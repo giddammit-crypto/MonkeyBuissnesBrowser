@@ -43,7 +43,6 @@ function rows(database: DatabaseSync, query: string): Row[] { const statement = 
 function columns(database: DatabaseSync, table: string): Set<string> { return new Set(rows(database, `PRAGMA table_info("${table}")`).map((row) => text(row.name))); }
 function optionalColumn(available: Set<string>, name: string, fallback: string): string { return available.has(name) ? `"${name}"` : `${fallback} AS "${name}"`; }
 
-/** A SQLite read transaction includes committed WAL rows without copying only the main file. */
 function readSnapshot<T>(databasePath: string, read: (database: DatabaseSync) => T): T {
   let database: DatabaseSync | undefined;
   try {
@@ -53,7 +52,29 @@ function readSnapshot<T>(databasePath: string, read: (database: DatabaseSync) =>
     database.exec('COMMIT');
     return result;
   } catch {
-    throw new Error('Не удалось прочитать SQLite-профиль. Закройте исходный браузер и повторите импорт; исходные файлы не изменены.');
+    database?.close();
+    database = undefined;
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-import-'));
+    const tempPath = path.join(tempDir, path.basename(databasePath));
+    try {
+      fs.copyFileSync(databasePath, tempPath);
+      for (const ext of ['-wal', '-shm', '-journal']) {
+        const extra = `${databasePath}${ext}`;
+        if (fs.existsSync(extra)) {
+          try { fs.copyFileSync(extra, `${tempPath}${ext}`); } catch {}
+        }
+      }
+      database = new DatabaseSync(tempPath, { readOnly: true });
+      database.exec('PRAGMA busy_timeout = 2000; PRAGMA query_only = ON; BEGIN DEFERRED');
+      const result = read(database);
+      database.exec('COMMIT');
+      return result;
+    } catch {
+      throw new Error('Не удалось прочитать SQLite-профиль. Закройте исходный браузер и повторите импорт; исходные файлы не изменены.');
+    } finally {
+      database?.close();
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+    }
   } finally { database?.close(); }
 }
 
@@ -132,9 +153,9 @@ export class BrowserDataImporter {
     for (const profilePath of [root, ...this.directories(root)]) {
       const available: ImportDataKind[] = [];
       if (fs.existsSync(path.join(profilePath, 'History'))) available.push('history');
-      if (fs.existsSync(path.join(profilePath, 'Bookmarks'))) available.push('bookmarks');
+      if (fs.existsSync(path.join(profilePath, 'Bookmarks')) || fs.existsSync(path.join(profilePath, 'AccountBookmarks'))) available.push('bookmarks');
       if (fs.existsSync(this.chromiumCookiePath(profilePath))) available.push('cookies');
-      if (fs.existsSync(path.join(profilePath, 'Login Data'))) available.push('passwords');
+      if (fs.existsSync(path.join(profilePath, 'Login Data')) || fs.existsSync(path.join(profilePath, 'Login Data For Account'))) available.push('passwords');
       if (!available.length) continue;
       const preferences = safeReadJson(path.join(profilePath, 'Preferences')) as { profile?: { name?: string } } | undefined;
       const name = text(state?.profile?.info_cache?.[path.basename(profilePath)]?.name) || text(preferences?.profile?.name) || (profilePath === root ? 'Основной профиль' : path.basename(profilePath));
@@ -195,23 +216,27 @@ export class BrowserDataImporter {
       const source = readSnapshot(path.join(profile.path, 'places.sqlite'), (database) => rows(database, `SELECT p.url, COALESCE(b.title, p.title, p.url) AS title, b.dateAdded AS created_at FROM moz_bookmarks b JOIN moz_places p ON b.fk = p.id WHERE b.type = 1 ORDER BY b.dateAdded DESC LIMIT ${MAX_ROWS}`));
       return this.mergeBookmarks(source.filter((row) => webUrl(row.url)).map((row) => ({ id: crypto.randomUUID(), url: webUrl(row.url)!.href, title: text(row.title) || text(row.url), createdAt: unixMicros(row.created_at) })), source.length);
     }
-    const document = safeReadJson(path.join(profile.path, 'Bookmarks')) as { roots?: Record<string, unknown> } | undefined;
-    if (!document?.roots || typeof document.roots !== 'object') throw new Error('Файл закладок повреждён или недоступен.');
+    const bookmarkFiles = ['Bookmarks', 'AccountBookmarks'].filter((name) => fs.existsSync(path.join(profile.path, name)));
+    if (!bookmarkFiles.length) throw new Error('Файл закладок повреждён или недоступен.');
     const source: BookmarkEntry[] = [];
     let total = 0;
-    let visited = 0;
-    const pending: unknown[] = Object.values(document.roots);
-    while (pending.length) {
-      if (++visited > 50_000) throw new Error('Файл содержит слишком много вложенных папок. Используйте экспорт HTML по частям.');
-      const node = pending.pop();
-      if (!node || typeof node !== 'object') continue;
-      const item = node as Record<string, unknown>;
-      if (Array.isArray(item.children)) pending.push(...item.children.slice(0, 20_000));
-      if (item.type !== 'url') continue;
-      total += 1;
-      if (total > 20_000) throw new Error('В профиле больше 20 000 закладок. Используйте экспорт HTML по частям.');
-      const url = webUrl(item.url);
-      if (url) source.push({ id: crypto.randomUUID(), url: url.href, title: text(item.name) || url.href, createdAt: chromiumTime(item.date_added) });
+    for (const file of bookmarkFiles) {
+      const document = safeReadJson(path.join(profile.path, file)) as { roots?: Record<string, unknown> } | undefined;
+      if (!document?.roots || typeof document.roots !== 'object') continue;
+      let visited = 0;
+      const pending: unknown[] = Object.values(document.roots);
+      while (pending.length) {
+        if (++visited > 50_000) break;
+        const node = pending.pop();
+        if (!node || typeof node !== 'object') continue;
+        const item = node as Record<string, unknown>;
+        if (Array.isArray(item.children)) pending.push(...item.children.slice(0, 20_000));
+        if (item.type !== 'url') continue;
+        total += 1;
+        if (total > 20_000) break;
+        const url = webUrl(item.url);
+        if (url) source.push({ id: crypto.randomUUID(), url: url.href, title: text(item.name) || url.href, createdAt: chromiumTime(item.date_added) });
+      }
     }
     return this.mergeBookmarks(source, total);
   }
@@ -285,7 +310,14 @@ export class BrowserDataImporter {
       const total = Array.isArray(document?.logins) ? document.logins.length : 0;
       return { imported: 0, skipped: total, warnings: ['Пароли Firefox защищены NSS. Используйте официальный экспорт паролей Firefox в CSV и кнопку импорта CSV; NSS-защита не обходится.'] };
     }
-    const source = readSnapshot(path.join(profile.path, 'Login Data'), (database) => rows(database, `SELECT origin_url, username_value, hex(password_value) AS password_hex FROM logins LIMIT ${MAX_ROWS}`));
+    const loginFiles = ['Login Data', 'Login Data For Account'].filter((name) => fs.existsSync(path.join(profile.path, name)));
+    const source: Row[] = [];
+    for (const file of loginFiles) {
+      try {
+        const fileRows = readSnapshot(path.join(profile.path, file), (database) => rows(database, `SELECT origin_url, username_value, hex(password_value) AS password_hex FROM logins LIMIT ${MAX_ROWS}`));
+        source.push(...fileRows);
+      } catch {}
+    }
     if (!this.passwords.canPersistSecurely()) return { imported: 0, skipped: source.length, warnings: ['Пароли не сохранены: защищённое системное хранилище Electron недоступно.'] };
     const keys = await getKeys(profile.browser as ChromiumBrowser, new Set(source.map((row) => Buffer.from(text(row.password_hex), 'hex').subarray(0, 3).toString('ascii'))));
     const records = source.map((row) => ({ origin: webUrl(row.origin_url)?.origin ?? '', username: text(row.username_value), password: decryptChromiumValue(text(row.password_hex), keys), browser: profile.browser })).filter((record): record is typeof record & { password: string } => Boolean(record.origin && record.password));

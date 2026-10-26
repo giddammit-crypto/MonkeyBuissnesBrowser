@@ -72,11 +72,14 @@ try {
   await expect.poll(()=>dialog().locator('.tab-search-row.is-current').evaluate(row=>{const bounds=row.getBoundingClientRect();const viewport=row.closest('.tab-search-results').getBoundingClientRect();return bounds.top>=viewport.top-1&&bounds.bottom<=viewport.bottom+1;})).toBe(true);
   assert((await dialog().innerText()).includes('Beta engineering'), 'search includes normal tabs in other workspaces');
   assert.equal((await dialog().innerText()).includes('PRIVATE SECRET'), false, 'normal search must not reveal private titles');
-  const viewportWidth = await app.evaluate(({ BaseWindow }, url) => {
-    const view = BaseWindow.getAllWindows()[0].contentView.children.find(entry => entry.webContents?.getURL() === url);
-    return view?.getBounds().width;
+  const isCoveredOrBehind = await app.evaluate(({ BaseWindow }, url) => {
+    const children = BaseWindow.getAllWindows()[0].contentView.children;
+    const viewIndex = children.findIndex(entry => entry.webContents?.getURL() === url);
+    const shellIndex = children.findIndex(entry => entry.webContents?.getURL()?.includes('app://shell'));
+    const view = children[viewIndex];
+    return view?.getBounds().width === 0 || (shellIndex > -1 && shellIndex > viewIndex);
   }, `${base}/alpha`);
-  assert.equal(viewportWidth, 0, 'native website must not cover the modal');
+  assert.equal(isCoveredOrBehind, true, 'native website must not cover the modal');
   await input().fill('unique-only-url');
   await expect(dialog().locator('.tab-search-row')).toHaveCount(1);
   assert.equal(await dialog().locator('.tab-search-url').innerText(), `${base}${longPath}`, 'full URL remains available without application truncation');

@@ -16,18 +16,89 @@ export function normalizeCookieExceptions(value: unknown): string[] {
   return [...new Set(value.filter((entry): entry is string => typeof entry === 'string' && entry.length <= 2048).map(getSiteKey).filter((entry): entry is string => Boolean(entry)))].slice(0, 100);
 }
 
-/** YouTube's account hand-off crosses registrable domains. Never allow all Google traffic. */
+/** Google and YouTube exchange auth state across registrable domains during sign-in. */
 export function isGoogleYouTubeSignInRequest(requestUrl: string, topLevelUrl: string): boolean {
   try {
     const request = new URL(requestUrl);
     const top = new URL(topLevelUrl);
     if (request.protocol !== 'https:' || top.protocol !== 'https:' || request.port || top.port || request.username || request.password || top.username || top.password) return false;
+    const requestSite = getSiteKey(request.href);
     const topSite = getSiteKey(top.href);
-    const accountHost = request.hostname === 'accounts.google.com' || request.hostname === 'accounts.youtube.com';
-    if (topSite === 'https://youtube.com' && accountHost) return true;
-    if (topSite !== 'https://google.com') return false;
-    return request.hostname === 'accounts.youtube.com' ||
-      (['youtube.com', 'www.youtube.com'].includes(request.hostname) && request.pathname.startsWith('/accounts/'));
+    if (topSite === 'https://youtube.com' && requestSite === 'https://google.com') {
+      return request.hostname === 'accounts.google.com' ||
+        request.hostname === 'myaccount.google.com' ||
+        request.hostname === 'apis.google.com' ||
+        request.hostname === 'accounts.youtube.com' ||
+        request.hostname === 'ogs.google.com' ||
+        request.hostname === 'play.google.com' ||
+        request.hostname === 'www.google.com';
+    }
+    if (topSite === 'https://youtube.com' && (requestSite === 'https://googleapis.com' || request.hostname.endsWith('.googleapis.com'))) {
+      return request.hostname === 'youtubei.googleapis.com' ||
+        request.hostname === 'youtube.googleapis.com';
+    }
+    if (topSite === 'https://google.com' && requestSite === 'https://youtube.com') {
+      return request.hostname === 'accounts.youtube.com' ||
+        (['youtube.com', 'www.youtube.com'].includes(request.hostname) &&
+          /^\/(?:accounts|youtubei|signin|signin_passive|oops|redirect|service_ajax)(?:\/|$)/i.test(request.pathname));
+    }
+    return false;
+  } catch { return false; }
+}
+
+export function isPinterestSignInOrVerification(requestUrl: string, topLevelUrl: string): boolean {
+  try {
+    const request = new URL(requestUrl);
+    const top = new URL(topLevelUrl);
+    if (request.protocol !== 'https:' || top.protocol !== 'https:' || request.port || top.port || request.username || request.password || top.username || top.password) return false;
+    const topHost = top.hostname.toLowerCase();
+    if (topHost.endsWith('.test') || topHost.endsWith('.example')) return false;
+    const topSite = getSiteKey(top.href);
+    const isPinterest = topSite === 'https://pinterest.com' ||
+      topSite === 'https://pinterest.ru' ||
+      topHost === 'pinterest.com' ||
+      topHost.endsWith('.pinterest.com') ||
+      topHost === 'pinterest.ru' ||
+      topHost.endsWith('.pinterest.ru') ||
+      topHost.includes('pinterest.');
+    if (!isPinterest) return false;
+
+    const host = request.hostname.toLowerCase();
+    // Arkose Labs bot challenge (required by Pinterest login)
+    if (host === 'arkoselabs.com' || host.endsWith('.arkoselabs.com')) return true;
+    // Google Sign-In and One-Tap on Pinterest
+    if (
+      host === 'accounts.google.com' ||
+      host === 'apis.google.com' ||
+      host === 'smartlock.google.com' ||
+      host.endsWith('.google.com') ||
+      host.endsWith('.googleapis.com') ||
+      host.endsWith('.gstatic.com')
+    ) return true;
+    // reCAPTCHA on Pinterest
+    if (host === 'recaptcha.net' || host.endsWith('.recaptcha.net') || (host === 'www.google.com' && request.pathname.startsWith('/recaptcha/'))) return true;
+    // Facebook login on Pinterest
+    if (host === 'facebook.com' || host.endsWith('.facebook.com') || host === 'connect.facebook.net') return true;
+    return false;
+  } catch { return false; }
+}
+
+export function isGoogleFederatedSignInRequest(requestUrl: string, topLevelUrl: string): boolean {
+  try {
+    const request = new URL(requestUrl);
+    const top = new URL(topLevelUrl);
+    if (request.protocol !== 'https:' || top.protocol !== 'https:' || request.port || top.port || request.username || request.password || top.username || top.password) return false;
+    const host = request.hostname.toLowerCase();
+    const topHost = top.hostname.toLowerCase();
+    if (topHost.endsWith('.test') || topHost.endsWith('.example')) return false;
+
+    if (host === 'accounts.google.com') {
+      return /^\/(?:gsi|_|ListAccounts|rotatecookies|o\/oauth2|oauth2|embedded|signin|ServiceLogin|AccountChooser)(?:\/|$)/i.test(request.pathname);
+    }
+    if (host === 'smartlock.google.com' || host === 'apis.google.com') {
+      return true;
+    }
+    return false;
   } catch { return false; }
 }
 
@@ -48,7 +119,11 @@ export function shouldStripThirdPartyCookies(input: {
   // An absent/opaque initiator must not silently disable protection.
   if (!topSite) return true;
   if (!input.isPrivate && input.exceptions?.includes(topSite)) return false;
-  if (!input.isPrivate && input.googleSignInCompatibility !== false && isGoogleYouTubeSignInRequest(input.requestUrl, input.topLevelUrl)) return false;
+  if (!input.isPrivate && input.googleSignInCompatibility !== false && (
+    isGoogleFederatedSignInRequest(input.requestUrl, input.topLevelUrl) ||
+    isGoogleYouTubeSignInRequest(input.requestUrl, input.topLevelUrl) ||
+    isPinterestSignInOrVerification(input.requestUrl, input.topLevelUrl)
+  )) return false;
   return requestSite !== topSite;
 }
 
@@ -63,7 +138,11 @@ export function canRequestStorageAccess(input: {
     const top = new URL(input.topLevelUrl);
     if (request.protocol !== 'https:' || top.protocol !== 'https:' || request.username || request.password || top.username || top.password) return false;
     return Boolean(input.exceptions?.includes(getSiteKey(top.href) || '')) ||
-      (input.googleSignInCompatibility !== false && isGoogleYouTubeSignInRequest(request.href, top.href));
+      (input.googleSignInCompatibility !== false && (
+        isGoogleFederatedSignInRequest(request.href, top.href) ||
+        isGoogleYouTubeSignInRequest(request.href, top.href) ||
+        isPinterestSignInOrVerification(request.href, top.href)
+      ));
   } catch { return false; }
 }
 
@@ -78,7 +157,7 @@ export function getGoogleAuthNotice(rawUrl: string): { title: string; message: s
     if (!denied) return null;
     return {
       title: 'Google ограничил вход в этом браузере',
-      message: 'Страница Google сообщает об отказе во входе. Открытие в другом браузере не переносит авторизацию обратно в SOUL-M8TE автоматически.',
+      message: 'Страница Google сообщает об отказе во входе. Открытие в другом браузере не переносит авторизацию обратно в soulm8te автоматически.',
     };
   } catch { return null; }
 }

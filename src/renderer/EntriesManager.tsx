@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { BookmarkEntry, BrowserSnapshot } from "../shared/types";
 import { userFacingError } from "./userFacingError";
+import SiteFavicon from "./SiteFavicon";
 import "./entries-manager.css";
 
 type BookmarkEditor = { id?: string; title: string; url: string };
@@ -252,7 +253,7 @@ export default function EntriesManager({
                 title={entry.url}
               >
                 <span className="entry-icon">
-                  <Globe2 size={19} />
+                  <SiteFavicon url={entry.url} favicon={(entry as any).favicon} size={19} />
                 </span>
                 <span className="entry-copy">
                   <strong>{entry.title || new URL(entry.url).hostname}</strong>
