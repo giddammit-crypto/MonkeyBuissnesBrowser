@@ -495,3 +495,208 @@
   box-shadow: 0 0 6px #22c55e;
   pointer-events: none;
 }
+
+/* Server Health Check & 12-Hour Status Indicator Styles */
+.browsec-health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.browsec-health-badge.online {
+  background: rgb(34 197 94 / 14%);
+  border-color: rgb(34 197 94 / 35%);
+  color: #16a34a;
+}
+
+[data-theme="dark"] .browsec-health-badge.online {
+  background: rgb(34 197 94 / 20%);
+  border-color: rgb(34 197 94 / 45%);
+  color: #4ade80;
+}
+
+.browsec-health-badge.offline {
+  background: rgb(239 68 68 / 14%);
+  border-color: rgb(239 68 68 / 35%);
+  color: #dc2626;
+}
+
+[data-theme="dark"] .browsec-health-badge.offline {
+  background: rgb(239 68 68 / 20%);
+  border-color: rgb(239 68 68 / 45%);
+  color: #f87171;
+}
+
+.status-indicator-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.status-indicator-dot.online {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.6);
+}
+
+.status-indicator-dot.offline {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+.location-caption-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.server-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.server-status-pill.online {
+  background: rgb(34 197 94 / 14%);
+  color: #16a34a;
+  border: 1px solid rgb(34 197 94 / 25%);
+}
+
+[data-theme="dark"] .server-status-pill.online {
+  color: #4ade80;
+}
+
+.server-status-pill.offline {
+  background: rgb(239 68 68 / 14%);
+  color: #dc2626;
+  border: 1px solid rgb(239 68 68 / 25%);
+}
+
+[data-theme="dark"] .server-status-pill.offline {
+  color: #f87171;
+}
+
+.last-checked-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 500;
+  background: var(--surface);
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.server-health-recheck-btn,
+.countries-refresh-health-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s ease;
+}
+
+.server-health-recheck-btn:hover:not(:disabled),
+.countries-refresh-health-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--surface-subtle);
+}
+
+.server-health-recheck-btn:disabled,
+.countries-refresh-health-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.location-health-notice {
+  font-size: 10px;
+  color: var(--accent);
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.countries-banner-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.countries-health-subtext {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-top: 1px;
+}
+
+.country-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
+
+.country-status-indicator.online {
+  background: rgb(34 197 94 / 12%);
+  color: #16a34a;
+}
+
+[data-theme="dark"] .country-status-indicator.online {
+  color: #4ade80;
+}
+
+.country-status-indicator.offline {
+  background: rgb(239 68 68 / 12%);
+  color: #dc2626;
+}
+
+[data-theme="dark"] .country-status-indicator.offline {
+  color: #f87171;
+}
+
+.ping-indicator.good { color: #16a34a; }
+.ping-indicator.medium { color: #d97706; }
+.ping-indicator.slow { color: #dc2626; }
+[data-theme="dark"] .ping-indicator.good { color: #4ade80; }
+[data-theme="dark"] .ping-indicator.medium { color: #fbbf24; }
+[data-theme="dark"] .ping-indicator.slow { color: #f87171; }
+
+.ping-dot.online { background: #22c55e; }
+.ping-dot.offline { background: #ef4444; }
+
+.ping-chip.good { color: #16a34a; font-weight: 700; }
+.ping-chip.medium { color: #d97706; }
+.ping-chip.slow { color: #dc2626; }
+

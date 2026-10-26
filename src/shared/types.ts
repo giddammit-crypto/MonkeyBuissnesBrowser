@@ -71,7 +71,7 @@ export type NewTabBackground = 'portrait' | 'plain' | 'cyberpink' | 'cyberpink-f
 export type AccentColor = 'blue' | 'teal' | 'violet' | 'rose' | 'pink' | 'white' | 'milk' | 'graphite';
 
 export interface BrowserSettings {
-  theme: 'light' | 'dark' | 'system';
+  theme: 'light' | 'dark' | 'graphite' | 'system';
   sidebarCollapsed: boolean;
   searchEngine: string;
   newTabBackground: NewTabBackground;
@@ -121,7 +121,10 @@ export interface PrivacyDashboardSnapshot {
     label: string;
     detail: string;
     proxyRule?: string;
+    serverStatus?: VpnServerHealth;
   };
+  serverHealth?: VpnServerHealth | null;
+  vpnHealth?: VpnHealthStatus | null;
   dns: {
     servers: string[];
     status: 'system' | 'unavailable';
@@ -134,7 +137,7 @@ export interface PrivacyDashboardSnapshot {
   };
   sitePermissions: PrivacySitePermission[];
   leakChecks: Array<{
-    id: 'external-ip' | 'dns' | 'webrtc' | 'third-party-cookies';
+    id: 'external-ip' | 'dns' | 'webrtc' | 'third-party-cookies' | 'server-health';
     label: string;
     status: PrivacyCheckStatus;
     detail: string;
@@ -198,6 +201,28 @@ export interface VpnSnapshot {
 export interface BrowsecServer {
   host: string;
   port: number;
+  online?: boolean;
+  latency?: number;
+}
+
+export type VpnServerStatus = 'online' | 'offline' | 'unknown';
+
+export interface VpnServerHealth {
+  countryCode: string;
+  serverHost: string;
+  port?: number;
+  status: VpnServerStatus;
+  ping: number;
+  lastChecked: number;
+  error?: string;
+}
+
+export interface VpnHealthStatus {
+  lastChecked: number | null;
+  nextScheduledCheck: number | null;
+  isChecking: boolean;
+  overallStatus: 'online' | 'offline' | 'degraded' | 'unknown';
+  servers: Record<string, VpnServerHealth>;
 }
 
 export interface BrowsecCountry {
@@ -209,6 +234,8 @@ export interface BrowsecCountry {
   serverHost: string;
   servers?: BrowsecServer[];
   timezoneOffset?: number;
+  status?: VpnServerStatus;
+  lastChecked?: number;
 }
 
 export interface BrowsecSmartRule {
@@ -228,6 +255,8 @@ export interface BrowsecState {
   webrtcProtection?: boolean;
   webrtcLeakProtection?: boolean; // alias for compatibility
   countries?: BrowsecCountry[];
+  healthStatus?: VpnHealthStatus;
+  serverStatus?: VpnServerHealth;
 }
 
 export type BrowsecSnapshot = BrowsecState;

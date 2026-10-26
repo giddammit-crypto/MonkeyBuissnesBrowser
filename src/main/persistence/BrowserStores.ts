@@ -148,7 +148,7 @@ function isSupportedDownloadSource(rawUrl: string): boolean {
 function normalizeSettings(value: unknown): BrowserSettings {
   const raw = object(value);
   return {
-    theme: ['light', 'dark', 'system'].includes(text(raw.theme)) ? raw.theme as BrowserSettings['theme'] : defaultSettings.theme,
+    theme: ['light', 'dark', 'graphite', 'system'].includes(text(raw.theme)) ? raw.theme as BrowserSettings['theme'] : defaultSettings.theme,
     sidebarCollapsed: typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : defaultSettings.sidebarCollapsed,
     searchEngine: typeof raw.searchEngine === 'string' && raw.searchEngine.length <= 2000 && isSafeWebUrl(raw.searchEngine) ? raw.searchEngine : defaultSettings.searchEngine,
     newTabBackground: normalizeNewTabBackground(raw.newTabBackground),

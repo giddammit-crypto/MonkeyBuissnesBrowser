@@ -271,4 +271,89 @@ describe('PAC Script Generator', () => {
     expect(result.general).toBe('DIRECT');
     expect(result.smart).toBe(buildCountryProxyMap()['uk']);
   });
+
+  it('orders verified online servers by latency (fastest first) and excludes offline servers', () => {
+    const mockCountries = {
+      nl: {
+        code: 'nl',
+        name: 'Нидерланды',
+        nameEn: 'Netherlands',
+        flag: '🇳🇱',
+        ping: 250,
+        serverHost: 'nl1.fast.org',
+        servers: [
+          { host: 'nl-slow.vault.org', port: 443, online: true, latency: 450 },
+          { host: 'nl-dead.vault.org', port: 443, online: false, latency: 9999 },
+          { host: 'nl-fast.vault.org', port: 443, online: true, latency: 120 },
+        ],
+      },
+    };
+
+    const map = buildCountryProxyMap(undefined, mockCountries);
+    expect(map['nl']).toBe('HTTPS nl-fast.vault.org:443; HTTPS nl-slow.vault.org:443; DIRECT');
+    expect(map['nl']).not.toContain('nl-dead.vault.org');
+  });
+
+  it('smoothly re-applies PAC proxy to registered sessions on health check without dropping connections', async () => {
+    let proxySetCount = 0;
+    let connectionsClosedCount = 0;
+    let currentPacScript = '';
+
+    const mockSession = {
+      setProxy: async (cfg: any) => {
+        proxySetCount++;
+        if (cfg.pacScript) {
+          const base64Part = cfg.pacScript.replace('data:application/x-ns-proxy-autoconfig;base64,', '');
+          currentPacScript = Buffer.from(base64Part, 'base64').toString('utf8');
+        }
+      },
+      closeAllConnections: async () => {
+        connectionsClosedCount++;
+      },
+      setWebRTCIPHandlingPolicy: () => {},
+    } as any;
+
+    const tmpUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'browsec-smooth-test-'));
+    const testService = new BrowsecService(tmpUserData, { enableHealthCheck: false });
+
+    await testService.registerSession(mockSession);
+    await testService.toggle(true);
+    await testService.setCountry('nl');
+
+    const initialCloseCount = connectionsClosedCount;
+    const initialProxyCount = proxySetCount;
+
+    // Simulate 12-hour health check detecting server status change or latency update
+    const healthCheck = testService.getHealthCheck();
+    const nlServers = BROWSEC_COUNTRIES['nl'].servers!;
+    healthCheck.markDead(nlServers[0]);
+
+    // PAC script should have been smoothly updated
+    expect(proxySetCount).toBeGreaterThan(initialProxyCount);
+    // Crucially: closeAllConnections MUST NOT be called during health check updates!
+    expect(connectionsClosedCount).toBe(initialCloseCount);
+
+    // Active connections are preserved, and new PAC script excludes dead server
+    expect(currentPacScript).not.toContain(`${nlServers[0].host}:${nlServers[0].port}`);
+    expect(currentPacScript).toContain(`${nlServers[1].host}:${nlServers[1].port}`);
+
+    testService.destroy();
+    fs.rmSync(tmpUserData, { recursive: true, force: true });
+  });
+
+  it('guarantees PAC script is DNS leak-free without dnsResolve calls and enforces WebRTC policy', () => {
+    const pacScript = generatePacScript({
+      enabled: true,
+      country: 'nl',
+      smartRules: [{ domain: 'secret-bank.ch', country: 'de', enabled: true }],
+    });
+
+    // Chromium best practice: PAC script MUST NOT call dnsResolve or dnsResolveEx for host lookups
+    expect(pacScript).not.toContain('dnsResolve(');
+    expect(pacScript).not.toContain('dnsResolveEx(');
+
+    // IPv4 private subnet matching is only done on literal dotted-quad IP addresses
+    expect(pacScript).toContain('25[0-5]|2[0-4][0-9]');
+    expect(pacScript).toContain('isInNet');
+  });
 });

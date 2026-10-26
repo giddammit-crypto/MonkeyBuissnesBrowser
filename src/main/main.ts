@@ -142,6 +142,10 @@ function registerIpc(): void {
   ipcMain.handle('vpn:clear', (event) => requireShell(event).clearVpnConfig());
   ipcMain.handle('browsec:get-snapshot', (event) => requireShell(event).getBrowsecSnapshot());
   ipcMain.handle('browsec:get-countries', (event) => requireShell(event).getBrowsecCountries());
+  ipcMain.handle('browsec:get-health-status', (event) => requireShell(event).getHealthStatus());
+  ipcMain.handle('browsec:trigger-health-check', (event, countryCode?: string) => requireShell(event).triggerManualHealthCheck(countryCode));
+  ipcMain.handle('vpn:get-health-status', (event) => requireShell(event).getHealthStatus());
+  ipcMain.handle('vpn:trigger-health-check', (event, countryCode?: string) => requireShell(event).triggerManualHealthCheck(countryCode));
   ipcMain.handle('browsec:toggle', (event, enabled?: boolean) => requireShell(event).toggleBrowsec(enabled));
   ipcMain.handle('browsec:set-country', (event, code: string) => requireShell(event).setBrowsecCountry(code));
   ipcMain.handle('browsec:set-webrtc-leak-protection', (event, enabled: boolean) => requireShell(event).setBrowsecWebRtcLeakProtection(enabled));

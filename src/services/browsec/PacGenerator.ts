@@ -1,5 +1,5 @@
 import { BROWSEC_COUNTRIES } from './browsecData';
-import type { BrowsecSmartRule } from './types';
+import type { BrowsecCountry, BrowsecSmartRule } from './types';
 
 const IGNORED_DOMAINS = [
   'corp',
@@ -39,23 +39,59 @@ export interface PacConfig {
   enabled: boolean;
   country: string;
   smartRules: BrowsecSmartRule[];
+  deadServers?: Set<string> | Iterable<string>;
+  countries?: Record<string, BrowsecCountry>;
 }
 
-export function buildCountryProxyMap(): Record<string, string> {
+export function buildCountryProxyMap(
+  deadServers?: Set<string> | Iterable<string>,
+  countries?: Record<string, BrowsecCountry>,
+): Record<string, string> {
+  const deadSet = new Set<string>();
+  if (deadServers) {
+    for (const item of deadServers) {
+      deadSet.add(item.toLowerCase().trim());
+    }
+  }
+
+  const countrySource = countries ?? BROWSEC_COUNTRIES;
   const map: Record<string, string> = {};
-  for (const [code, info] of Object.entries(BROWSEC_COUNTRIES)) {
+  for (const [code, info] of Object.entries(countrySource)) {
     const serverList = info.servers && info.servers.length > 0
       ? info.servers
       : [{ host: info.serverHost, port: 443 }];
-    const proxies = serverList.map((s) => `HTTPS ${s.host}:${s.port}`);
-    proxies.push('DIRECT');
-    map[code] = proxies.join('; ');
+
+    let healthyServers = serverList.filter((s) => {
+      const fullKey = `${s.host}:${s.port || 443}`.toLowerCase().trim();
+      const hostOnly = s.host.toLowerCase().trim();
+      if (deadSet.has(fullKey) || deadSet.has(hostOnly)) {
+        return false;
+      }
+      if (s.online === false) {
+        return false;
+      }
+      return true;
+    });
+
+    healthyServers = healthyServers.slice().sort((a, b) => {
+      const latA = typeof a.latency === 'number' ? a.latency : Infinity;
+      const latB = typeof b.latency === 'number' ? b.latency : Infinity;
+      return latA - latB;
+    });
+
+    if (healthyServers.length > 0) {
+      const proxies = healthyServers.map((s) => `HTTPS ${s.host.trim().toLowerCase()}:${s.port || 443}`);
+      proxies.push('DIRECT');
+      map[code] = proxies.join('; ');
+    } else {
+      map[code] = 'DIRECT';
+    }
   }
   return map;
 }
 
 export function generatePacScript(config: PacConfig): string {
-  const countriesMap = buildCountryProxyMap();
+  const countriesMap = buildCountryProxyMap(config.deadServers, config.countries);
   const globalReturn = config.enabled ? config.country : null;
   const activeFilters = config.smartRules
     .filter((r) => r.enabled && r.domain.trim())

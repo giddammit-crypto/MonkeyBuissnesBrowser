@@ -4,6 +4,7 @@ import {
   Bell,
   Check,
   CircleHelp,
+  Clock,
   Cookie,
   Database,
   Gauge,
@@ -16,8 +17,10 @@ import {
   ShieldCheck,
   ShieldOff,
   Waypoints,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
-import type React from "react";
+import React, { useState } from "react";
 import type { BrowserSnapshot, PrivacyDashboardSnapshot, PrivacyCheckStatus, PrivacySitePermission } from "../shared/types";
 
 type PrivacyDashboardProps = {
@@ -111,6 +114,7 @@ export default function PrivacyDashboard({
     );
   }
 
+  const [manualChecking, setManualChecking] = useState(false);
   const protectedRoute = dashboard.route.mode === "browsec" || dashboard.route.mode === "proxy";
   const overallStatus = dashboard.leakChecks.some((check) => check.status === "fail")
     ? "fail"
@@ -120,6 +124,33 @@ export default function PrivacyDashboard({
   const ipValue = dashboard.externalIp.value || "Не определён";
   const dnsValue = dashboard.dns.servers.length ? `${dashboard.dns.servers.length} сервера` : "Не определён";
   const checkedAt = new Date(dashboard.checkedAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+
+  const serverHealth =
+    dashboard.serverHealth ||
+    dashboard.route.serverStatus ||
+    snapshot.browsec?.serverStatus ||
+    (snapshot.browsec?.country && snapshot.browsec?.healthStatus?.servers?.[snapshot.browsec.country]) ||
+    null;
+
+  const handleTriggerManualCheck = async () => {
+    if (manualChecking) return;
+    setManualChecking(true);
+    try {
+      if (window.browserApi?.triggerManualHealthCheck) {
+        await window.browserApi.triggerManualHealthCheck();
+      }
+      onRefresh();
+    } catch {
+      // ignore
+    } finally {
+      setManualChecking(false);
+    }
+  };
+
+  const formatServerTime = (ts?: number) => {
+    if (!ts) return "Ожидание";
+    return new Date(ts).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  };
 
   return (
     <section className="privacy-dashboard" aria-label="Центр приватности">
@@ -162,7 +193,13 @@ export default function PrivacyDashboard({
 
       <div className="privacy-metrics-grid">
         <Metric icon={<Globe2 size={19} />} label="Внешний IP" value={ipValue} detail={dashboard.externalIp.family || dashboard.externalIp.source} tone={dashboard.externalIp.status === "ok" ? "accent" : "warning"} />
-        <Metric icon={<Waypoints size={19} />} label="Маршрут" value={dashboard.route.label} detail={dashboard.isPrivate ? "Приватная сессия" : "Обычный профиль"} tone={protectedRoute ? "accent" : "warning"} />
+        <Metric
+          icon={serverHealth && serverHealth.status === "offline" ? <WifiOff size={19} /> : <Waypoints size={19} />}
+          label="Маршрут и сервер"
+          value={serverHealth ? `${serverHealth.status === 'online' ? 'В сети' : 'Недоступен'} · ${serverHealth.ping} ms` : dashboard.route.label}
+          detail={serverHealth ? `12-ч проверка: ${formatServerTime(serverHealth.lastChecked)}` : (dashboard.isPrivate ? "Приватная сессия" : "Обычный профиль")}
+          tone={serverHealth ? (serverHealth.status === 'online' ? "accent" : "warning") : (protectedRoute ? "accent" : "warning")}
+        />
         <Metric icon={<Network size={19} />} label="DNS" value={dnsValue} detail={dashboard.dns.detail} tone={dashboard.dns.status === "system" ? "default" : "warning"} />
         <Metric icon={<ShieldOff size={19} />} label="Заблокировано трекеров" value={String(dashboard.blockedTrackers.total)} detail={dashboard.blockedTrackers.enabled ? "Встроенный блокировщик включён" : "Блокировщик выключен"} tone={dashboard.blockedTrackers.enabled ? "accent" : "warning"} />
       </div>
@@ -193,6 +230,38 @@ export default function PrivacyDashboard({
           <div className="privacy-route-labels"><span>Ваш браузер</span><strong>{dashboard.route.label}</strong><span>Интернет</span></div>
           <p>{dashboard.route.detail}</p>
           {dashboard.route.proxyRule && <code>{dashboard.route.proxyRule}</code>}
+
+          {serverHealth && (
+            <div className="privacy-server-health-box">
+              <div className="privacy-server-health-top">
+                <div className="privacy-server-badge-group">
+                  <span className={`privacy-server-status-pill ${serverHealth.status}`}>
+                    <span className={`privacy-status-dot-sm ${serverHealth.status}`} />
+                    {serverHealth.status === "online" ? "Сервер в сети" : serverHealth.status === "offline" ? "Сервер недоступен" : "Проверка статуса"}
+                  </span>
+                  <span className="privacy-server-ping-badge">
+                    <Activity size={12} /> {serverHealth.ping} ms
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="privacy-health-recheck-btn"
+                  onClick={() => void handleTriggerManualCheck()}
+                  disabled={manualChecking || loading}
+                  title="Запустить ручную проверку здоровья сервера"
+                >
+                  <RefreshCw size={12} className={manualChecking ? "spin" : ""} />
+                  {manualChecking ? "Проверяем…" : "Проверить"}
+                </button>
+              </div>
+              <div className="privacy-server-details-row">
+                <span className="privacy-server-host">Хост: <code>{serverHealth.serverHost}</code></span>
+                <span className="privacy-server-checked">
+                  <Clock size={11} /> 12-ч проверка: {formatServerTime(serverHealth.lastChecked)}
+                </span>
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="privacy-card privacy-trackers-card">

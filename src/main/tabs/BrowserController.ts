@@ -50,6 +50,7 @@ import type {
   NotificationPermissionDecision,
   PrivacyDashboardSnapshot,
   PrivacySitePermission,
+  VpnHealthStatus,
 } from '../../shared/types';
 import { BrowserStores, buildStoredSession, defaultBrowsecCountries } from '../persistence/BrowserStores';
 import { PasswordStore } from '../persistence/PasswordStore';
@@ -120,7 +121,7 @@ export class BrowserController {
   constructor() {
     this.stores = new BrowserStores(app.getPath('userData'));
     const initialSettings = this.stores.settings.get();
-    nativeTheme.themeSource = initialSettings.theme || 'system';
+    nativeTheme.themeSource = initialSettings.theme === 'graphite' ? 'dark' : (initialSettings.theme || 'system');
     this.downloads = this.stores.downloads.get();
     this.normalizeDownloads();
     this.passwords = new PasswordStore(app.getPath('userData'));
@@ -361,6 +362,9 @@ export class BrowserController {
     ].slice(0, 100);
 
     const routeProtected = routeMode === 'browsec' || routeMode === 'proxy';
+    const serverHealth = this.browsec.getServerHealth(browsec.country);
+    const vpnHealth = this.browsec.getHealthStatus();
+
     const leakChecks: PrivacyDashboardSnapshot['leakChecks'] = [
       {
         id: 'external-ip',
@@ -396,6 +400,16 @@ export class BrowserController {
           ? 'Сторонние cookies блокируются по умолчанию.'
           : 'Глобальная блокировка сторонних cookies отключена.',
       },
+      {
+        id: 'server-health',
+        label: 'VPN-сервер',
+        status: serverHealth.status === 'online' ? 'pass' : serverHealth.status === 'offline' ? 'fail' : 'unknown',
+        detail: serverHealth.status === 'online'
+          ? `Сервер ${serverHealth.serverHost} в сети (${serverHealth.ping} ms).`
+          : serverHealth.status === 'offline'
+            ? `Сервер ${serverHealth.serverHost} недоступен${serverHealth.error ? ` (${serverHealth.error})` : ''}.`
+            : `Статус сервера ${serverHealth.serverHost} проверяется.`,
+      },
     ];
 
     return {
@@ -407,7 +421,10 @@ export class BrowserController {
         label: routeLabel,
         detail: routeDetail,
         proxyRule: proxyRule || undefined,
+        serverStatus: serverHealth,
       },
+      serverHealth,
+      vpnHealth,
       dns: {
         servers: dnsServers,
         status: dnsServers.length ? 'system' : 'unavailable',
@@ -957,7 +974,7 @@ export class BrowserController {
 
   updateSettings(patch: Partial<BrowserSettings>): BrowserSettings {
     const next = this.stores.settings.update((current) => {
-      const theme = patch.theme === 'light' || patch.theme === 'dark' || patch.theme === 'system' ? patch.theme : current.theme;
+      const theme = patch.theme === 'light' || patch.theme === 'dark' || patch.theme === 'graphite' || patch.theme === 'system' ? patch.theme : current.theme;
       const searchEngine = typeof patch.searchEngine === 'string' && /^https?:\/\//i.test(patch.searchEngine) ? patch.searchEngine : current.searchEngine;
       const sleepAfterMinutes = patch.sleepAfterMinutes === 0 || patch.sleepAfterMinutes === 5 || patch.sleepAfterMinutes === 15 || patch.sleepAfterMinutes === 30 || patch.sleepAfterMinutes === 60
         ? patch.sleepAfterMinutes
@@ -981,7 +998,7 @@ export class BrowserController {
       };
     });
     if (next.theme) {
-      nativeTheme.themeSource = next.theme;
+      nativeTheme.themeSource = next.theme === 'graphite' ? 'dark' : next.theme;
     }
     this.adBlock.engine.setEnabled(next.adBlockEnabled !== false);
     this.privateAdBlock.engine.setEnabled(next.adBlockEnabled !== false);
@@ -1694,6 +1711,16 @@ export class BrowserController {
     return this.browsec.getCountries();
   }
 
+  getHealthStatus(): VpnHealthStatus {
+    return this.browsec.getHealthStatus();
+  }
+
+  async triggerManualHealthCheck(countryCode?: string): Promise<VpnHealthStatus> {
+    const result = await this.browsec.triggerManualHealthCheck(countryCode);
+    this.emitSnapshot();
+    return result;
+  }
+
   async toggleBrowsec(enabled?: boolean): Promise<BrowsecState> {
     return this.browsec.toggle(enabled);
   }
@@ -1976,8 +2003,11 @@ export class BrowserController {
     this.memoryManager.updateTab(tab.id, { loading: tab.isLoading, lifecycle: tab.lifecycle });
     view.webContents.setAudioMuted(tab.isMuted);
     if (tab.zoomFactor) view.webContents.setZoomFactor(tab.zoomFactor);
-    if (tab.isPrivate) view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
-    this.browsec.applyWebRtcPolicyToWebContents(view.webContents);
+    if (tab.isPrivate) {
+      view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
+    } else {
+      this.browsec.applyWebRtcPolicyToWebContents(view.webContents);
+    }
     this.installTabHandlers(tab);
     if (tab.id === this.activeTabId && !tab.isInternal && tab.lifecycle !== 'crashed') {
       try { this.window.contentView.removeChildView(view); } catch {}
@@ -2072,8 +2102,9 @@ export class BrowserController {
 
     if (opener.isPrivate) {
       popupContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
+    } else {
+      this.browsec.applyWebRtcPolicyToWebContents(popupContents);
     }
-    this.browsec.applyWebRtcPolicyToWebContents(popupContents);
 
     popupWindow.on('closed', () => {
       this.popupWindows.delete(popupWindow);
@@ -2997,5 +3028,6 @@ export class BrowserController {
     void this.endPrivateSession();
     if (this.shellView && !this.shellView.webContents.isDestroyed()) this.shellView.webContents.close();
     if (this.metricsTimer) clearInterval(this.metricsTimer);
+    this.browsec.destroy();
   }
 }

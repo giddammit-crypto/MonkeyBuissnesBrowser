@@ -3160,19 +3160,20 @@ function SettingsPanel({
           <label className="setting-row">
             <span>
               <strong>Тема интерфейса</strong>
-              <small>Спокойные светлая и тёмная темы.</small>
+              <small>Светлая, тёмная или серая (графитовая) темы с адаптивными цветами.</small>
             </span>
             <select
               value={settings.theme}
               onChange={(event) =>
                 update({
-                  theme: event.target.value as "system" | "light" | "dark",
+                  theme: event.target.value as "system" | "light" | "dark" | "graphite",
                 })
               }
             >
               <option value="system">Как в системе</option>
               <option value="light">Светлая</option>
               <option value="dark">Тёмная</option>
+              <option value="graphite">Серая (графитовая)</option>
             </select>
           </label>
           <label className="setting-row">

@@ -1,12 +1,16 @@
 import React, { useState, useMemo } from "react";
 import {
+  Activity,
   ArrowLeft,
   Check,
   ChevronRight,
+  Clock,
   Globe,
   Plus,
   Power,
+  RefreshCw,
   Search,
+  Server,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -25,6 +29,22 @@ interface BrowsecModalProps {
   onClose: () => void;
 }
 
+function formatLastCheckedTime(ts?: number | null): string {
+  if (!ts) return "Ожидание проверки";
+  return new Date(ts).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatFullDateTime(ts?: number | null): string {
+  if (!ts) return "Проверка не выполнялась";
+  return new Date(ts).toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 export const BrowsecModal: React.FC<BrowsecModalProps> = ({
   state,
   countries,
@@ -37,6 +57,8 @@ export const BrowsecModal: React.FC<BrowsecModalProps> = ({
   const [newDomain, setNewDomain] = useState("");
   const [newCountry, setNewCountry] = useState("nl");
   const [saving, setSaving] = useState(false);
+  const [checkingHealth, setCheckingHealth] = useState(false);
+  const [healthNotice, setHealthNotice] = useState<string | null>(null);
 
   const selectedCode = state.country || state.selectedCountry || "nl";
   const currentCountry = useMemo(() => {
@@ -49,6 +71,33 @@ export const BrowsecModal: React.FC<BrowsecModalProps> = ({
       serverHost: "nl.browsec.com",
     };
   }, [countries, selectedCode]);
+
+  const currentHealth = useMemo(() => {
+    return state.healthStatus?.servers?.[selectedCode] || state.serverStatus;
+  }, [state.healthStatus, state.serverStatus, selectedCode]);
+
+  const isServerOnline = currentHealth ? currentHealth.status === "online" : (currentCountry.status !== "offline");
+  const serverPing = currentHealth?.ping ?? currentCountry.ping;
+  const lastCheckedTs = currentHealth?.lastChecked ?? currentCountry.lastChecked ?? state.healthStatus?.lastChecked;
+
+  const handleTriggerHealthCheck = async (countryCode?: string) => {
+    if (checkingHealth) return;
+    setCheckingHealth(true);
+    setHealthNotice(null);
+    try {
+      const res = await window.browserApi.triggerManualHealthCheck(countryCode);
+      const code = countryCode || selectedCode;
+      const s = res?.servers?.[code];
+      if (s) {
+        setHealthNotice(s.status === "online" ? `Сервер в сети (${s.ping} ms)` : "Сервер недоступен");
+      }
+    } catch {
+      setHealthNotice("Ошибка проверки сервера");
+    } finally {
+      setCheckingHealth(false);
+      setTimeout(() => setHealthNotice(null), 3000);
+    }
+  };
 
   const handleToggleVpn = async () => {
     setSaving(true);
@@ -198,6 +247,13 @@ export const BrowsecModal: React.FC<BrowsecModalProps> = ({
           </div>
         </div>
         <div className="browsec-header-actions">
+          <div
+            className={`browsec-health-badge ${isServerOnline ? "online" : "offline"}`}
+            title={`12-часовая проверка: ${isServerOnline ? "Сервер в сети" : "Сервер недоступен"} (${serverPing} ms). Проверено: ${formatLastCheckedTime(lastCheckedTs)}`}
+          >
+            <span className={`status-indicator-dot ${isServerOnline ? "online" : "offline"}`} />
+            <span>{isServerOnline ? "Online" : "Offline"}</span>
+          </div>
           <button
             type="button"
             className="browsec-close-btn"
@@ -279,18 +335,41 @@ export const BrowsecModal: React.FC<BrowsecModalProps> = ({
               <span className="location-flag">{currentCountry.flag}</span>
             </div>
             <div className="location-info">
-              <span className="location-caption">Текущая локация</span>
+              <div className="location-caption-row">
+                <span className="location-caption">Текущая локация</span>
+                <span className={`server-status-pill ${isServerOnline ? "online" : "offline"}`} title={`Статус сервера: ${isServerOnline ? "В сети" : "Недоступен"}`}>
+                  <span className={`status-indicator-dot ${isServerOnline ? "online" : "offline"}`} />
+                  {isServerOnline ? "В сети" : "Недоступен"}
+                </span>
+              </div>
               <span className="location-title">
                 {currentCountry.name}{" "}
                 <small className="location-en">({currentCountry.nameEn})</small>
               </span>
               <div className="location-meta">
-                <span className="ping-indicator">
-                  <span className="ping-dot" />
-                  {currentCountry.ping} ms
+                <span className={`ping-indicator ${serverPing < 80 ? "good" : serverPing < 180 ? "medium" : "slow"}`} title="Задержка ответа сервера">
+                  <span className={`ping-dot ${isServerOnline ? "online" : "offline"}`} />
+                  {serverPing} ms
                 </span>
+                <span className="last-checked-pill" title={`12-часовая проверка: ${formatFullDateTime(lastCheckedTs)}`}>
+                  <Clock size={11} />
+                  {formatLastCheckedTime(lastCheckedTs)}
+                </span>
+                <button
+                  type="button"
+                  className="server-health-recheck-btn"
+                  onClick={() => void handleTriggerHealthCheck(selectedCode)}
+                  disabled={checkingHealth}
+                  title="Проверить статус сервера сейчас"
+                  aria-label="Проверить статус сервера сейчас"
+                >
+                  <RefreshCw size={11} className={checkingHealth ? "spin" : ""} />
+                </button>
                 <span className="speed-badge">Без ограничений</span>
               </div>
+              {healthNotice && (
+                <div className="location-health-notice">{healthNotice}</div>
+              )}
             </div>
             <button
               type="button"
@@ -420,16 +499,35 @@ export const BrowsecModal: React.FC<BrowsecModalProps> = ({
             </button>
           </div>
 
-          {/* Free banner */}
+          {/* Free banner with 12-hour health check info */}
           <div className="countries-free-banner">
             <Sparkles size={14} className="sparkle-icon" />
-            <span>Все 44 локации soulm8te VPN доступны бесплатно и без ограничений</span>
+            <div className="countries-banner-text">
+              <span>Все 44 локации soulm8te VPN доступны бесплатно</span>
+              <small className="countries-health-subtext">
+                12-ч проверка серверов · {state.healthStatus?.lastChecked ? `Проверено: ${formatLastCheckedTime(state.healthStatus.lastChecked)}` : "Каждые 12 часов"}
+              </small>
+            </div>
+            <button
+              type="button"
+              className="countries-refresh-health-btn"
+              onClick={() => void handleTriggerHealthCheck()}
+              disabled={checkingHealth}
+              title="Запустить полную проверку всех серверов"
+              aria-label="Запустить полную проверку всех серверов"
+            >
+              <RefreshCw size={12} className={checkingHealth ? "spin" : ""} />
+            </button>
           </div>
 
           {/* Countries list */}
           <div className="countries-list">
             {filteredCountries.map((c) => {
               const isSelected = c.code === selectedCode;
+              const cHealth = state.healthStatus?.servers?.[c.code];
+              const isOnline = cHealth ? cHealth.status === "online" : (c.status !== "offline");
+              const ping = cHealth?.ping ?? c.ping;
+              const lastChecked = cHealth?.lastChecked ?? c.lastChecked ?? state.healthStatus?.lastChecked;
               return (
                 <div
                   key={c.code}
@@ -443,8 +541,9 @@ export const BrowsecModal: React.FC<BrowsecModalProps> = ({
                   }}
                   role="button"
                   tabIndex={0}
-                  aria-label={`${c.name} (${c.nameEn}), ${c.ping} миллисекунд`}
+                  aria-label={`${c.name} (${c.nameEn}), ${ping} миллисекунд, ${isOnline ? "сервер в сети" : "сервер недоступен"}`}
                   aria-pressed={isSelected}
+                  title={`${c.name}: ${isOnline ? "В сети" : "Недоступен"} · Пинг: ${ping} ms · Проверено: ${formatLastCheckedTime(lastChecked)}`}
                 >
                   <span className="country-flag">{c.flag}</span>
                   <div className="country-names">
@@ -452,7 +551,11 @@ export const BrowsecModal: React.FC<BrowsecModalProps> = ({
                     <span className="country-name-en">{c.nameEn}</span>
                   </div>
                   <div className="country-badges">
-                    <span className="ping-chip">{c.ping} ms</span>
+                    <span className={`country-status-indicator ${isOnline ? "online" : "offline"}`} title={isOnline ? "Сервер в сети" : "Сервер недоступен"}>
+                      <span className={`status-indicator-dot ${isOnline ? "online" : "offline"}`} />
+                      {isOnline ? "online" : "offline"}
+                    </span>
+                    <span className="ping-chip">{ping} ms</span>
                     <span className="free-chip">FREE</span>
                   </div>
                   {isSelected && (

@@ -17,6 +17,7 @@ import type {
   WorkspaceEntry,
   NotificationPermissionDecision,
   PrivacyDashboardSnapshot,
+  VpnHealthStatus,
 } from './types';
 
 export interface ChromeBounds {
@@ -82,6 +83,8 @@ export interface BrowserApi {
   clearVpnConfig(): Promise<VpnSnapshot>;
   getBrowsecSnapshot(): Promise<BrowsecState>;
   getBrowsecCountries(): Promise<BrowsecCountry[]>;
+  getHealthStatus(): Promise<VpnHealthStatus>;
+  triggerManualHealthCheck(countryCode?: string): Promise<VpnHealthStatus>;
   toggleBrowsec(enabled?: boolean): Promise<BrowsecState>;
   setBrowsecCountry(code: string): Promise<BrowsecState>;
   setBrowsecWebRtcLeakProtection(enabled: boolean): Promise<BrowsecState>;
