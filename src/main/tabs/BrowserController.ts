@@ -325,12 +325,15 @@ export class BrowserController {
       if (tab.lifecycle !== 'crashed' && tab.lifecycle !== 'hibernated') tab.lifecycle = active ? 'active' : 'background';
       this.memoryManager.updateTab(tab.id, { active, lifecycle: tab.lifecycle, ...(active ? { lastInteractionAt: Date.now() } : {}) });
       if (!tab.view || tab.view.webContents.isDestroyed()) continue;
-      if (active) {
-        this.window?.contentView.removeChildView(tab.view);
+      if (active && !tab.isInternal && tab.lifecycle !== 'crashed') {
+        try { this.window?.contentView.removeChildView(tab.view); } catch {}
         this.window?.contentView.addChildView(tab.view);
         this.applyBounds(tab);
         tab.view.webContents.focus();
-      } else tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      } else {
+        try { this.window?.contentView.removeChildView(tab.view); } catch {}
+        tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      }
     }
     this.emitSnapshot();
   }
@@ -1002,8 +1005,8 @@ export class BrowserController {
         this.shellView.webContents.focus();
       }
     } else {
-      if (activeTab?.view && !activeTab.view.webContents.isDestroyed()) {
-        this.window.contentView.removeChildView(activeTab.view);
+      if (activeTab?.view && !activeTab.view.webContents.isDestroyed() && !activeTab.isInternal && activeTab.lifecycle !== 'crashed') {
+        try { this.window.contentView.removeChildView(activeTab.view); } catch {}
         this.window.contentView.addChildView(activeTab.view);
         this.applyBounds(activeTab);
         activeTab.view.webContents.focus();
@@ -1577,12 +1580,16 @@ export class BrowserController {
     this.memoryManager.updateTab(tab.id, { loading: tab.isLoading, lifecycle: tab.lifecycle });
     view.webContents.setAudioMuted(tab.isMuted);
     if (tab.zoomFactor) view.webContents.setZoomFactor(tab.zoomFactor);
-    this.window.contentView.addChildView(view);
     if (tab.isPrivate) view.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
     this.browsec.applyWebRtcPolicyToWebContents(view.webContents);
     this.installTabHandlers(tab);
-    if (tab.id === this.activeTabId) this.applyBounds(tab);
-    else view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    if (tab.id === this.activeTabId && !tab.isInternal && tab.lifecycle !== 'crashed') {
+      try { this.window.contentView.removeChildView(view); } catch {}
+      this.window.contentView.addChildView(view);
+      this.applyBounds(tab);
+    } else {
+      view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    }
     // Electron loads the requested popup URL after createWindow returns this
     // WebContents. Loading it ourselves severs/competes with native opener setup.
     if (nativePopupContents) return view.webContents;
@@ -1873,6 +1880,10 @@ export class BrowserController {
       tab.isLoading = false;
       tab.lifecycle = 'crashed';
       tab.lastError = { errorCode, errorDescription, validatedURL };
+      if (tab.view) {
+        try { this.window?.contentView.removeChildView(tab.view); } catch {}
+        tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      }
       this.memoryManager.updateTab(tab.id, { loading: false, lifecycle: 'crashed' });
       this.eventListener?.({ type: 'navigation-error', tab: this.toSnapshot(tab), message: `${errorDescription}: ${validatedURL}` });
       this.refreshViewBounds();
@@ -1902,6 +1913,10 @@ export class BrowserController {
       tab.lifecycle = 'crashed';
       tab.isLoading = false;
       tab.lastError = { errorDescription: details.reason };
+      if (tab.view) {
+        try { this.window?.contentView.removeChildView(tab.view); } catch {}
+        tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      }
       this.memoryManager.updateTab(tab.id, { loading: false, lifecycle: 'crashed' });
       this.eventListener?.({ type: 'renderer-gone', tab: this.toSnapshot(tab), message: details.reason });
       this.refreshViewBounds();
@@ -1952,16 +1967,31 @@ export class BrowserController {
   }
 
   private refreshViewBounds(): void {
+    if (!this.window || this.window.isDestroyed() || this.disposed) return;
+    const windowBounds = this.window.getContentBounds();
+    this.shellView?.setBounds({ x: 0, y: 0, width: windowBounds.width, height: windowBounds.height });
+
+    const activeTab = this.tabs.get(this.activeTabId);
     for (const tab of this.tabs.values()) {
-      if (tab.id === this.activeTabId) this.applyBounds(tab);
-      else tab.view?.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      if (!tab.view || tab.view.webContents.isDestroyed()) continue;
+      if (tab === activeTab && !tab.isInternal && tab.lifecycle !== 'crashed') {
+        if (!this.window.contentView.children.includes(tab.view)) {
+          this.window.contentView.addChildView(tab.view);
+        }
+        this.applyBounds(tab);
+      } else {
+        try { this.window.contentView.removeChildView(tab.view); } catch {}
+        tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      }
     }
-    this.shellView?.setBounds({ x: 0, y: 0, width: this.window?.getBounds().width ?? 1440, height: this.window?.getBounds().height ?? 900 });
   }
 
   private applyBounds(tab: TabRecord): void {
     if (!tab.view || tab.isInternal || tab.lifecycle === 'crashed') {
-      tab.view?.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      if (tab.view) {
+        try { this.window?.contentView.removeChildView(tab.view); } catch {}
+        tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      }
       return;
     }
     const bounds = this.window?.getContentBounds();

@@ -377,6 +377,7 @@ function App(): React.JSX.Element {
       const b = viewport.getBoundingClientRect();
       const hidden =
         panel !== "home" ||
+        Boolean(currentTab?.isInternal) ||
         currentTab?.lifecycle === "crashed";
       run(
         window.browserApi.setChromeBounds(
