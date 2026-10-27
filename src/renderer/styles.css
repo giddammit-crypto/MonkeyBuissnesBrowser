@@ -1194,11 +1194,17 @@ select {
   left: var(--sidebar-width);
   right: 0;
   bottom: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--canvas, #171b20);
 }
 .page-viewport {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  inset: auto;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   overflow: auto;
   background: transparent;
 }
@@ -3375,29 +3381,6 @@ select {
   }
 }
 /* Authentication help stays in the shell layout above native WebContents. */
-.content-area {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  position: relative;
-  background: transparent;
-}
-.page-viewport {
-  position: relative;
-  inset: auto;
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  background: transparent;
-}
-:root[data-wallpaper="plain"] .content-area,
-:root[data-wallpaper="plain"] .page-viewport {
-  background: var(--canvas, #171b20);
-}
-.app-shell.popover-with-webpage .content-area,
-.app-shell.popover-with-webpage .page-viewport {
-  background: transparent !important;
-}
 .auth-help-banner {
   display: flex;
   align-items: flex-start;

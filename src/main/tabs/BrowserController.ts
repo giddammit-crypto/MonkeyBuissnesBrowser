@@ -531,13 +531,8 @@ export class BrowserController {
     const miniHeight = 214;
     const margin = 16;
     const windowBounds = this.window?.getContentBounds() || { width: 1440, height: 900 };
-    const chrome = (this.chromeBounds.width > 0 && this.chromeBounds.height > 0)
-      ? this.chromeBounds
-      : (this.lastValidBounds.width > 0 && this.lastValidBounds.height > 0)
-        ? this.lastValidBounds
-        : { x: 200, y: 144, width: Math.max(0, windowBounds.width - 200), height: Math.max(0, windowBounds.height - 144) };
-    const x = Math.max(0, chrome.x + chrome.width - miniWidth - margin);
-    const y = Math.max(0, chrome.y + chrome.height - miniHeight - margin);
+    const x = Math.max(0, windowBounds.width - miniWidth - margin);
+    const y = Math.max(0, windowBounds.height - miniHeight - margin);
     return { x, y, width: miniWidth, height: miniHeight };
   }
 
@@ -1445,11 +1440,17 @@ export class BrowserController {
     const w = safeNumber(bounds.width, 0);
     const h = safeNumber(bounds.height, 0);
     if (w > 0 && h > 0) {
+      const windowBounds = this.window?.getContentBounds();
+      const measuredY = safeNumber(bounds.y, 144);
+      const safeY = (measuredY >= 80 || this.htmlFullscreenTabId) ? measuredY : 144;
+      const safeX = Math.max(0, safeNumber(bounds.x, 0));
+      const safeH = windowBounds ? Math.max(0, windowBounds.height - safeY) : h;
+
       this.chromeBounds = {
-        x: Math.max(0, safeNumber(bounds.x, 0)),
-        y: Math.max(0, safeNumber(bounds.y, 0)),
+        x: safeX,
+        y: safeY,
         width: w,
-        height: h,
+        height: safeH,
       };
       this.lastValidBounds = { ...this.chromeBounds };
     }
@@ -2747,7 +2748,10 @@ export class BrowserController {
         : { x: 200, y: 144, width: Math.max(0, bounds.width - 200), height: Math.max(0, bounds.height - 144) };
     const x = Math.min(chrome.x, bounds.width);
     const y = Math.min(chrome.y, bounds.height);
-    tab.view.setBounds({ x, y, width: Math.min(chrome.width, bounds.width - x), height: Math.min(chrome.height, bounds.height - y) });
+    // Tab WebContentsView must stretch all the way to the bottom edge of the window
+    const height = Math.max(0, bounds.height - y);
+    const width = Math.min(chrome.width, bounds.width - x);
+    tab.view.setBounds({ x, y, width, height });
   }
 
   private exitPageFullscreen(): void {

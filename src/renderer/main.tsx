@@ -1901,7 +1901,7 @@ function App(): React.JSX.Element {
         </div>
       </aside>
       <main className="content-area">
-        {wallpaperBackground !== "plain" && (
+        {wallpaperBackground !== "plain" && (currentTab?.isInternal || panel !== "home") && (
           <div className="workspace-wallpaper newtab-wallpaper" data-newtab-wallpaper data-workspace-wallpaper aria-hidden="true">
             <img
               src={wallpaperSrc}
