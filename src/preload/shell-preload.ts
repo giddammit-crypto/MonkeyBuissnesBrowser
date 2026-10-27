@@ -80,6 +80,10 @@ const api: BrowserApi = {
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
+  getSystemDiagnosticReport: () => ipcRenderer.invoke('system:get-diagnostic-report'),
+  generateCanonDriverScript: (model, mode, port) => ipcRenderer.invoke('system:generate-canon-script', model, mode, port),
+  analyzeCustomError: (errorText) => ipcRenderer.invoke('system:analyze-custom-error', errorText),
+  testPrintPage: (printerName) => ipcRenderer.invoke('system:test-print-page', printerName),
   onSnapshotChanged: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof callback>[0]) => callback(snapshot);
     ipcRenderer.on('browser:snapshot', listener);

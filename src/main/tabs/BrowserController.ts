@@ -51,7 +51,11 @@ import type {
   PrivacyDashboardSnapshot,
   PrivacySitePermission,
   VpnHealthStatus,
+  CanonModelKey,
+  SystemDiagnosticReport,
+  SystemErrorItem,
 } from '../../shared/types';
+import { SystemDiagnosticService } from '../../services/system/SystemDiagnosticService';
 import { BrowserStores, buildStoredSession, defaultBrowsecCountries } from '../persistence/BrowserStores';
 import { PasswordStore } from '../persistence/PasswordStore';
 import { fillSavedCredential } from '../passwords/PasswordAutofill';
@@ -84,6 +88,7 @@ export class BrowserController {
   readonly adBlock = new SessionAdBlock(new FilterEngine());
   readonly memoryManager = new MemoryManager();
   readonly vpn = new VpnConfigStore(app.getPath('userData'));
+  readonly systemService = new SystemDiagnosticService();
   window?: BaseWindow;
   shellView?: WebContentsView;
   private activeTabId = '';
@@ -441,6 +446,26 @@ export class BrowserController {
       sitePermissions,
       leakChecks,
     };
+  }
+
+  getSystemDiagnosticReport(): Promise<SystemDiagnosticReport> {
+    return this.systemService.runSystemDiagnostics();
+  }
+
+  generateCanonDriverScript(
+    model: CanonModelKey,
+    mode: 'capt-systemd' | 'rastertocapt',
+    port?: string
+  ): { script: string; filename: string } {
+    return this.systemService.generateCanonDriverScript(model, mode, port);
+  }
+
+  analyzeCustomError(errorText: string): SystemErrorItem {
+    return this.systemService.analyzeCustomError(errorText);
+  }
+
+  testPrintPage(printerName: string): Promise<{ success: boolean; message: string }> {
+    return this.systemService.testPrintPage(printerName);
   }
 
   private async fetchPrivacyExternalIp(targetSession: Electron.Session): Promise<PrivacyDashboardSnapshot['externalIp']> {
