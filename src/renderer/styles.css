@@ -1326,7 +1326,8 @@ select {
 
 .quick-link-delete-btn:hover {
   background: #dc2626 !important;
-  transform: scale(1.15) !important;
+  border-color: #ffffff !important;
+  transform: scale(1) !important;
   box-shadow: 0 3px 8px rgba(220, 38, 38, 0.6) !important;
 }
 
@@ -1394,37 +1395,54 @@ select {
 }
 
 .saved-card-delete-btn {
-  position: absolute;
-  top: 50%;
-  right: 8px;
-  transform: translateY(-50%) scale(0.85);
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
+  position: absolute !important;
+  top: 50% !important;
+  right: 10px !important;
+  transform: translateY(-50%) !important;
+  width: 22px !important;
+  height: 22px !important;
+  min-width: 22px !important;
+  max-width: 22px !important;
+  min-height: 22px !important;
+  max-height: 22px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  line-height: 0 !important;
+  box-sizing: border-box !important;
+  border-radius: 50% !important;
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text-muted);
-  display: grid;
-  place-items: center;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
   z-index: 3;
+}
+
+.saved-card-delete-btn svg {
+  display: block !important;
+  margin: auto !important;
+  flex-shrink: 0 !important;
+  pointer-events: none !important;
 }
 
 .saved-card-wrap:hover .saved-card-delete-btn,
 .saved-card-wrap:focus-within .saved-card-delete-btn {
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(-50%) scale(1);
+  transform: translateY(-50%) !important;
 }
 
 .saved-card-delete-btn:hover {
-  background: #ef4444;
-  border-color: #ef4444;
-  color: #ffffff;
-  transform: translateY(-50%) scale(1.1);
+  background: #ef4444 !important;
+  border-color: #ef4444 !important;
+  color: #ffffff !important;
+  transform: translateY(-50%) !important;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.45) !important;
 }
 
 .section-heading-actions {
@@ -2878,71 +2896,7 @@ select {
   color: var(--text-secondary);
 }
 .app-toast {
-  position: absolute;
-  z-index: 50;
-  bottom: 24px;
-  left: calc(var(--sidebar-width) + 24px);
-  right: 24px;
-  max-width: 620px;
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 12px 18px;
-  border: 1px solid var(--border-strong);
-  border-radius: 14px;
-  box-shadow: var(--shadow), 0 16px 40px rgba(0, 0, 0, 0.3);
-  background: var(--surface);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  color: var(--text);
-  animation: toastFadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-}
-@keyframes toastFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(12px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-.app-toast > span {
-  display: flex;
-  color: var(--accent);
-  flex-shrink: 0;
-}
-.app-toast.error {
-  border-color: rgba(239, 68, 68, 0.45);
-}
-.app-toast.error > span {
-  color: #ef4444;
-}
-.app-toast p {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.5;
-  flex: 1;
-  overflow-wrap: anywhere;
-  color: var(--text);
-}
-.app-toast button {
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  border-radius: 6px;
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  flex-shrink: 0;
-}
-.app-toast button:hover {
-  background: var(--surface-subtle);
-  color: var(--text);
+  display: none !important;
 }
 .spin {
   animation: spin 1s linear infinite;

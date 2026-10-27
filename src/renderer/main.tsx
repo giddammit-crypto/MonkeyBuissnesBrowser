@@ -555,7 +555,7 @@ function App(): React.JSX.Element {
                 x: b.left,
                 y: b.top,
                 width: b.width,
-                height: Math.max(0, b.height - (toast ? 96 : 0)),
+                height: b.height,
               },
         ),
       );
@@ -575,7 +575,6 @@ function App(): React.JSX.Element {
     currentTab?.url,
     currentTab?.lifecycle,
     snapshot?.activeTabId,
-    toast,
   ]);
   const isPopoverOpen = Boolean(popover) || tabSearchOpen || editingAddress;
   useEffect(() => {
@@ -898,7 +897,6 @@ function App(): React.JSX.Element {
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   void window.browserApi.downloadMediaUrl(currentTab.url, currentTab.title, false);
-                  setToast({ tone: "info", message: "Началось скачивание видео (MP4)..." });
                 }}
               >
                 <Download size={13} strokeWidth={2.4} />
@@ -912,7 +910,6 @@ function App(): React.JSX.Element {
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   void window.browserApi.downloadMediaUrl(currentTab.url, currentTab.title, true);
-                  setToast({ tone: "info", message: "Началось скачивание аудио (MP3)..." });
                 }}
               >
                 <Music2 size={13} strokeWidth={2.4} />
@@ -1763,27 +1760,6 @@ function App(): React.JSX.Element {
           onClick={() => setPopover(null)}
         />
       )}
-      {toast && (
-        <div
-          className={`app-toast ${toast.tone}`}
-          role={toast.tone === "error" ? "alert" : "status"}
-        >
-          <span>
-            {toast.tone === "error" ? (
-              <AlertTriangle size={18} />
-            ) : (
-              <CheckCircle2 size={18} />
-            )}
-          </span>
-          <p>{toast.message}</p>
-          <button
-            aria-label="Закрыть уведомление"
-            onClick={() => setToast(null)}
-          >
-            <X size={16} />
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -2502,7 +2478,7 @@ function NewTabPage({
                           void handleDeleteBookmark(bookmark);
                         }}
                       >
-                        <X size={12} />
+                        <X size={12} strokeWidth={2.6} />
                       </button>
                     </div>
                   ))}
