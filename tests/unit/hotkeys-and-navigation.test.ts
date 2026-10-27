@@ -330,4 +330,61 @@ describe('Omnibox keyboard navigation and live preview state machine', () => {
     const res = handleOmniboxKey('Enter', state, mockSuggestions);
     expect(res.targetToNavigate).toBe('https://mysite.org');
   });
+
+  describe('Tab drag and reordering logic', () => {
+    function reorderTabs(
+      tabIds: string[],
+      sourceId: string,
+      targetId: string,
+      position: 'before' | 'after' = 'before',
+    ): string[] {
+      const list = [...tabIds];
+      const sourceIndex = list.indexOf(sourceId);
+      if (sourceIndex === -1) return list;
+
+      if (targetId === 'end') {
+        const [removed] = list.splice(sourceIndex, 1);
+        list.push(removed);
+        return list;
+      }
+
+      const targetIndex = list.indexOf(targetId);
+      if (targetIndex === -1 || sourceIndex === targetIndex) return list;
+
+      const [removed] = list.splice(sourceIndex, 1);
+      let insertIndex = list.indexOf(targetId);
+      if (position === 'after') {
+        insertIndex += 1;
+      }
+      list.splice(insertIndex, 0, removed);
+      return list;
+    }
+
+    it('reorders tab before target tab', () => {
+      const tabs = ['tab-1', 'tab-2', 'tab-3', 'tab-4'];
+      const result = reorderTabs(tabs, 'tab-4', 'tab-2', 'before');
+      expect(result).toEqual(['tab-1', 'tab-4', 'tab-2', 'tab-3']);
+    });
+
+    it('reorders tab after target tab', () => {
+      const tabs = ['tab-1', 'tab-2', 'tab-3', 'tab-4'];
+      const result = reorderTabs(tabs, 'tab-1', 'tab-3', 'after');
+      expect(result).toEqual(['tab-2', 'tab-3', 'tab-1', 'tab-4']);
+    });
+
+    it('moves tab to the end when dropping on strip container', () => {
+      const tabs = ['tab-1', 'tab-2', 'tab-3', 'tab-4'];
+      const result = reorderTabs(tabs, 'tab-2', 'end');
+      expect(result).toEqual(['tab-1', 'tab-3', 'tab-4', 'tab-2']);
+    });
+
+    it('calculates correct drop side based on cursor horizontal position', () => {
+      function getDropSide(cursorX: number, tabLeft: number, tabWidth: number): 'left' | 'right' {
+        return cursorX < tabLeft + tabWidth / 2 ? 'left' : 'right';
+      }
+
+      expect(getDropSide(120, 100, 100)).toBe('left'); // 120 < 150
+      expect(getDropSide(170, 100, 100)).toBe('right'); // 170 >= 150
+    });
+  });
 });

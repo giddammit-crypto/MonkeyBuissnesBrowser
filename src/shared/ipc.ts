@@ -104,7 +104,7 @@ export interface BrowserApi {
   fillSavedPassword(tabId: string, passwordId: string): Promise<{ filled: boolean; reason?: string }>;
   setChromeBounds(bounds: ChromeBounds): Promise<void>;
   setPopoverOpen(open: boolean): Promise<void>;
-  reorderTab(tabId: string, targetTabId: string): Promise<void>;
+  reorderTab(tabId: string, targetTabId: string, position?: 'before' | 'after'): Promise<void>;
   downloadMediaUrl(url: string, filename?: string, isAudio?: boolean): Promise<void>;
   addGoogleAccount(email: string, name?: string): Promise<void>;
   switchGoogleAccount(accountId: string): Promise<void>;

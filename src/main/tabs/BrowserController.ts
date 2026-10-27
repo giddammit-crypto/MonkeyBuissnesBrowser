@@ -228,6 +228,9 @@ export class BrowserController {
     else await this.createTab({ url: NEW_TAB_URL, isPrivate: false, active: true });
     this.restoring = false;
     this.window.on('resize', () => this.refreshViewBounds());
+    this.window.on('maximize', () => this.refreshViewBounds());
+    this.window.on('unmaximize', () => this.refreshViewBounds());
+    this.window.on('restore', () => this.refreshViewBounds());
     this.window.on('closed', () => this.dispose());
     this.memoryManager.sample();
     this.metricsTimer = setInterval(() => {
@@ -534,14 +537,20 @@ export class BrowserController {
       if (!tab.view || tab.view.webContents.isDestroyed()) continue;
       if (active && !tab.isInternal && tab.lifecycle !== 'crashed') {
         (tab.view as any).setVisible?.(true);
-        try { this.window?.contentView.removeChildView(tab.view); } catch {}
-        this.window?.contentView.addChildView(tab.view);
+        if (this.window && !this.window.contentView.children.includes(tab.view)) {
+          this.window.contentView.addChildView(tab.view);
+        } else {
+          try { this.window?.contentView.removeChildView(tab.view); } catch {}
+          this.window?.contentView.addChildView(tab.view);
+        }
         this.applyBounds(tab);
         tab.view.webContents.focus();
       } else {
         (tab.view as any).setVisible?.(false);
-        try { this.window?.contentView.removeChildView(tab.view); } catch {}
-        tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+        if (tab.isInternal || tab.lifecycle === 'crashed') {
+          try { this.window?.contentView.removeChildView(tab.view); } catch {}
+          tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+        }
       }
     }
     this.emitSnapshot();
@@ -1416,14 +1425,24 @@ export class BrowserController {
     }
   }
 
-  reorderTab(tabId: string, targetTabId: string): void {
+  reorderTab(tabId: string, targetTabId: string, position: 'before' | 'after' = 'before'): void {
     const entries = [...this.tabs.entries()];
     const sourceIndex = entries.findIndex(([id]) => id === tabId);
     if (sourceIndex === -1) return;
-    const targetIndex = entries.findIndex(([id]) => id === targetTabId);
-    if (targetIndex === -1 || sourceIndex === targetIndex) return;
-    const [removed] = entries.splice(sourceIndex, 1);
-    entries.splice(targetIndex, 0, removed);
+
+    if (targetTabId === 'end') {
+      const [removed] = entries.splice(sourceIndex, 1);
+      entries.push(removed);
+    } else {
+      const targetIndex = entries.findIndex(([id]) => id === targetTabId);
+      if (targetIndex === -1 || sourceIndex === targetIndex) return;
+      const [removed] = entries.splice(sourceIndex, 1);
+      let insertIndex = entries.findIndex(([id]) => id === targetTabId);
+      if (position === 'after') {
+        insertIndex += 1;
+      }
+      entries.splice(insertIndex, 0, removed);
+    }
     this.tabs.clear();
     for (const [id, tab] of entries) {
       this.tabs.set(id, tab);
@@ -2586,13 +2605,18 @@ export class BrowserController {
     for (const tab of this.tabs.values()) {
       if (!tab.view || tab.view.webContents.isDestroyed()) continue;
       if (tab === activeTab && !tab.isInternal && tab.lifecycle !== 'crashed') {
+        (tab.view as any).setVisible?.(true);
         if (!this.window.contentView.children.includes(tab.view)) {
           this.window.contentView.addChildView(tab.view);
         }
         this.applyBounds(tab);
-      } else {
+      } else if (tab.isInternal || tab.lifecycle === 'crashed') {
+        (tab.view as any).setVisible?.(false);
         try { this.window.contentView.removeChildView(tab.view); } catch {}
         tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      } else {
+        (tab.view as any).setVisible?.(false);
+        this.applyBounds(tab);
       }
     }
   }

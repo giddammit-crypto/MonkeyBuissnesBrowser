@@ -334,7 +334,13 @@ function App(): React.JSX.Element {
   const originalAddressRef = useRef<string>("");
   const suggestionsListRef = useRef<HTMLDivElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
-  const currentTab = snapshot?.tabs.find(
+  const [optimisticTabId, setOptimisticTabId] = useState<string | null>(null);
+  useEffect(() => { setOptimisticTabId(null); }, [snapshot?.activeTabId]);
+  const effectiveSnapshot = useMemo(() => {
+    if (!snapshot || !optimisticTabId) return snapshot;
+    return { ...snapshot, activeTabId: optimisticTabId };
+  }, [snapshot, optimisticTabId]);
+  const currentTab = (optimisticTabId ? snapshot?.tabs.find((t) => t.id === optimisticTabId) : null) ?? snapshot?.tabs.find(
     (tab) => tab.id === snapshot.activeTabId,
   );
   const canDownloadVideo = Boolean(currentTab?.canDownloadMedia);
@@ -601,6 +607,7 @@ function App(): React.JSX.Element {
     snapshot?.activeTabId,
   ]);
   const isPopoverOpen = Boolean(popover) || tabSearchOpen || editingAddress || taskManagerOpen;
+  const hasActiveWebPage = panel === "home" && Boolean(currentTab && !currentTab.isInternal && currentTab.lifecycle !== "crashed");
   useEffect(() => {
     void window.browserApi.setPopoverOpen(isPopoverOpen || panel !== "home");
   }, [isPopoverOpen, panel]);
@@ -677,7 +684,11 @@ function App(): React.JSX.Element {
             const currentIdx = visible.findIndex((t) => t.id === currentTab?.id);
             const delta = event.shiftKey ? -1 : 1;
             const nextIdx = (currentIdx + delta + visible.length) % visible.length;
-            run(window.browserApi.activateTab(visible[nextIdx].id));
+            const nextTab = visible[nextIdx];
+            if (nextTab) {
+              setOptimisticTabId(nextTab.id);
+              run(window.browserApi.activateTab(nextTab.id));
+            }
           }
         }
         return;
@@ -770,7 +781,7 @@ function App(): React.JSX.Element {
 
   return (
     <div
-      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${findOpen ? "find-open" : ""} ${isPrivate ? "private-mode" : ""} ${isPopoverOpen ? "popover-open" : ""}`}
+      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${findOpen ? "find-open" : ""} ${isPrivate ? "private-mode" : ""} ${isPopoverOpen ? "popover-open" : ""} ${isPopoverOpen && hasActiveWebPage ? "popover-with-webpage" : ""}`}
     >
       <div className="window-titlebar">
         <div className="title-brand">
@@ -804,7 +815,7 @@ function App(): React.JSX.Element {
         </div>
       </div>
       <TabStrip
-        snapshot={snapshot}
+        snapshot={effectiveSnapshot ?? snapshot}
         tabSearchOpen={tabSearchOpen}
         onToggleSearch={() => {
           setTabSearchOpen((open) => !open);
@@ -812,6 +823,7 @@ function App(): React.JSX.Element {
         }}
         onActivate={(id) => {
           setPanel("home");
+          setOptimisticTabId(id);
           run(window.browserApi.activateTab(id));
         }}
         onClose={(id) => run(window.browserApi.closeTab(id))}
@@ -1796,7 +1808,7 @@ function App(): React.JSX.Element {
           )}
         <div
           ref={viewportRef}
-          className={`page-viewport ${panel !== "home" ? "panel-visible" : ""}`}
+          className={`page-viewport ${panel !== "home" || Boolean(currentTab?.isInternal) || currentTab?.lifecycle === "crashed" ? "panel-visible" : ""}`}
         >
           {panel === "home" && currentTab?.isInternal && (
             <NewTabPage
@@ -1935,7 +1947,7 @@ function TabStrip({
   const listRef = useRef<HTMLDivElement>(null);
   const [overflow, setOverflow] = useState({ left: false, right: false });
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<{ id: string; side: "left" | "right" } | null>(null);
   const hasOverflow = overflow.left || overflow.right;
   const active = snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId);
   const tabs = snapshot.tabs
@@ -1959,7 +1971,7 @@ function TabStrip({
     };
     list
       .querySelector<HTMLElement>(".tab-container.active")
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      ?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
     const frame = requestAnimationFrame(update);
     const observer = new ResizeObserver(update);
     observer.observe(list);
@@ -1974,7 +1986,7 @@ function TabStrip({
     const frame = requestAnimationFrame(() => {
       listRef.current
         ?.querySelector<HTMLElement>(".tab-container.active")
-        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        ?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
     });
     return () => cancelAnimationFrame(frame);
   }, [snapshot.activeTabId, hasOverflow]);
@@ -2014,6 +2026,19 @@ function TabStrip({
         ref={listRef}
         role="tablist"
         aria-label="Вкладки"
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          const sourceId = event.dataTransfer.getData("text/plain") || draggingId;
+          setDraggingId(null);
+          setDragOver(null);
+          if (sourceId) {
+            void window.browserApi.reorderTab(sourceId, "end").catch(console.error);
+          }
+        }}
         style={{
           "--tab-dynamic-width": `${dynamicTabWidth}px`,
           "--tab-active-width": `${dynamicActiveTabWidth}px`,
@@ -2031,27 +2056,41 @@ function TabStrip({
             }}
             onDragOver={(event) => {
               event.preventDefault();
+              event.stopPropagation();
               event.dataTransfer.dropEffect = "move";
-              if (dragOverId !== tab.id) setDragOverId(tab.id);
+              const sourceId = draggingId || event.dataTransfer.getData("text/plain");
+              if (sourceId === tab.id) {
+                setDragOver(null);
+                return;
+              }
+              const rect = event.currentTarget.getBoundingClientRect();
+              const side = event.clientX < rect.left + rect.width / 2 ? "left" : "right";
+              setDragOver({ id: tab.id, side });
             }}
-            onDragLeave={() => {
-              if (dragOverId === tab.id) setDragOverId(null);
+            onDragLeave={(event) => {
+              const related = event.relatedTarget as HTMLElement | null;
+              if (!event.currentTarget.contains(related)) {
+                if (dragOver?.id === tab.id) setDragOver(null);
+              }
             }}
             onDrop={(event) => {
               event.preventDefault();
+              event.stopPropagation();
               const sourceId = event.dataTransfer.getData("text/plain") || draggingId;
+              const currentDragOver = dragOver;
               setDraggingId(null);
-              setDragOverId(null);
+              setDragOver(null);
               if (sourceId && sourceId !== tab.id) {
-                void window.browserApi.reorderTab(sourceId, tab.id).catch(console.error);
+                const position = currentDragOver?.side === "right" ? "after" : "before";
+                void window.browserApi.reorderTab(sourceId, tab.id, position).catch(console.error);
               }
             }}
             onDragEnd={() => {
               setDraggingId(null);
-              setDragOverId(null);
+              setDragOver(null);
             }}
             onContextMenu={(event) => { event.preventDefault(); void window.browserApi.showTabMenu(tab.id).catch(console.error); }}
-            className={`tab-container ${tab.id === snapshot.activeTabId ? "active" : ""} ${tab.isPrivate ? "private-tab" : ""} ${tab.isPinned ? "pinned-tab" : ""} ${tab.lifecycle === "hibernated" ? "sleeping-tab" : ""} ${draggingId === tab.id ? "dragging-tab" : ""} ${dragOverId === tab.id && draggingId !== tab.id ? "drag-over-tab" : ""}`}
+            className={`tab-container ${tab.id === snapshot.activeTabId ? "active" : ""} ${tab.isPrivate ? "private-tab" : ""} ${tab.isPinned ? "pinned-tab" : ""} ${tab.lifecycle === "hibernated" ? "sleeping-tab" : ""} ${draggingId === tab.id ? "dragging-tab" : ""} ${dragOver?.id === tab.id ? (dragOver.side === "left" ? "drag-over-left" : "drag-over-right") : ""}`}
           >
             <button
               className="tab"

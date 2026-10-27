@@ -324,12 +324,15 @@ select {
   opacity: 0.45;
   transform: scale(0.96);
   cursor: grabbing !important;
+  transition: transform 0.15s ease, opacity 0.15s ease;
 }
-.tab-container.drag-over-tab {
+.tab-container.drag-over-tab,
+.tab-container.drag-over-left {
   position: relative;
   border-left: 2px solid var(--accent) !important;
 }
-.tab-container.drag-over-tab::before {
+.tab-container.drag-over-tab::before,
+.tab-container.drag-over-left::before {
   content: "";
   position: absolute;
   top: 4px;
@@ -340,6 +343,24 @@ select {
   border-radius: 2px;
   box-shadow: 0 0 8px var(--accent);
   z-index: 10;
+  pointer-events: none;
+}
+.tab-container.drag-over-right {
+  position: relative;
+  border-right: 2px solid var(--accent) !important;
+}
+.tab-container.drag-over-right::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  right: -2px;
+  width: 3px;
+  background: var(--accent);
+  border-radius: 2px;
+  box-shadow: 0 0 8px var(--accent);
+  z-index: 10;
+  pointer-events: none;
 }
 .tab {
   min-width: 0;
@@ -1114,19 +1135,20 @@ select {
   left: var(--sidebar-width);
   right: 0;
   bottom: 0;
-  background: transparent;
+  background: var(--canvas, #171b20);
 }
 .page-viewport {
   position: absolute;
   inset: 0;
   overflow: auto;
-  background: transparent;
+  background: var(--canvas, #171b20);
 }
-.app-shell.popover-open .page-viewport {
+.app-shell.popover-with-webpage .content-area,
+.app-shell.popover-with-webpage .page-viewport {
   background: transparent !important;
 }
 .page-viewport.panel-visible {
-  background: var(--canvas);
+  background: var(--canvas, #171b20);
 }
 .new-tab-page {
   display: flex;
@@ -3292,7 +3314,7 @@ select {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: transparent;
+  background: var(--canvas, #171b20);
 }
 .page-viewport {
   position: relative;
@@ -3300,7 +3322,11 @@ select {
   flex: 1;
   min-height: 0;
   width: 100%;
-  background: transparent;
+  background: var(--canvas, #171b20);
+}
+.app-shell.popover-with-webpage .content-area,
+.app-shell.popover-with-webpage .page-viewport {
+  background: transparent !important;
 }
 .auth-help-banner {
   display: flex;

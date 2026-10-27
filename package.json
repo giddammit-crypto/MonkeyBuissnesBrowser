@@ -55,6 +55,12 @@
       "assets/**/*",
       "package.json"
     ],
+    "extraFiles": [
+      {
+        "from": "scripts/debian/soulm8te-launcher.sh",
+        "to": "soulm8te-launcher.sh"
+      }
+    ],
     "linux": {
       "target": [
         "AppImage",
@@ -62,7 +68,17 @@
       ],
       "category": "Network",
       "maintainer": "soulm8te <maintainers@soulm8te.invalid>",
-      "icon": "assets/icons/png"
+      "icon": "assets/icons/png",
+      "executableName": "soulm8te",
+      "desktop": {
+        "entry": {
+          "StartupWMClass": "soulm8te"
+        }
+      }
+    },
+    "deb": {
+      "afterInstall": "scripts/debian/after-install.sh",
+      "afterRemove": "scripts/debian/after-remove.sh"
     },
     "win": {
       "target": [

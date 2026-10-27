@@ -24,6 +24,7 @@ app.userAgentFallback = getChromeUserAgent();
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('disable-features', 'Vulkan');
   app.commandLine.appendSwitch('use-webgpu-adapter', 'opengles');
+  app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
 }
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
@@ -164,7 +165,7 @@ function registerIpc(): void {
   ipcMain.handle('browser:fill-saved-password', (event, tabId: string, id: string) => requireShell(event).fillSavedPassword(tabId, id));
   ipcMain.handle('browser:set-chrome-bounds', (event, bounds: ChromeBounds) => requireShell(event).setChromeBounds(bounds));
   ipcMain.handle('browser:set-popover-open', (event, open: boolean) => requireShell(event).setPopoverOpen(open));
-  ipcMain.handle('browser:reorder-tab', (event, tabId: string, targetTabId: string) => requireShell(event).reorderTab(tabId, targetTabId));
+  ipcMain.handle('browser:reorder-tab', (event, tabId: string, targetTabId: string, position?: 'before' | 'after') => requireShell(event).reorderTab(tabId, targetTabId, position));
   ipcMain.handle('browser:download-media-url', (event, url: string, filename?: string, isAudio?: boolean) => requireShell(event).downloadMediaUrl(url, filename, isAudio));
   ipcMain.handle('browser:delete-download', (event, downloadId: string, deleteFile?: boolean) => requireShell(event).deleteDownload(downloadId, deleteFile));
   ipcMain.handle('browser:retry-download', (event, downloadId: string) => requireShell(event).retryDownload(downloadId));
@@ -243,6 +244,12 @@ app.on('activate', () => {
 app.on('login', (event, _webContents, _authInfo, _authResponseDetails, callback) => {
   event.preventDefault();
   callback('', '');
+});
+
+app.on('child-process-gone', (_event, details) => {
+  if (details.type === 'GPU') {
+    void controller?.samplePerformance();
+  }
 });
 
 app.on('window-all-closed', () => {
