@@ -56,4 +56,15 @@ describe('media download URL helpers', () => {
     expect(normalizeVideoUrl('https://youtu.be/abcdefghijk')).toBe('https://www.youtube.com/watch?v=abcdefghijk');
     expect(normalizeVideoUrl('https://www.youtube.com/watch?v=abcdefghijk&t=10s')).toBe('https://www.youtube.com/watch?v=abcdefghijk');
   });
+
+  it('strictly excludes search engines, video homepages, and feeds from being treated as video pages', () => {
+    expect(isVideoPageUrl('https://www.youtube.com/')).toBe(false);
+    expect(isVideoPageUrl('https://www.youtube.com/feed/subscriptions')).toBe(false);
+    expect(isVideoPageUrl('https://rutube.ru/')).toBe(false);
+    expect(isVideoPageUrl('https://rutube.ru/feeds/top/')).toBe(false);
+    expect(isVideoPageUrl('https://vk.com/feed')).toBe(false);
+    expect(isVideoPageUrl('https://vk.com/im')).toBe(false);
+    expect(isVideoPageUrl('https://google.com/search?q=video')).toBe(false);
+    expect(isVideoPageUrl('https://yandex.ru/search/?text=video')).toBe(false);
+  });
 });

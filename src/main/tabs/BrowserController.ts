@@ -543,6 +543,7 @@ export class BrowserController {
       if (!tab.view || tab.view.webContents.isDestroyed()) continue;
       if (active && !tab.isInternal && tab.lifecycle !== 'crashed') {
         (tab.view as any).setVisible?.(true);
+        tab.view.webContents.setBackgroundThrottling(false);
         if (this.window && !this.window.contentView.children.includes(tab.view)) {
           this.window.contentView.addChildView(tab.view);
         } else {
@@ -552,11 +553,37 @@ export class BrowserController {
         this.applyBounds(tab);
         tab.view.webContents.focus();
       } else {
-        (tab.view as any).setVisible?.(false);
-        if (tab.isInternal || tab.lifecycle === 'crashed') {
-          try { this.window?.contentView.removeChildView(tab.view); } catch {}
-          tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+        if (tab.isPictureInPicture && !tab.isInternal && tab.lifecycle !== 'crashed') {
+          // Keep PiP tab visible and unthrottled so video continues displaying in PiP window
+          (tab.view as any).setVisible?.(true);
+          tab.view.webContents.setBackgroundThrottling(false);
+          if (this.window && !this.window.contentView.children.includes(tab.view)) {
+            this.window.contentView.addChildView(tab.view);
+          }
+          this.applyBounds(tab);
+        } else {
+          (tab.view as any).setVisible?.(false);
+          tab.view.webContents.setBackgroundThrottling(true);
+          if (tab.isInternal || tab.lifecycle === 'crashed') {
+            try { this.window?.contentView.removeChildView(tab.view); } catch {}
+            tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+          }
         }
+      }
+    }
+    if (next.isInternal || next.lifecycle === 'crashed' || next.isReaderActive) {
+      if (this.shellView && !this.shellView.webContents.isDestroyed()) {
+        try { this.window?.contentView.removeChildView(this.shellView); } catch {}
+        this.window?.contentView.addChildView(this.shellView);
+        this.shellView.webContents.focus();
+      }
+    } else if (next.view && !next.view.webContents.isDestroyed()) {
+      if (this.window && this.window.contentView.children.includes(next.view)) {
+        try {
+          this.window.contentView.removeChildView(next.view);
+          this.window.contentView.addChildView(next.view);
+          next.view.webContents.focus();
+        } catch {}
       }
     }
     this.emitSnapshot();
@@ -2493,8 +2520,22 @@ export class BrowserController {
       tab.capturedAudioFilename = undefined;
       this.memoryManager.updateTab(tab.id, { capturing: false });
     };
-    contents.on('did-navigate', (_event, url) => { clearCapturedMedia(); this.memoryManager.updateTab(tab.id, { hasFormEdits: false }); this.updateUrl(tab, url); });
-    contents.on('did-navigate-in-page', (_event, url) => { clearCapturedMedia(); this.updateUrl(tab, url); });
+    const resetTabMediaAndReader = () => {
+      clearCapturedMedia();
+      tab.hasVideoMedia = false;
+      tab.hasDownloadableMedia = false;
+      tab.isReaderAvailable = false;
+      tab.isReaderActive = false;
+      if (tab.isPictureInPicture) {
+        tab.isPictureInPicture = false;
+        if (tab.id !== this.activeTabId && tab.view && !tab.view.webContents.isDestroyed()) {
+          tab.view.webContents.setBackgroundThrottling(true);
+          (tab.view as any).setVisible?.(false);
+        }
+      }
+    };
+    contents.on('did-navigate', (_event, url) => { resetTabMediaAndReader(); this.memoryManager.updateTab(tab.id, { hasFormEdits: false }); this.updateUrl(tab, url); });
+    contents.on('did-navigate-in-page', (_event, url) => { resetTabMediaAndReader(); this.updateUrl(tab, url); });
     contents.on('page-title-updated', (event, title) => {
       event.preventDefault();
       if (contents.isDestroyed() || this.tabs.get(tab.id) !== tab || tab.webContentsId !== contents.id) return;
@@ -2594,6 +2635,11 @@ export class BrowserController {
   private activateInternalTab(tab: TabRecord): void {
     this.detachView(tab);
     this.memoryManager.updateTab(tab.id, { loading: false, hasFormEdits: false, capturing: false, audible: false });
+    tab.hasVideoMedia = false;
+    tab.hasDownloadableMedia = false;
+    tab.isReaderAvailable = false;
+    tab.isReaderActive = false;
+    tab.isPictureInPicture = false;
     tab.url = NEW_TAB_URL;
     tab.title = tab.isPrivate ? 'Приватная вкладка' : 'Новая вкладка';
     tab.isInternal = true;
@@ -2612,17 +2658,43 @@ export class BrowserController {
       if (!tab.view || tab.view.webContents.isDestroyed()) continue;
       if (tab === activeTab && !tab.isInternal && tab.lifecycle !== 'crashed' && !tab.isReaderActive) {
         (tab.view as any).setVisible?.(true);
+        tab.view.webContents.setBackgroundThrottling(false);
+        if (!this.window.contentView.children.includes(tab.view)) {
+          this.window.contentView.addChildView(tab.view);
+        }
+        this.applyBounds(tab);
+      } else if (tab.isPictureInPicture && !tab.isInternal && tab.lifecycle !== 'crashed') {
+        (tab.view as any).setVisible?.(true);
+        tab.view.webContents.setBackgroundThrottling(false);
         if (!this.window.contentView.children.includes(tab.view)) {
           this.window.contentView.addChildView(tab.view);
         }
         this.applyBounds(tab);
       } else if (tab.isInternal || tab.lifecycle === 'crashed' || tab.isReaderActive) {
         (tab.view as any).setVisible?.(false);
+        tab.view.webContents.setBackgroundThrottling(true);
         try { this.window.contentView.removeChildView(tab.view); } catch {}
         tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
       } else {
         (tab.view as any).setVisible?.(false);
+        tab.view.webContents.setBackgroundThrottling(true);
         this.applyBounds(tab);
+      }
+    }
+
+    if (activeTab && (activeTab.isInternal || activeTab.isReaderActive || activeTab.lifecycle === 'crashed')) {
+      if (this.shellView && !this.shellView.webContents.isDestroyed()) {
+        try {
+          this.window.contentView.removeChildView(this.shellView);
+          this.window.contentView.addChildView(this.shellView);
+        } catch {}
+      }
+    } else if (activeTab?.view && !activeTab.view.webContents.isDestroyed()) {
+      if (this.window && this.window.contentView.children.includes(activeTab.view)) {
+        try {
+          this.window.contentView.removeChildView(activeTab.view);
+          this.window.contentView.addChildView(activeTab.view);
+        } catch {}
       }
     }
   }
@@ -3044,6 +3116,14 @@ export class BrowserController {
     const tab = [...this.tabs.values()].find((entry) => entry.webContentsId === webContentsId);
     if (tab && tab.isPictureInPicture !== isPip) {
       tab.isPictureInPicture = isPip;
+      if (tab.view && !tab.view.webContents.isDestroyed()) {
+        const isActive = tab.id === this.activeTabId;
+        tab.view.webContents.setBackgroundThrottling(!isActive && !isPip);
+        if (!isActive) {
+          (tab.view as any).setVisible?.(isPip);
+          this.refreshViewBounds();
+        }
+      }
       this.emitSnapshot();
     }
   }
@@ -3181,6 +3261,14 @@ export class BrowserController {
       const res = await tab.view.webContents.executeJavaScript(script, true);
       const isPip = Boolean(res?.isPip);
       tab.isPictureInPicture = isPip;
+      if (tab.view && !tab.view.webContents.isDestroyed()) {
+        const isActive = tab.id === this.activeTabId;
+        tab.view.webContents.setBackgroundThrottling(!isActive && !isPip);
+        if (!isActive) {
+          (tab.view as any).setVisible?.(isPip);
+          this.refreshViewBounds();
+        }
+      }
       this.emitSnapshot();
       return { success: Boolean(res?.success), isPip };
     } catch {

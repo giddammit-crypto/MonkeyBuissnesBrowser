@@ -774,6 +774,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     scheduleInjection();
 
     // 4. Video & Audio media detection for download button checkmark
+    const hasValidVideoSource = (v: HTMLVideoElement): boolean => {
+      try {
+        if (v.src && v.src.trim() !== '' && !v.src.startsWith('blob:null')) return true;
+        if (v.currentSrc && v.currentSrc.trim() !== '') return true;
+        if (v.querySelector('source[src], source[srcset]')) return true;
+        if (v.readyState > 0 || v.duration > 0 || !v.paused) return true;
+        return false;
+      } catch {
+        return false;
+      }
+    };
+
     let lastMediaSignature = '';
     const checkMedia = () => {
       try {
@@ -781,7 +793,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         let hasVideo = false;
         for (let i = 0; i < videos.length; i++) {
           const v = videos[i];
-          if (v && (v.src || v.currentSrc || v.querySelector('source') || v.duration > 0 || !v.paused)) {
+          if (v && hasValidVideoSource(v)) {
             hasVideo = true;
             break;
           }
@@ -790,20 +802,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         let hasAudio = false;
         for (let i = 0; i < audios.length; i++) {
           const a = audios[i];
-          if (a && (a.src || a.currentSrc || !a.paused || a.duration > 0)) {
+          if (a && (a.src || a.currentSrc || !a.paused || a.duration > 0 || a.readyState > 0)) {
             hasAudio = true;
             break;
           }
-        }
-        if (!hasVideo && (
-          isHostOrSubdomain('youtube.com') ||
-          isHostOrSubdomain('youtu.be') ||
-          isHostOrSubdomain('rutube.ru') ||
-          isVkHost ||
-          isHostOrSubdomain('pinterest.com') ||
-          isHostOrSubdomain('pinterest.ru')
-        )) {
-          hasVideo = true;
         }
         const signature = `${hasVideo ? '1' : '0'}:${hasAudio ? '1' : '0'}`;
         if (signature === lastMediaSignature) return;
@@ -893,7 +895,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     const checkVideo = () => {
       try {
         const videos = findVideos(document);
-        const hasVideo = videos.length > 0;
+        const hasVideo = videos.some(hasValidVideoSource);
         if (hasVideo !== lastVideoPresence) {
           lastVideoPresence = hasVideo;
           ipcRenderer.send('page:video-detected', { hasVideo });
@@ -906,6 +908,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     document.addEventListener('play', checkVideo, true);
     document.addEventListener('playing', checkVideo, true);
     document.addEventListener('loadeddata', checkVideo, true);
+    document.addEventListener('pause', checkVideo, true);
+    document.addEventListener('ended', checkVideo, true);
+    document.addEventListener('emptied', checkVideo, true);
+    document.addEventListener('suspend', checkVideo, true);
     try {
       const observer = new MutationObserver(() => checkVideo());
       observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
@@ -1145,10 +1151,71 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     // 7. Reader Mode Availability Detector
     let lastReaderAvailable: boolean | undefined;
+
+    const isExcludedFromReader = (urlStr: string): boolean => {
+      try {
+        if (!urlStr) return true;
+        const url = new URL(urlStr);
+        if (['browser:', 'about:', 'chrome:', 'data:', 'javascript:'].includes(url.protocol)) return true;
+        const host = url.hostname.toLowerCase().replace(/^www\./, '');
+        // Search engines
+        if (
+          host === 'google.com' || host.endsWith('.google.com') ||
+          host === 'google.ru' || host.endsWith('.google.ru') ||
+          host === 'yandex.ru' || host.endsWith('.yandex.ru') ||
+          host === 'yandex.com' || host.endsWith('.yandex.com') ||
+          host === 'ya.ru' ||
+          host === 'bing.com' || host.endsWith('.bing.com') ||
+          host === 'duckduckgo.com' || host.endsWith('.duckduckgo.com') ||
+          host === 'baidu.com' || host.endsWith('.baidu.com') ||
+          host === 'yahoo.com' || host.endsWith('.yahoo.com')
+        ) {
+          return true;
+        }
+        // Social networks & feeds & media sharing
+        if (
+          host === 'vk.com' || host.endsWith('.vk.com') || host === 'vkvideo.ru' ||
+          host === 'twitter.com' || host === 'x.com' ||
+          host === 'facebook.com' || host.endsWith('.facebook.com') ||
+          host === 'instagram.com' || host.endsWith('.instagram.com') ||
+          host === 'reddit.com' || host.endsWith('.reddit.com') ||
+          host === 'tiktok.com' || host.endsWith('.tiktok.com') ||
+          host.includes('pinterest.')
+        ) {
+          return true;
+        }
+        // Video hostings & streaming
+        if (
+          host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be' ||
+          host === 'rutube.ru' || host.endsWith('.rutube.ru') ||
+          host === 'twitch.tv' || host.endsWith('.twitch.tv') ||
+          host === 'vimeo.com' || host.endsWith('.vimeo.com') ||
+          host === 'dailymotion.com' || host.endsWith('.dailymotion.com')
+        ) {
+          return true;
+        }
+        // Webmail & messengers
+        if (
+          host === 'mail.google.com' || host === 'mail.ru' || host.endsWith('.mail.ru') ||
+          host === 'mail.yandex.ru' || host === 'outlook.live.com' || host === 'outlook.office.com' ||
+          host === 'web.telegram.org' || host === 'web.whatsapp.com'
+        ) {
+          return true;
+        }
+        // Homepages / root URLs without article path
+        if ((url.pathname === '/' || url.pathname === '') && !url.search) {
+          return true;
+        }
+        return false;
+      } catch {
+        return true;
+      }
+    };
+
     const checkReaderStatus = () => {
       try {
         const href = window.location.href;
-        if (href.startsWith('browser://') || href.startsWith('about:') || href.startsWith('chrome://')) {
+        if (isExcludedFromReader(href)) {
           if (lastReaderAvailable !== false) {
             lastReaderAvailable = false;
             ipcRenderer.send('page:reader-status', { available: false });
@@ -1158,22 +1225,27 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
         let available = false;
         const article = document.querySelector('article');
-        if (article && (article.textContent || '').trim().length > 250) {
+        const articleText = (article?.textContent || '').trim();
+        if (article && articleText.length > 500) {
           available = true;
         } else {
           const main = document.querySelector('main, [role="main"]');
-          if (main && (main.textContent || '').trim().length > 300) {
+          const mainText = (main?.textContent || '').trim();
+          if (main && mainText.length > 500) {
             available = true;
           } else {
             const paragraphs = document.querySelectorAll('p');
-            if (paragraphs.length >= 3) {
-              let totalLength = 0;
-              for (let i = 0; i < paragraphs.length; i++) {
-                totalLength += (paragraphs[i].textContent || '').trim().length;
-                if (totalLength > 400) {
-                  available = true;
-                  break;
-                }
+            let totalLength = 0;
+            let longParagraphCount = 0;
+            for (let i = 0; i < paragraphs.length; i++) {
+              const text = (paragraphs[i].textContent || '').trim();
+              if (text.length > 50) {
+                longParagraphCount++;
+                totalLength += text.length;
+              }
+              if (longParagraphCount >= 3 && totalLength > 500) {
+                available = true;
+                break;
               }
             }
           }

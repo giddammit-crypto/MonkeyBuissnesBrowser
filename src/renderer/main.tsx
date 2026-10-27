@@ -318,6 +318,7 @@ function Brand({ large = false }: { large?: boolean }): React.JSX.Element {
 }
 function App(): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<BrowserSnapshot | null>(null);
+  const [customWallpaper] = useCustomWallpaper();
   const [panel, setPanel] = useState<Panel>("home");
   const [address, setAddress] = useState("");
   const [editingAddress, setEditingAddress] = useState(false);
@@ -797,10 +798,36 @@ function App(): React.JSX.Element {
       </div>
     );
 
+  const wallpaperBackground = normalizeNewTabBackground(snapshot?.settings.newTabBackground);
+  const appearancePreset = snapshot?.settings.appearancePreset ?? "classic";
+  const wallpaperSrc = customWallpaper ?? (
+    wallpaperBackground === "cyber-butterfly" || (wallpaperBackground === "portrait" && appearancePreset === "cyber-butterfly")
+      ? cyberButterflyWallpaper
+      : wallpaperBackground === "tokyo-night" || (wallpaperBackground === "portrait" && appearancePreset === "tokyo-night")
+        ? tokyoNightWallpaper
+        : wallpaperBackground === "celestial-palace" || (wallpaperBackground === "portrait" && appearancePreset === "celestial-palace")
+          ? celestialPalaceWallpaper
+          : wallpaperBackground === "cyberpink" || (wallpaperBackground === "portrait" && appearancePreset === "cyberpink")
+            ? cyberpinkWallpaper
+            : wallpaperBackground === "cyberpink-fuji" || (wallpaperBackground === "portrait" && appearancePreset === "cyberpink-fuji")
+              ? cyberpinkFujiWallpaper
+              : chloeWallpaper
+  );
+
   return (
     <div
       className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${findOpen ? "find-open" : ""} ${isPrivate ? "private-mode" : ""} ${isPopoverOpen ? "popover-open" : ""} ${isPopoverOpen && hasActiveWebPage ? "popover-with-webpage" : ""}`}
     >
+      {wallpaperBackground !== "plain" && (
+        <div className="workspace-wallpaper newtab-wallpaper" data-newtab-wallpaper data-workspace-wallpaper aria-hidden="true">
+          <img
+            src={wallpaperSrc}
+            alt=""
+            decoding="async"
+            draggable={false}
+          />
+        </div>
+      )}
       <div className="window-titlebar">
         <div className="title-brand">
           <img className="title-brand-icon" src={chloeIcon} alt="soulm8te" />
@@ -2471,7 +2498,6 @@ function NewTabPage({
     : "Ctrl";
   const recent = privateMode ? [] : snapshot.history.slice(0, 3);
   const background = normalizeNewTabBackground(snapshot.settings.newTabBackground);
-  const [customWallpaper] = useCustomWallpaper();
 
   const activeBookmarks = useMemo(() => {
     if (snapshot.bookmarks.length > 0) {
@@ -2535,29 +2561,6 @@ function NewTabPage({
 
   return (
     <div className={`new-tab-page ${privateMode ? "private-newtab" : ""}`} data-new-tab-background={background} data-background={background}>
-      {background !== "plain" && (
-        <div className="newtab-wallpaper" data-newtab-wallpaper aria-hidden="true">
-          <img
-            src={
-              customWallpaper ??
-              (background === "cyber-butterfly" || (background === "portrait" && snapshot.settings.appearancePreset === "cyber-butterfly")
-                ? cyberButterflyWallpaper
-                : background === "tokyo-night" || (background === "portrait" && snapshot.settings.appearancePreset === "tokyo-night")
-                  ? tokyoNightWallpaper
-                  : background === "celestial-palace" || (background === "portrait" && snapshot.settings.appearancePreset === "celestial-palace")
-                    ? celestialPalaceWallpaper
-                    : background === "cyberpink" || (background === "portrait" && snapshot.settings.appearancePreset === "cyberpink")
-                      ? cyberpinkWallpaper
-                      : background === "cyberpink-fuji" || (background === "portrait" && snapshot.settings.appearancePreset === "cyberpink-fuji")
-                        ? cyberpinkFujiWallpaper
-                        : chloeWallpaper)
-            }
-            alt=""
-            decoding="async"
-            draggable={false}
-          />
-        </div>
-      )}
       <div className="newtab-topline">
         <span>
           {new Intl.DateTimeFormat("ru-RU", {

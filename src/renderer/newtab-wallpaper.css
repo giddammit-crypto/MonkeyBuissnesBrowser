@@ -409,11 +409,15 @@
   border-width: 1px;
   box-shadow: 0 10px 32px rgb(0 0 0 / 11%), 0 0 14px rgb(0 210 255 / 12%);
 }
+:root[data-appearance="detroit"] .newtab-wallpaper img,
+:root[data-wallpaper="portrait"] .newtab-wallpaper img,
 :root[data-appearance="detroit"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img,
 :root[data-wallpaper="portrait"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img {
   object-position: 77% center;
 }
 @media (max-width: 1150px) {
+  :root[data-appearance="detroit"] .newtab-wallpaper img,
+  :root[data-wallpaper="portrait"] .newtab-wallpaper img,
   :root[data-appearance="detroit"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img,
   :root[data-wallpaper="portrait"] .new-tab-page[data-new-tab-background="portrait"] .newtab-wallpaper img {
     object-position: 82% center;
@@ -506,6 +510,8 @@
 .new-tab-page[data-new-tab-background="cyberpink-fuji"] {
   --wallpaper-line: rgb(192 132 252 / 28%);
 }
+:root[data-wallpaper="cyberpink"] .newtab-wallpaper::after,
+:root[data-wallpaper="cyberpink-fuji"] .newtab-wallpaper::after,
 .new-tab-page[data-new-tab-background="cyberpink"] .newtab-wallpaper::after,
 .new-tab-page[data-new-tab-background="cyberpink-fuji"] .newtab-wallpaper::after {
   background: linear-gradient(90deg, rgb(10 11 16 / 95%) 0%, rgb(10 11 16 / 90%) 32%, rgb(10 11 16 / 65%) 56%, rgb(10 11 16 / 20%) 80%, rgb(10 11 16 / 5%) 100%);
@@ -668,12 +674,15 @@
   --wallpaper-panel-hover: rgb(18 48 58 / 95%);
   --wallpaper-line: rgb(45 212 191 / 28%);
 }
+:root[data-wallpaper="cyber-butterfly"] .newtab-wallpaper::after,
 .new-tab-page[data-new-tab-background="cyber-butterfly"] .newtab-wallpaper::after {
   background: linear-gradient(90deg, rgb(10 11 18 / 95%) 0%, rgb(10 11 18 / 88%) 32%, rgb(10 11 18 / 60%) 56%, rgb(10 11 18 / 15%) 80%, rgb(10 11 18 / 2%) 100%);
 }
+:root[data-wallpaper="tokyo-night"] .newtab-wallpaper::after,
 .new-tab-page[data-new-tab-background="tokyo-night"] .newtab-wallpaper::after {
   background: linear-gradient(90deg, rgb(8 13 26 / 95%) 0%, rgb(8 13 26 / 88%) 32%, rgb(8 13 26 / 60%) 56%, rgb(8 13 26 / 15%) 80%, rgb(8 13 26 / 2%) 100%);
 }
+:root[data-wallpaper="celestial-palace"] .newtab-wallpaper::after,
 .new-tab-page[data-new-tab-background="celestial-palace"] .newtab-wallpaper::after {
   background: linear-gradient(90deg, rgb(6 19 23 / 95%) 0%, rgb(6 19 23 / 88%) 32%, rgb(6 19 23 / 60%) 56%, rgb(6 19 23 / 15%) 80%, rgb(6 19 23 / 2%) 100%);
 }
@@ -834,5 +843,110 @@
   background: rgba(255, 255, 255, 0.12);
   color: #ffffff;
   border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* ==========================================================================
+   Adaptive Space Wallpaper across all tabs and panels of "Ваше пространство"
+   ========================================================================== */
+.workspace-wallpaper {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+:root:not([data-wallpaper="plain"]) .app-shell {
+  background: transparent;
+}
+
+:root:not([data-wallpaper="plain"]) .window-titlebar {
+  background: rgba(13, 16, 23, 0.72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+:root:not([data-wallpaper="plain"]) .tab-strip {
+  background: rgba(15, 20, 28, 0.60);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+:root:not([data-wallpaper="plain"]) .toolbar {
+  background: rgba(18, 22, 32, 0.72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+:root:not([data-wallpaper="plain"]) .sidebar {
+  background: rgba(12, 15, 22, 0.68);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+:root:not([data-wallpaper="plain"]) .content-area {
+  background: transparent;
+}
+
+:root:not([data-wallpaper="plain"]) .page-viewport:not(.panel-visible) {
+  background: transparent;
+}
+
+:root:not([data-wallpaper="plain"]) .page-viewport.panel-visible {
+  background: rgba(13, 16, 23, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+:root:not([data-wallpaper="plain"]) .tab-container.active {
+  background: rgba(26, 32, 46, 0.82);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+:root:not([data-wallpaper="plain"]) .tab-container:not(.active) {
+  background: rgba(15, 18, 26, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+:root:not([data-wallpaper="plain"]) .tab-container:not(.active):hover {
+  background: rgba(26, 32, 46, 0.65);
+}
+
+/* Light theme overrides for adaptive space wallpaper */
+:root[data-theme="light"]:not([data-wallpaper="plain"]) .window-titlebar {
+  background: rgba(240, 244, 248, 0.75);
+}
+
+:root[data-theme="light"]:not([data-wallpaper="plain"]) .tab-strip {
+  background: rgba(235, 240, 245, 0.65);
+}
+
+:root[data-theme="light"]:not([data-wallpaper="plain"]) .toolbar {
+  background: rgba(245, 247, 250, 0.75);
+}
+
+:root[data-theme="light"]:not([data-wallpaper="plain"]) .sidebar {
+  background: rgba(240, 244, 248, 0.70);
+}
+
+:root[data-theme="light"]:not([data-wallpaper="plain"]) .page-viewport.panel-visible {
+  background: rgba(245, 247, 250, 0.88);
+}
+
+:root[data-theme="light"]:not([data-wallpaper="plain"]) .tab-container.active {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+:root[data-theme="light"]:not([data-wallpaper="plain"]) .tab-container:not(.active) {
+  background: rgba(230, 235, 242, 0.50);
+}
+
+:root[data-theme="light"]:not([data-wallpaper="plain"]) .tab-container:not(.active):hover {
+  background: rgba(230, 235, 242, 0.75);
 }
 
