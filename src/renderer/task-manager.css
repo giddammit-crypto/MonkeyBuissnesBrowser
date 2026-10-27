@@ -1,0 +1,956 @@
+/**
+ * soulm8te Task Manager (Диспетчер задач Chrome / Detroit: Become Human / Cyberpunk Neon)
+ * Ergonomic, responsive, high-contrast process monitor with support for Dark, Graphite, and Light themes.
+ */
+
+:root {
+  --tm-danger: var(--danger, #d93848);
+  --tm-danger-glow: rgba(217, 56, 72, 0.35);
+  --tm-warning: #d97706;
+  --tm-warning-glow: rgba(217, 119, 6, 0.35);
+  --tm-success: #059669;
+  --tm-success-glow: rgba(5, 150, 105, 0.3);
+  --tm-text-main: var(--text-main, var(--text, #20252b));
+  --tm-text-muted: var(--text-muted, #68727e);
+  --tm-border: var(--border, #e3e7ec);
+  --tm-border-strong: var(--border-strong, #c8d0d9);
+  --tm-surface: var(--surface, #ffffff);
+  --tm-surface-subtle: var(--surface-subtle, #eff2f5);
+  --tm-accent: var(--accent, #35678f);
+  --tm-signal: var(--signal, #8cbce8);
+  --tm-modal-shadow: 0 24px 64px rgba(23, 27, 32, 0.18), 0 4px 16px rgba(23, 27, 32, 0.08);
+  --tm-row-selected-bg: color-mix(in srgb, var(--tm-accent) 12%, var(--tm-surface));
+  --tm-row-hover-bg: color-mix(in srgb, var(--tm-accent) 6%, var(--tm-surface));
+}
+
+:root[data-theme="dark"] {
+  --tm-danger: var(--danger, #ff3366);
+  --tm-danger-glow: rgba(255, 51, 102, 0.45);
+  --tm-warning: #ff9f43;
+  --tm-warning-glow: rgba(255, 159, 67, 0.45);
+  --tm-success: #00e676;
+  --tm-success-glow: rgba(0, 230, 118, 0.35);
+  --tm-text-main: var(--text-main, var(--text, #f7f8fa));
+  --tm-text-muted: var(--text-muted, #a9b1bc);
+  --tm-border: var(--border, #39434d);
+  --tm-border-strong: var(--border-strong, #53616f);
+  --tm-surface: var(--surface, #20262d);
+  --tm-surface-subtle: var(--surface-subtle, #252d35);
+  --tm-accent: var(--accent, #a7ccef);
+  --tm-signal: var(--signal, #8cbce8);
+  --tm-modal-shadow: 0 32px 80px rgba(0, 0, 0, 0.65), 0 0 1px 1px rgba(167, 204, 239, 0.15);
+  --tm-row-selected-bg: color-mix(in srgb, var(--tm-accent) 18%, var(--tm-surface));
+  --tm-row-hover-bg: color-mix(in srgb, var(--tm-accent) 9%, var(--tm-surface));
+}
+
+:root[data-theme="graphite"] {
+  --tm-danger: var(--danger, #ff4d6d);
+  --tm-danger-glow: rgba(255, 77, 109, 0.4);
+  --tm-warning: #fca311;
+  --tm-warning-glow: rgba(252, 163, 17, 0.4);
+  --tm-success: #2ec4b6;
+  --tm-success-glow: rgba(46, 196, 182, 0.35);
+  --tm-text-main: var(--text-main, var(--text, #f1f4f8));
+  --tm-text-muted: var(--text-muted, #8893a3);
+  --tm-border: var(--border, #3b424f);
+  --tm-border-strong: var(--border-strong, #4f5869);
+  --tm-surface: var(--surface, #2b3039);
+  --tm-surface-subtle: var(--surface-subtle, #343a46);
+  --tm-accent: var(--accent, #7ea8d6);
+  --tm-signal: var(--signal, #9bc5ee);
+  --tm-modal-shadow: 0 32px 80px rgba(0, 0, 0, 0.55), 0 0 1px 1px rgba(126, 168, 214, 0.18);
+  --tm-row-selected-bg: color-mix(in srgb, var(--tm-accent) 16%, var(--tm-surface));
+  --tm-row-hover-bg: color-mix(in srgb, var(--tm-accent) 8%, var(--tm-surface));
+}
+
+:root[data-theme="light"] {
+  --tm-danger: #d93848;
+  --tm-danger-glow: rgba(217, 56, 72, 0.25);
+  --tm-warning: #d97706;
+  --tm-warning-glow: rgba(217, 119, 6, 0.25);
+  --tm-success: #059669;
+  --tm-success-glow: rgba(5, 150, 105, 0.2);
+  --tm-text-main: #1e242b;
+  --tm-text-muted: #64748b;
+  --tm-border: #e2e8f0;
+  --tm-border-strong: #cbd5e1;
+  --tm-surface: #ffffff;
+  --tm-surface-subtle: #f8fafc;
+  --tm-accent: #2563eb;
+  --tm-signal: #3b82f6;
+  --tm-modal-shadow: 0 24px 64px rgba(15, 23, 42, 0.14), 0 4px 16px rgba(15, 23, 42, 0.05);
+  --tm-row-selected-bg: rgba(37, 99, 235, 0.09);
+  --tm-row-hover-bg: rgba(37, 99, 235, 0.04);
+}
+
+/* ==========================================================================
+   Backdrop & Floating Modal Shell
+   ========================================================================== */
+
+.task-manager-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(10, 14, 20, 0.68);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  animation: tmBackdropFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  isolation: isolate;
+}
+
+:root[data-theme="light"] .task-manager-backdrop {
+  background: rgba(235, 240, 248, 0.68);
+}
+
+.task-manager-modal {
+  position: relative;
+  width: min(920px, 94vw);
+  height: min(660px, 88vh);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--tm-surface);
+  border: 1px solid var(--tm-border-strong);
+  border-radius: 18px;
+  box-shadow: var(--tm-modal-shadow);
+  color: var(--tm-text-main);
+  overflow: hidden;
+  animation: tmModalScaleIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  user-select: none;
+}
+
+/* Detroit Cyber Top Accent Stripe */
+.task-manager-modal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--tm-accent) 30%, var(--tm-signal) 50%, var(--tm-accent) 70%, transparent 100%);
+  opacity: 0.85;
+  z-index: 20;
+}
+
+/* ==========================================================================
+   Header Section
+   ========================================================================== */
+
+.task-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--tm-border);
+  background: linear-gradient(180deg, var(--tm-surface-subtle) 0%, var(--tm-surface) 100%);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.task-manager-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.task-manager-icon-pulse {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--tm-accent) 15%, transparent);
+  color: var(--tm-accent);
+}
+
+.task-manager-icon-pulse svg {
+  width: 17px;
+  height: 17px;
+}
+
+.task-manager-icon-pulse::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: 8px;
+  border: 1px solid var(--tm-accent);
+  opacity: 0.45;
+  animation: tmPulseRing 2.4s ease-out infinite;
+}
+
+.task-manager-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.task-manager-title {
+  margin: 0;
+  font-family: Montserrat, Inter, sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--tm-text-main) 40%, var(--tm-signal) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  line-height: 1.2;
+}
+
+/* "Chromium Engine" Neon Badge */
+.task-manager-engine-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--tm-accent) 14%, transparent);
+  color: var(--tm-accent);
+  border: 1px solid color-mix(in srgb, var(--tm-accent) 38%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--tm-accent) 12%, transparent);
+}
+
+.task-manager-engine-badge::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--tm-accent);
+  box-shadow: 0 0 6px var(--tm-accent);
+  animation: tmEngineLed 1.8s ease-in-out infinite;
+}
+
+.task-manager-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-manager-close-btn {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--tm-text-muted);
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.task-manager-close-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.task-manager-close-btn:hover {
+  background: color-mix(in srgb, var(--tm-danger) 15%, transparent);
+  color: var(--tm-danger);
+  border-color: color-mix(in srgb, var(--tm-danger) 30%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--tm-danger) 25%, transparent);
+  transform: scale(1.05);
+}
+
+.task-manager-close-btn:active {
+  transform: scale(0.96);
+}
+
+/* ==========================================================================
+   Toolbar: Search & Realtime Metrics
+   ========================================================================== */
+
+.task-manager-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 22px;
+  background: color-mix(in srgb, var(--tm-surface-subtle) 60%, var(--tm-surface));
+  border-bottom: 1px solid var(--tm-border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.task-manager-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 220px;
+  max-width: 360px;
+}
+
+.task-manager-search-icon {
+  position: absolute;
+  left: 11px;
+  width: 15px;
+  height: 15px;
+  color: var(--tm-text-muted);
+  pointer-events: none;
+  transition: color 0.15s ease;
+}
+
+.task-manager-search-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 32px 0 34px;
+  border-radius: 9px;
+  border: 1px solid var(--tm-border);
+  background: var(--tm-surface);
+  color: var(--tm-text-main);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.task-manager-search-input::placeholder {
+  color: var(--tm-text-muted);
+  font-size: 12px;
+}
+
+.task-manager-search-input:focus {
+  border-color: var(--tm-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tm-accent) 20%, transparent), 0 0 12px color-mix(in srgb, var(--tm-accent) 15%, transparent);
+}
+
+.task-manager-search-wrap:focus-within .task-manager-search-icon {
+  color: var(--tm-accent);
+}
+
+.task-manager-search-clear {
+  position: absolute;
+  right: 8px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: none;
+  background: var(--tm-surface-subtle);
+  color: var(--tm-text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.task-manager-search-clear:hover {
+  color: var(--tm-text-main);
+  background: var(--tm-border-strong);
+}
+
+/* Statistics Bar */
+.task-manager-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.task-stat-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--tm-surface);
+  border: 1px solid var(--tm-border);
+  font-size: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.task-stat-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--tm-text-muted);
+}
+
+.task-stat-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, monospace;
+  color: var(--tm-accent);
+  letter-spacing: 0.02em;
+}
+
+/* ==========================================================================
+   Table & Grid Layout
+   ========================================================================== */
+
+.task-manager-table-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  position: relative;
+  background: var(--tm-surface);
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: var(--tm-border-strong) transparent;
+}
+
+.task-manager-table-wrapper::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.task-manager-table-wrapper::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.task-manager-table-wrapper::-webkit-scrollbar-thumb {
+  background: var(--tm-border-strong);
+  border-radius: 4px;
+}
+
+.task-manager-table-wrapper::-webkit-scrollbar-thumb:hover {
+  background: var(--tm-accent);
+}
+
+.task-manager-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  text-align: left;
+}
+
+/* Sticky Header */
+.task-manager-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--tm-surface);
+  border-bottom: 2px solid var(--tm-border-strong);
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tm-text-muted);
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.task-manager-table thead th.th-sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.12s ease;
+}
+
+.task-manager-table thead th.th-sortable:hover {
+  color: var(--tm-accent);
+}
+
+.task-manager-table thead th.th-sorted {
+  color: var(--tm-accent);
+}
+
+.th-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sort-indicator {
+  display: inline-block;
+  font-size: 9px;
+  opacity: 0.35;
+  transition: opacity 0.12s ease, transform 0.15s ease;
+}
+
+.th-sorted .sort-indicator {
+  opacity: 1;
+  color: var(--tm-accent);
+}
+
+.sort-indicator.desc {
+  transform: rotate(180deg);
+}
+
+/* Column Specific Widths & Alignments */
+.col-task {
+  width: auto;
+  min-width: 250px;
+}
+
+.col-pid {
+  width: 85px;
+  text-align: right;
+}
+
+.col-cpu {
+  width: 100px;
+  text-align: right;
+}
+
+.col-memory {
+  width: 120px;
+  text-align: right;
+}
+
+.col-type {
+  width: 115px;
+  text-align: center;
+}
+
+/* Table Rows & Cells */
+.task-manager-row {
+  cursor: pointer;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+  border-bottom: 1px solid color-mix(in srgb, var(--tm-border) 60%, transparent);
+}
+
+.task-manager-row td {
+  padding: 8px 14px;
+  vertical-align: middle;
+  border-bottom: 1px solid color-mix(in srgb, var(--tm-border) 60%, transparent);
+}
+
+.task-manager-row:hover {
+  background: var(--tm-row-hover-bg);
+}
+
+/* Neon Selected State */
+.task-manager-row.selected {
+  background: var(--tm-row-selected-bg) !important;
+  box-shadow: inset 3px 0 0 var(--tm-accent), 0 0 14px color-mix(in srgb, var(--tm-accent) 15%, transparent);
+}
+
+.task-manager-row.selected td {
+  border-bottom-color: color-mix(in srgb, var(--tm-accent) 30%, transparent);
+}
+
+/* Task / Process Cell */
+.task-cell-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.task-icon-container {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--tm-surface-subtle);
+  overflow: hidden;
+}
+
+.task-favicon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.task-system-glyph {
+  width: 14px;
+  height: 14px;
+  color: var(--tm-accent);
+}
+
+.task-name-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.task-title {
+  font-weight: 600;
+  color: var(--tm-text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.task-subtitle {
+  font-size: 11px;
+  color: var(--tm-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+
+/* PID Cell */
+.task-col-pid {
+  font-family: ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--tm-text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* CPU Cell with Color Indication */
+.task-col-cpu {
+  font-family: ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--tm-text-main);
+  transition: color 0.15s ease, text-shadow 0.15s ease;
+}
+
+.task-col-cpu.cpu-normal {
+  color: var(--tm-text-main);
+}
+
+.task-col-cpu.cpu-warning {
+  color: var(--tm-warning) !important;
+  text-shadow: 0 0 8px var(--tm-warning-glow);
+  font-weight: 700;
+}
+
+.task-col-cpu.cpu-danger {
+  color: var(--tm-danger) !important;
+  text-shadow: 0 0 10px var(--tm-danger-glow);
+  font-weight: 800;
+  animation: tmDangerPulse 1.6s ease-in-out infinite;
+}
+
+/* Memory Cell with Indicator */
+.task-col-memory {
+  font-family: ui-monospace, SFMono-Regular, "Roboto Mono", Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--tm-text-main);
+}
+
+.task-col-memory.memory-heavy {
+  color: var(--tm-warning);
+  font-weight: 700;
+}
+
+.memory-heavy-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--tm-warning) 20%, transparent);
+  color: var(--tm-warning);
+  border: 1px solid color-mix(in srgb, var(--tm-warning) 40%, transparent);
+}
+
+/* Process Type Badges */
+.task-col-type {
+  text-align: center;
+}
+
+.process-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Detroit Cyan: Browser / Core */
+.process-badge.badge-browser {
+  background: rgba(0, 229, 255, 0.12);
+  color: #00bcd4;
+  border: 1px solid rgba(0, 229, 255, 0.35);
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.15);
+}
+
+:root[data-theme="dark"] .process-badge.badge-browser,
+:root[data-theme="graphite"] .process-badge.badge-browser {
+  color: #00e5ff;
+}
+
+/* Cyber Purple: GPU */
+.process-badge.badge-gpu {
+  background: rgba(168, 85, 247, 0.12);
+  color: #9333ea;
+  border: 1px solid rgba(168, 85, 247, 0.35);
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.15);
+}
+
+:root[data-theme="dark"] .process-badge.badge-gpu,
+:root[data-theme="graphite"] .process-badge.badge-gpu {
+  color: #c084fc;
+}
+
+/* Neon Green: Tab */
+.process-badge.badge-tab {
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.15);
+}
+
+:root[data-theme="dark"] .process-badge.badge-tab,
+:root[data-theme="graphite"] .process-badge.badge-tab {
+  color: #34d399;
+}
+
+/* Amber Gold: Utility */
+.process-badge.badge-utility {
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.15);
+}
+
+:root[data-theme="dark"] .process-badge.badge-utility,
+:root[data-theme="graphite"] .process-badge.badge-utility {
+  color: #fbbf24;
+}
+
+/* Crimson / Rose: Shell */
+.process-badge.badge-shell {
+  background: rgba(244, 63, 94, 0.12);
+  color: #e11d48;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  box-shadow: 0 0 8px rgba(244, 63, 94, 0.15);
+}
+
+:root[data-theme="dark"] .process-badge.badge-shell,
+:root[data-theme="graphite"] .process-badge.badge-shell {
+  color: #fb7185;
+}
+
+/* Teal / Cyan-Slate: Zygote */
+.process-badge.badge-zygote {
+  background: rgba(20, 184, 166, 0.12);
+  color: #0d9488;
+  border: 1px solid rgba(20, 184, 166, 0.35);
+  box-shadow: 0 0 8px rgba(20, 184, 166, 0.15);
+}
+
+:root[data-theme="dark"] .process-badge.badge-zygote,
+:root[data-theme="graphite"] .process-badge.badge-zygote {
+  color: #2dd4bf;
+}
+
+/* Neutral Slate: Unknown */
+.process-badge.badge-unknown {
+  background: rgba(100, 116, 139, 0.12);
+  color: #64748b;
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  box-shadow: 0 0 8px rgba(100, 116, 139, 0.1);
+}
+
+:root[data-theme="dark"] .process-badge.badge-unknown,
+:root[data-theme="graphite"] .process-badge.badge-unknown {
+  color: #94a3b8;
+}
+
+/* Empty State / No Results */
+.task-manager-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 60px 20px;
+  color: var(--tm-text-muted);
+  text-align: center;
+}
+
+.task-manager-empty svg {
+  width: 36px;
+  height: 36px;
+  opacity: 0.45;
+  color: var(--tm-accent);
+}
+
+.task-manager-empty-text {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* ==========================================================================
+   Footer Action Bar
+   ========================================================================== */
+
+.task-manager-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px;
+  border-top: 1px solid var(--tm-border);
+  background: var(--tm-surface-subtle);
+  flex-shrink: 0;
+  gap: 16px;
+}
+
+.task-manager-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.task-manager-shortcut-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--tm-text-muted);
+}
+
+.task-manager-kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--tm-border-strong);
+  background: var(--tm-surface);
+  color: var(--tm-text-main);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.task-manager-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.task-manager-protected-hint {
+  font-size: 11px;
+  color: var(--tm-text-muted);
+  font-style: italic;
+}
+
+/* End Process Danger Neon Button */
+.task-manager-end-process-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--tm-danger) 45%, transparent);
+  background: color-mix(in srgb, var(--tm-danger) 14%, transparent);
+  color: var(--tm-danger);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.task-manager-end-process-btn svg {
+  width: 15px;
+  height: 15px;
+  transition: transform 0.15s ease;
+}
+
+.task-manager-end-process-btn:hover:not(:disabled) {
+  background: var(--tm-danger);
+  color: #ffffff;
+  border-color: var(--tm-danger);
+  box-shadow: 0 0 20px var(--tm-danger-glow), 0 4px 12px rgba(0, 0, 0, 0.25);
+  transform: translateY(-1px);
+}
+
+.task-manager-end-process-btn:hover:not(:disabled) svg {
+  transform: rotate(90deg) scale(1.1);
+}
+
+.task-manager-end-process-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 0 10px var(--tm-danger-glow);
+}
+
+.task-manager-end-process-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  background: var(--tm-surface-subtle);
+  border-color: var(--tm-border);
+  color: var(--tm-text-muted);
+  box-shadow: none;
+  transform: none;
+}
+
+/* ==========================================================================
+   Microanimations
+   ========================================================================== */
+
+@keyframes tmBackdropFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes tmModalScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes tmPulseRing {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.15);
+    opacity: 0;
+  }
+}
+
+@keyframes tmEngineLed {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 6px var(--tm-accent);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+    box-shadow: 0 0 2px var(--tm-accent);
+  }
+}
+
+@keyframes tmDangerPulse {
+  0%, 100% {
+    text-shadow: 0 0 10px var(--tm-danger-glow);
+  }
+  50% {
+    text-shadow: 0 0 18px var(--tm-danger-glow), 0 0 4px #ffffff;
+  }
+}

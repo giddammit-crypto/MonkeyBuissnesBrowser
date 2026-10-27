@@ -51,6 +51,9 @@ import type {
   PrivacyDashboardSnapshot,
   PrivacySitePermission,
   VpnHealthStatus,
+  TaskManagerProcess,
+  TaskManagerProcessType,
+  TaskManagerSnapshot,
 } from '../../shared/types';
 import { BrowserStores, buildStoredSession, defaultBrowsecCountries } from '../persistence/BrowserStores';
 import { PasswordStore } from '../persistence/PasswordStore';
@@ -530,11 +533,13 @@ export class BrowserController {
       this.memoryManager.updateTab(tab.id, { active, lifecycle: tab.lifecycle, ...(active ? { lastInteractionAt: Date.now() } : {}) });
       if (!tab.view || tab.view.webContents.isDestroyed()) continue;
       if (active && !tab.isInternal && tab.lifecycle !== 'crashed') {
+        (tab.view as any).setVisible?.(true);
         try { this.window?.contentView.removeChildView(tab.view); } catch {}
         this.window?.contentView.addChildView(tab.view);
         this.applyBounds(tab);
         tab.view.webContents.focus();
       } else {
+        (tab.view as any).setVisible?.(false);
         try { this.window?.contentView.removeChildView(tab.view); } catch {}
         tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
       }
@@ -821,7 +826,7 @@ export class BrowserController {
     if (tab?.view?.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward();
   }
 
-  async reload(tabId: string): Promise<void> {
+  async reload(tabId: string, ignoreCache = false): Promise<void> {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.isInternal) return;
     if (tab.lifecycle === 'crashed' || !tab.view || tab.view.webContents.isDestroyed()) {
@@ -829,7 +834,13 @@ export class BrowserController {
       tab.lifecycle = 'active';
       this.attachWebContents(tab, tab.url);
       this.activateTab(tab.id);
-    } else tab.view.webContents.reload();
+    } else {
+      if (ignoreCache) {
+        tab.view.webContents.reloadIgnoringCache();
+      } else {
+        tab.view.webContents.reload();
+      }
+    }
   }
 
   async stop(tabId: string): Promise<void> {
@@ -870,6 +881,149 @@ export class BrowserController {
       processCount: metrics.processes.length,
       totalWorkingSet: metrics.processes.reduce((sum, process) => sum + process.workingSetSize, 0),
     };
+  }
+
+  getTaskManagerMetrics(): TaskManagerSnapshot {
+    let rawMetrics: Electron.ProcessMetric[] = [];
+    try {
+      rawMetrics = app.getAppMetrics();
+    } catch {
+      rawMetrics = [];
+    }
+
+    let shellPid: number | undefined;
+    try {
+      if (this.shellView?.webContents && !this.shellView.webContents.isDestroyed()) {
+        shellPid = this.shellView.webContents.getOSProcessId();
+      }
+    } catch {}
+
+    const processes: TaskManagerProcess[] = [];
+
+    for (const metric of rawMetrics) {
+      const cpuPercent = Math.round((metric.cpu?.percentCPUUsage ?? 0) * 10) / 10;
+      const memoryWorkingSetMB = Math.round(((metric.memory?.workingSetSize ?? 0) / 1024) * 10) / 10;
+
+      if (process.pid === metric.pid) {
+        processes.push({
+          pid: metric.pid,
+          type: 'browser',
+          title: 'Браузер (Основной процесс)',
+          cpuPercent,
+          memoryWorkingSetMB,
+          isKillable: false,
+        });
+        continue;
+      }
+
+      if (shellPid !== undefined && shellPid === metric.pid) {
+        processes.push({
+          pid: metric.pid,
+          type: 'shell',
+          title: 'Интерфейс soulm8te',
+          cpuPercent,
+          memoryWorkingSetMB,
+          isKillable: false,
+        });
+        continue;
+      }
+
+      let tabFound: TabRecord | undefined;
+      for (const tab of this.tabs.values()) {
+        try {
+          if (tab.view?.webContents && !tab.view.webContents.isDestroyed() && tab.view.webContents.getOSProcessId() === metric.pid) {
+            tabFound = tab;
+            break;
+          }
+        } catch {}
+      }
+
+      if (tabFound) {
+        processes.push({
+          pid: metric.pid,
+          type: 'tab',
+          title: tabFound.title || tabFound.url || 'Новая вкладка',
+          url: tabFound.url,
+          tabId: tabFound.id,
+          favicon: tabFound.favicon,
+          cpuPercent,
+          memoryWorkingSetMB,
+          isKillable: true,
+        });
+        continue;
+      }
+
+      if (metric.type?.toLowerCase() === 'gpu') {
+        processes.push({
+          pid: metric.pid,
+          type: 'gpu',
+          title: 'Процесс GPU',
+          cpuPercent,
+          memoryWorkingSetMB,
+          isKillable: true,
+        });
+        continue;
+      }
+
+      processes.push({
+        pid: metric.pid,
+        type: 'utility',
+        title: `Служебный процесс (${metric.name || metric.type})`,
+        cpuPercent,
+        memoryWorkingSetMB,
+        isKillable: true,
+      });
+    }
+
+    const typeOrder: Record<TaskManagerProcessType, number> = {
+      browser: 1,
+      shell: 2,
+      gpu: 3,
+      tab: 4,
+      utility: 5,
+      zygote: 6,
+      unknown: 7,
+    };
+
+    processes.sort((a, b) => (typeOrder[a.type] ?? 99) - (typeOrder[b.type] ?? 99));
+
+    return {
+      sampledAt: Date.now(),
+      processes,
+    };
+  }
+
+  killProcess(pid: number): boolean {
+    if (pid === process.pid) return false;
+    for (const tab of this.tabs.values()) {
+      try {
+        if (tab.view?.webContents && !tab.view.webContents.isDestroyed() && tab.view.webContents.getOSProcessId() === pid) {
+          tab.view.webContents.forcefullyCrashRenderer();
+          return true;
+        }
+      } catch {}
+    }
+    try {
+      process.kill(pid);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async toggleDevTools(): Promise<void> {
+    const active = this.tabs.get(this.activeTabId);
+    const targetContents = (active?.view && !active.view.webContents.isDestroyed())
+      ? active.view.webContents
+      : (this.shellView && !this.shellView.webContents.isDestroyed())
+        ? this.shellView.webContents
+        : undefined;
+    if (!targetContents) return;
+    if (targetContents.isDevToolsOpened()) {
+      targetContents.closeDevTools();
+    } else {
+      targetContents.openDevTools({ mode: 'detach', activate: true });
+    }
   }
 
   toggleBookmark(tabId: string): BookmarkEntry | null {
@@ -2951,7 +3105,11 @@ export class BrowserController {
           this.memoryManager.updateTab(tab.id, { hasFormEdits: true });
         }
       }
-      if (modifier && key === 'l') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'focus-address' }); });
+      if (input.shift && key === 'escape') run(() => {
+        this.shellView?.webContents.focus();
+        this.eventListener?.({ type: 'toggle-task-manager' });
+      });
+      else if (modifier && key === 'l') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'focus-address' }); });
       else if (modifier && input.shift && key === 'a') run(() => {
         this.exitPageFullscreen();
         this.shellView?.webContents.focus();
@@ -2968,7 +3126,8 @@ export class BrowserController {
       else if (modifier && key === 'f') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-find' }); });
       else if (modifier && key === 'h') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-history' }); });
       else if (modifier && key === 'j') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-downloads' }); });
-      else if ((modifier && key === 'r' || key === 'f5') && tab) run(() => { void this.reload(tab.id); });
+      else if (((modifier && input.shift && key === 'r') || (modifier && key === 'f5') || (input.shift && key === 'f5')) && tab) run(() => { void this.reload(tab.id, true); });
+      else if ((modifier && key === 'r' || key === 'f5') && tab) run(() => { void this.reload(tab.id, false); });
       else if (modifier && key === 'p' && tab) run(() => { void this.tabAction(tab.id, 'print'); });
       else if (modifier && ['+', '=', '-', '0'].includes(key) && tab) run(() => { void this.tabAction(tab.id, key === '0' ? 'zoom-reset' : key === '-' ? 'zoom-out' : 'zoom-in'); });
       // Familiar Chromium shortcuts: Ctrl/Cmd+1..8 selects a visible tab,
@@ -2991,17 +3150,7 @@ export class BrowserController {
       else if (input.alt && key === 'arrowleft' && tab) run(() => { void this.goBack(tab.id); });
       else if (input.alt && key === 'arrowright' && tab) run(() => { void this.goForward(tab.id); });
       else if (key === 'f11' || key === 'f12' || (modifier && input.shift && key === 'i')) run(() => {
-        const active = this.tabs.get(this.activeTabId);
-        const targetContents = (active?.view && !active.view.webContents.isDestroyed())
-          ? active.view.webContents
-          : (this.shellView && !this.shellView.webContents.isDestroyed())
-            ? this.shellView.webContents
-            : contents;
-        if (targetContents.isDevToolsOpened()) {
-          targetContents.closeDevTools();
-        } else {
-          targetContents.openDevTools({ mode: 'detach', activate: true });
-        }
+        void this.toggleDevTools();
       });
       // Shell dialogs/find own Escape even while the underlying site is loading.
       else if (key === 'escape' && tab?.isLoading && contents.id === tab.webContentsId) run(() => { void this.stop(tab.id); });

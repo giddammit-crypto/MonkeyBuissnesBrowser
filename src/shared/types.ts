@@ -303,3 +303,22 @@ export type NavigationIntent =
   | { kind: 'search'; url: string }
   | { kind: 'invalid'; reason: string };
 
+export type TaskManagerProcessType = 'browser' | 'gpu' | 'tab' | 'utility' | 'shell' | 'zygote' | 'unknown';
+
+export interface TaskManagerProcess {
+  pid: number;
+  type: TaskManagerProcessType;
+  title: string;
+  url?: string;
+  tabId?: string;
+  favicon?: string;
+  cpuPercent: number;
+  memoryWorkingSetMB: number;
+  isKillable: boolean;
+}
+
+export interface TaskManagerSnapshot {
+  sampledAt: number;
+  processes: TaskManagerProcess[];
+}
+

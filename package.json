@@ -21,7 +21,7 @@
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
-    "test:e2e:smoke": "node scripts/electron-smoke.mjs && node scripts/login-import-smoke.mjs && node scripts/notifications-smoke.mjs && node scripts/youtube-cookies-smoke.mjs && node scripts/popup-smoke.mjs && node scripts/tab-search-smoke.mjs && node scripts/manager-smoke.mjs && node scripts/password-manager-smoke.mjs && node scripts/manager-ui-regression.mjs && node scripts/media-smoke.mjs && node scripts/background-smoke.mjs && node scripts/session-budget-smoke.mjs",
+    "test:e2e:smoke": "node scripts/electron-smoke.mjs && node scripts/login-import-smoke.mjs && node scripts/notifications-smoke.mjs && node scripts/youtube-cookies-smoke.mjs && node scripts/popup-smoke.mjs && node scripts/tab-search-smoke.mjs && node scripts/manager-smoke.mjs && node scripts/password-manager-smoke.mjs && node scripts/manager-ui-regression.mjs && node scripts/media-smoke.mjs && node scripts/background-smoke.mjs && node scripts/session-budget-smoke.mjs && node scripts/chrome-features-smoke.mjs",
     "package": "npm run build && electron-builder --dir --publish never",
     "dist:deb": "npm run build && electron-builder --linux deb --publish never",
     "dist:linux": "npm run build && electron-builder --linux AppImage deb --publish never",

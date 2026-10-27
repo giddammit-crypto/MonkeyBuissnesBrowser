@@ -115,11 +115,14 @@ function registerIpc(): void {
   ipcMain.handle('browser:navigate', (event, tabId: string, input: string) => requireShell(event).navigate(tabId, input));
   ipcMain.handle('browser:back', (event, tabId: string) => requireShell(event).goBack(tabId));
   ipcMain.handle('browser:forward', (event, tabId: string) => requireShell(event).goForward(tabId));
-  ipcMain.handle('browser:reload', (event, tabId: string) => requireShell(event).reload(tabId));
+  ipcMain.handle('browser:reload', (event, tabId: string, ignoreCache?: boolean) => requireShell(event).reload(tabId, ignoreCache));
   ipcMain.handle('browser:stop', (event, tabId: string) => requireShell(event).stop(tabId));
   ipcMain.handle('browser:hibernate-tab', (event, tabId: string) => requireShell(event).hibernateTab(tabId));
   ipcMain.handle('browser:wake-tab', (event, tabId: string) => requireShell(event).wakeTab(tabId));
   ipcMain.handle('browser:sample-performance', (event) => requireShell(event).samplePerformance());
+  ipcMain.handle('browser:get-task-manager-metrics', (event) => requireShell(event).getTaskManagerMetrics());
+  ipcMain.handle('browser:kill-process', (event, pid: number) => requireShell(event).killProcess(pid));
+  ipcMain.handle('browser:toggle-devtools', (event) => requireShell(event).toggleDevTools());
   ipcMain.handle('browser:toggle-bookmark', (event, tabId: string) => requireShell(event).toggleBookmark(tabId));
   ipcMain.handle('browser:save-bookmark', (event, input: { id?: string; title: string; url: string }) => requireShell(event).saveBookmark(input));
   ipcMain.handle('browser:remove-bookmark', (event, id: string) => requireShell(event).removeBookmark(id));

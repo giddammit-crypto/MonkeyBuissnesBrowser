@@ -18,6 +18,7 @@ import type {
   NotificationPermissionDecision,
   PrivacyDashboardSnapshot,
   VpnHealthStatus,
+  TaskManagerSnapshot,
 } from './types';
 
 export interface ChromeBounds {
@@ -56,11 +57,14 @@ export interface BrowserApi {
   navigate(tabId: string, input: string): Promise<void>;
   goBack(tabId: string): Promise<void>;
   goForward(tabId: string): Promise<void>;
-  reload(tabId: string): Promise<void>;
+  reload(tabId: string, ignoreCache?: boolean): Promise<void>;
   stop(tabId: string): Promise<void>;
   hibernateTab(tabId: string): Promise<boolean>;
   wakeTab(tabId: string): Promise<void>;
   samplePerformance(): Promise<BrowserSnapshot['performance']>;
+  getTaskManagerMetrics(): Promise<TaskManagerSnapshot>;
+  killProcess(pid: number): Promise<boolean>;
+  toggleDevTools(): Promise<void>;
   toggleBookmark(tabId: string): Promise<BookmarkEntry | null>;
   saveBookmark(input: { id?: string; title: string; url: string }): Promise<BookmarkEntry>;
   removeBookmark(id: string): Promise<void>;

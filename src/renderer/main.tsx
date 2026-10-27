@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import {
+  Activity,
   ArrowLeft,
   ArrowRight,
   AlertTriangle,
@@ -79,6 +80,7 @@ import symbol from "./assets/soul/symbol.svg";
 import "./styles.css";
 import "./newtab-wallpaper.css";
 import "./privacy-dashboard.css";
+import "./task-manager.css";
 import { userFacingError } from "./userFacingError";
 import BrowsecModal from "./BrowsecModal";
 import GoogleAccountPopover from "./GoogleAccountPopover";
@@ -87,6 +89,7 @@ import TabSearch from "./TabSearch";
 import SiteFavicon from "./SiteFavicon";
 import SiteErrorPage from "./SiteErrorPage";
 import PrivacyDashboard from "./PrivacyDashboard";
+import TaskManagerModal from "./TaskManagerModal";
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
@@ -317,6 +320,7 @@ function App(): React.JSX.Element {
   const [findOpen, setFindOpen] = useState(false);
   const [authNoticeDismissed, setAuthNoticeDismissed] = useState(false);
   const [tabSearchOpen, setTabSearchOpen] = useState(false);
+  const [taskManagerOpen, setTaskManagerOpen] = useState(false);
   const previousTabId = useRef<string | undefined>(undefined);
   const [findText, setFindText] = useState("");
   const [findResult, setFindResult] = useState("");
@@ -327,6 +331,8 @@ function App(): React.JSX.Element {
   const [privacyDashboardError, setPrivacyDashboardError] = useState("");
   const viewportRef = useRef<HTMLDivElement>(null);
   const addressRef = useRef<HTMLInputElement>(null);
+  const originalAddressRef = useRef<string>("");
+  const suggestionsListRef = useRef<HTMLDivElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
   const currentTab = snapshot?.tabs.find(
     (tab) => tab.id === snapshot.activeTabId,
@@ -351,15 +357,23 @@ function App(): React.JSX.Element {
   );
   const sidebarCollapsed = snapshot?.settings.sidebarCollapsed ?? false;
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
+  const [omniboxQuery, setOmniboxQuery] = useState("");
   const omniboxSuggestions = useMemo(() => {
-    if (!editingAddress || !address.trim()) return [];
-    return getOmniboxSuggestions(address, {
+    if (!editingAddress || !omniboxQuery.trim()) return [];
+    return getOmniboxSuggestions(omniboxQuery, {
       history: snapshot?.history,
       bookmarks: snapshot?.bookmarks,
       searchEngineUrl: snapshot?.settings?.searchEngine,
       maxResults: 7,
     });
-  }, [editingAddress, address, snapshot?.history, snapshot?.bookmarks, snapshot?.settings?.searchEngine]);
+  }, [editingAddress, omniboxQuery, snapshot?.history, snapshot?.bookmarks, snapshot?.settings?.searchEngine]);
+
+  useEffect(() => {
+    if (selectedSuggestionIndex >= 0 && suggestionsListRef.current) {
+      const el = suggestionsListRef.current.children[selectedSuggestionIndex] as HTMLElement | undefined;
+      el?.scrollIntoView({ block: "nearest" });
+    }
+  }, [selectedSuggestionIndex]);
 
   useEffect(() => {
     void window.browserApi.getBrowsecCountries().then(setBrowsecCountries).catch(console.error);
@@ -447,6 +461,11 @@ function App(): React.JSX.Element {
         addressRef.current?.select();
         return;
       }
+      if (event.type === "toggle-task-manager") {
+        setTaskManagerOpen((prev) => !prev);
+        setPopover(null);
+        return;
+      }
       if (event.type === "show-tab-search") {
         setTabSearchOpen(true);
         setPopover(null);
@@ -479,15 +498,20 @@ function App(): React.JSX.Element {
     return () => clearTimeout(timer);
   }, [toast]);
   useEffect(() => {
-    if (!editingAddress)
-      setAddress(currentTab?.isInternal ? "" : (currentTab?.url ?? ""));
+    if (!editingAddress) {
+      const url = currentTab?.isInternal ? "" : (currentTab?.url ?? "");
+      setAddress(url);
+      originalAddressRef.current = url;
+    }
   }, [currentTab?.id, currentTab?.url, currentTab?.isInternal, editingAddress]);
   useEffect(() => {
     const previous = previousTabId.current;
     if (previous && previous !== currentTab?.id) run(window.browserApi.stopFindInPage(previous));
     previousTabId.current = currentTab?.id;
     setEditingAddress(false);
-    setAddress(currentTab?.isInternal ? "" : (currentTab?.url ?? ""));
+    const url = currentTab?.isInternal ? "" : (currentTab?.url ?? "");
+    setAddress(url);
+    originalAddressRef.current = url;
     setFindText("");
     setFindResult("");
     setFindOpen(false);
@@ -576,7 +600,7 @@ function App(): React.JSX.Element {
     currentTab?.lifecycle,
     snapshot?.activeTabId,
   ]);
-  const isPopoverOpen = Boolean(popover) || tabSearchOpen || editingAddress;
+  const isPopoverOpen = Boolean(popover) || tabSearchOpen || editingAddress || taskManagerOpen;
   useEffect(() => {
     void window.browserApi.setPopoverOpen(isPopoverOpen || panel !== "home");
   }, [isPopoverOpen, panel]);
@@ -613,7 +637,18 @@ function App(): React.JSX.Element {
       const modifier = event.ctrlKey || event.metaKey;
       const key = event.key.toLowerCase();
 
+      // Shift + Escape: Task Manager
+      if (event.shiftKey && (event.key === "Escape" || key === "escape")) {
+        event.preventDefault();
+        setTaskManagerOpen((prev) => !prev);
+        return;
+      }
+
       if (event.key === "Escape") {
+        if (taskManagerOpen) {
+          setTaskManagerOpen(false);
+          return;
+        }
         if (tabSearchOpen) return;
         setPopover(null);
         setToast(null);
@@ -621,6 +656,42 @@ function App(): React.JSX.Element {
           setFindOpen(false);
           run(window.browserApi.stopFindInPage(currentTab.id));
         } else if (panel !== "home") setPanel("home");
+        return;
+      }
+
+      // DevTools: F12 or Ctrl+Shift+I
+      if (key === "f12" || (modifier && event.shiftKey && key === "i")) {
+        event.preventDefault();
+        run(window.browserApi.toggleDevTools());
+        return;
+      }
+
+      // Ctrl+Tab and Ctrl+Shift+Tab: switch tabs cyclically within current workspace
+      if (modifier && key === "tab") {
+        event.preventDefault();
+        if (snapshot) {
+          const visible = snapshot.tabs
+            .filter((entry) => entry.workspaceId === (currentTab?.workspaceId ?? "personal") && entry.isPrivate === isPrivate)
+            .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+          if (visible.length > 1) {
+            const currentIdx = visible.findIndex((t) => t.id === currentTab?.id);
+            const delta = event.shiftKey ? -1 : 1;
+            const nextIdx = (currentIdx + delta + visible.length) % visible.length;
+            run(window.browserApi.activateTab(visible[nextIdx].id));
+          }
+        }
+        return;
+      }
+
+      // Hard reload: Ctrl+Shift+R / Ctrl+F5 / Shift+F5
+      const isHardReload =
+        (modifier && event.shiftKey && key === "r") ||
+        (modifier && key === "f5") ||
+        (event.shiftKey && key === "f5");
+
+      if (isHardReload) {
+        event.preventDefault();
+        if (currentTab) run(window.browserApi.reload(currentTab.id, true));
         return;
       }
 
@@ -633,6 +704,9 @@ function App(): React.JSX.Element {
       if (modifier && event.shiftKey && (key === "n" || key === "p")) {
         event.preventDefault();
         createTab(true);
+      } else if (modifier && !event.shiftKey && key === "p") {
+        event.preventDefault();
+        action("print");
       } else if (modifier && event.shiftKey && key === "t") {
         event.preventDefault();
         setPopover(null);
@@ -684,7 +758,7 @@ function App(): React.JSX.Element {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [currentTab, findOpen, panel, tabSearchOpen, isPrivate, snapshot, run, openPanel]);
+  }, [currentTab, findOpen, panel, tabSearchOpen, taskManagerOpen, isPrivate, snapshot, run, openPanel, action]);
 
   if (!snapshot)
     return (
@@ -791,7 +865,18 @@ function App(): React.JSX.Element {
           className={`omnibox ${isPrivate ? "omnibox-private" : ""}`}
           onSubmit={(event) => {
             event.preventDefault();
-            navigate(address);
+            if (
+              selectedSuggestionIndex >= 0 &&
+              selectedSuggestionIndex < omniboxSuggestions.length
+            ) {
+              const target = omniboxSuggestions[selectedSuggestionIndex];
+              navigate(target.url);
+            } else {
+              navigate(address);
+            }
+            setEditingAddress(false);
+            setSelectedSuggestionIndex(-1);
+            addressRef.current?.blur();
           }}
         >
           {isPrivate && (
@@ -823,11 +908,16 @@ function App(): React.JSX.Element {
             data-omnibox
             value={address}
             onChange={(event) => {
-              setAddress(event.target.value);
+              const val = event.target.value;
+              setAddress(val);
+              originalAddressRef.current = val;
+              setOmniboxQuery(val);
               setSelectedSuggestionIndex(-1);
             }}
             onFocus={() => {
               setEditingAddress(true);
+              originalAddressRef.current = address;
+              setOmniboxQuery(address);
               setSelectedSuggestionIndex(-1);
             }}
             onBlur={(event) => {
@@ -844,29 +934,74 @@ function App(): React.JSX.Element {
               if (omniboxSuggestions.length > 0) {
                 if (event.key === "ArrowDown") {
                   event.preventDefault();
-                  setSelectedSuggestionIndex((prev) => (prev + 1) % omniboxSuggestions.length);
+                  const count = omniboxSuggestions.length;
+                  const next =
+                    selectedSuggestionIndex < count - 1
+                      ? selectedSuggestionIndex + 1
+                      : -1;
+                  setSelectedSuggestionIndex(next);
+                  if (next === -1) {
+                    setAddress(originalAddressRef.current);
+                  } else {
+                    const item = omniboxSuggestions[next];
+                    const preview =
+                      item.kind === "search" ? originalAddressRef.current : item.url;
+                    setAddress(preview);
+                  }
                   return;
                 }
                 if (event.key === "ArrowUp") {
                   event.preventDefault();
-                  setSelectedSuggestionIndex((prev) => (prev <= 0 ? omniboxSuggestions.length - 1 : prev - 1));
+                  const count = omniboxSuggestions.length;
+                  const next =
+                    selectedSuggestionIndex <= -1
+                      ? count - 1
+                      : selectedSuggestionIndex - 1;
+                  setSelectedSuggestionIndex(next);
+                  if (next === -1) {
+                    setAddress(originalAddressRef.current);
+                  } else {
+                    const item = omniboxSuggestions[next];
+                    const preview =
+                      item.kind === "search" ? originalAddressRef.current : item.url;
+                    setAddress(preview);
+                  }
                   return;
                 }
                 if (event.key === "Escape") {
+                  event.preventDefault();
+                  if (selectedSuggestionIndex !== -1) {
+                    setAddress(originalAddressRef.current);
+                    setSelectedSuggestionIndex(-1);
+                    return;
+                  }
+                  setAddress(originalAddressRef.current);
                   setEditingAddress(false);
                   setSelectedSuggestionIndex(-1);
+                  addressRef.current?.blur();
                   return;
                 }
                 if (event.key === "Enter") {
-                  if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < omniboxSuggestions.length) {
+                  if (
+                    selectedSuggestionIndex >= 0 &&
+                    selectedSuggestionIndex < omniboxSuggestions.length
+                  ) {
                     event.preventDefault();
                     const target = omniboxSuggestions[selectedSuggestionIndex];
                     navigate(target.url);
                     setEditingAddress(false);
                     setSelectedSuggestionIndex(-1);
+                    addressRef.current?.blur();
                     return;
                   }
                 }
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                setAddress(originalAddressRef.current);
+                setEditingAddress(false);
+                setSelectedSuggestionIndex(-1);
+                addressRef.current?.blur();
+                return;
               }
             }}
             placeholder="Поиск или адрес страницы"
@@ -935,7 +1070,11 @@ function App(): React.JSX.Element {
             <Star size={17} fill={bookmarked ? "currentColor" : "none"} />
           </button>
           {editingAddress && omniboxSuggestions.length > 0 && (
-            <div className="omnibox-suggestions-dropdown" role="listbox">
+            <div
+              ref={suggestionsListRef}
+              className="omnibox-suggestions-dropdown"
+              role="listbox"
+            >
               {omniboxSuggestions.map((item, index) => (
                 <div
                   key={item.id}
@@ -1167,6 +1306,15 @@ function App(): React.JSX.Element {
               }}
             />
             <div className="menu-divider" />
+            <MenuAction
+              icon={<Activity size={16} />}
+              label="Диспетчер задач"
+              detail="Shift+Esc"
+              onClick={() => {
+                setTaskManagerOpen(true);
+                setPopover(null);
+              }}
+            />
             <MenuAction
               icon={<Menu size={16} />}
               label={sidebarCollapsed ? "Развернуть панель" : "Свернуть панель"}
@@ -1749,6 +1897,12 @@ function App(): React.JSX.Element {
           }}
           onCloseTab={(id) => window.browserApi.closeTab(id)}
           onDismiss={() => setTabSearchOpen(false)}
+          onError={showError}
+        />
+      )}
+      {taskManagerOpen && (
+        <TaskManagerModal
+          onDismiss={() => setTaskManagerOpen(false)}
           onError={showError}
         />
       )}
