@@ -1857,6 +1857,179 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       });
     }
 
+    // Fullscreen HUD Notification (Chromium / Chrome F11 style)
+    const setupFullscreenHud = () => {
+      let hudElement: HTMLDivElement | null = null;
+      let fadeTimer: ReturnType<typeof setTimeout> | undefined;
+      let mouseListenerActive = false;
+
+      const createHud = () => {
+        if (hudElement && hudElement.isConnected) return hudElement;
+        const hud = document.createElement('div');
+        hud.id = 'soul-fullscreen-hud';
+        hud.setAttribute('role', 'status');
+        hud.setAttribute('aria-live', 'polite');
+
+        const textSpan = document.createElement('span');
+        textSpan.textContent = 'Полноэкранный режим · Нажмите F11 или Esc для выхода';
+
+        const closeBtn = document.createElement('button');
+        closeBtn.id = 'soul-fullscreen-hud-close';
+        closeBtn.setAttribute('title', 'Выйти из полноэкранного режима (Esc / F11)');
+        closeBtn.setAttribute('aria-label', 'Выйти из полноэкранного режима');
+        closeBtn.innerHTML = `
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        `;
+
+        Object.assign(closeBtn.style, {
+          background: 'rgba(255, 255, 255, 0.12)',
+          border: 'none',
+          color: '#ffffff',
+          borderRadius: '50%',
+          width: '22px',
+          height: '22px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          padding: '0',
+          transition: 'background 0.18s ease, transform 0.15s ease',
+          outline: 'none',
+          flexShrink: '0',
+        });
+
+        closeBtn.addEventListener('mouseenter', () => {
+          closeBtn.style.background = 'rgba(239, 68, 68, 0.85)';
+          closeBtn.style.transform = 'scale(1.08)';
+        });
+        closeBtn.addEventListener('mouseleave', () => {
+          closeBtn.style.background = 'rgba(255, 255, 255, 0.12)';
+          closeBtn.style.transform = 'scale(1)';
+        });
+        closeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          ipcRenderer.send('page:exit-fullscreen');
+        });
+
+        hud.appendChild(textSpan);
+        hud.appendChild(closeBtn);
+
+        Object.assign(hud.style, {
+          position: 'fixed',
+          top: '18px',
+          left: '50%',
+          transform: 'translateX(-50%) translateY(0)',
+          zIndex: '2147483647',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '14px',
+          padding: '9px 16px 9px 20px',
+          background: 'rgba(15, 17, 23, 0.92)',
+          color: '#f8fafc',
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+          fontSize: '13px',
+          fontWeight: '500',
+          letterSpacing: '0.015em',
+          borderRadius: '9999px',
+          border: '1px solid rgba(255, 255, 255, 0.15)',
+          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5), 0 0 1px rgba(255, 255, 255, 0.25)',
+          backdropFilter: 'blur(14px)',
+          webkitBackdropFilter: 'blur(14px)',
+          opacity: '1',
+          pointerEvents: 'auto',
+          userSelect: 'none',
+          webkitUserSelect: 'none',
+          transition: 'opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1), transform 0.28s cubic-bezier(0.16, 1, 0.3, 1)',
+        });
+
+        hud.addEventListener('mouseenter', () => {
+          clearTimeout(fadeTimer);
+          hud.style.opacity = '1';
+          hud.style.pointerEvents = 'auto';
+          hud.style.transform = 'translateX(-50%) translateY(0)';
+        });
+
+        hud.addEventListener('mouseleave', () => {
+          clearTimeout(fadeTimer);
+          fadeTimer = setTimeout(() => {
+            if (hudElement) {
+              hudElement.style.opacity = '0';
+              hudElement.style.pointerEvents = 'none';
+              hudElement.style.transform = 'translateX(-50%) translateY(-14px)';
+            }
+          }, 1500);
+        });
+
+        const target = document.body || document.documentElement;
+        target.appendChild(hud);
+        hudElement = hud;
+        return hud;
+      };
+
+      const showHud = () => {
+        const hud = createHud();
+        clearTimeout(fadeTimer);
+        hud.style.opacity = '1';
+        hud.style.pointerEvents = 'auto';
+        hud.style.transform = 'translateX(-50%) translateY(0)';
+
+        fadeTimer = setTimeout(() => {
+          if (hudElement) {
+            hudElement.style.opacity = '0';
+            hudElement.style.pointerEvents = 'none';
+            hudElement.style.transform = 'translateX(-50%) translateY(-14px)';
+          }
+        }, 3200);
+      };
+
+      const hideHud = () => {
+        clearTimeout(fadeTimer);
+        if (hudElement) {
+          hudElement.remove();
+          hudElement = null;
+        }
+      };
+
+      const onMouseMove = (e: MouseEvent) => {
+        if (!hudElement) return;
+        if (e.clientY <= 20) {
+          showHud();
+        }
+      };
+
+      const enableListeners = () => {
+        if (!mouseListenerActive) {
+          window.addEventListener('mousemove', onMouseMove, { passive: true });
+          mouseListenerActive = true;
+        }
+      };
+
+      const disableListeners = () => {
+        if (mouseListenerActive) {
+          window.removeEventListener('mousemove', onMouseMove);
+          mouseListenerActive = false;
+        }
+      };
+
+      if (typeof ipcRenderer?.on === 'function') {
+        ipcRenderer.on('tab:fullscreen-changed', (_event, data: { isFullScreen: boolean; isHtmlFullscreen?: boolean }) => {
+          if (data?.isFullScreen && !data?.isHtmlFullscreen) {
+            enableListeners();
+            showHud();
+          } else {
+            disableListeners();
+            hideHud();
+          }
+        });
+      }
+    };
+
+    setupFullscreenHud();
+
     (window as unknown as { __extractReaderArticle?: () => ReaderArticle | null }).__extractReaderArticle = extractReaderArticle;
   };
 

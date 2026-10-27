@@ -157,4 +157,29 @@ describe('BrowserController native view lifecycle', () => {
     handler(event, { type: 'keyDown', key: 'F12' });
     expect(controller.toggleDevTools).toHaveBeenCalledOnce();
   });
+
+  it('exits fullscreen on Escape keydown when window is full screen', () => {
+    const { controller } = fixture();
+    let handler: any;
+    controller.window.isFullScreen = () => true;
+    controller.installShortcuts({ id: 1, on: (_name: string, listener: any) => { handler = listener; } });
+    const event = { preventDefault: vi.fn() };
+    handler(event, { type: 'keyDown', key: 'Escape' });
+    expect(controller.window.setFullScreen).toHaveBeenCalledWith(false);
+  });
+
+  it('expands active tab to full window bounds in fullscreen mode', () => {
+    const { controller, page, tab } = fixture();
+    controller.window.isFullScreen = () => true;
+    controller.applyBounds(tab);
+    expect(page.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 1000, height: 800 });
+  });
+
+  it('exitFullScreenIfActive exits full screen only when active', () => {
+    const { controller } = fixture();
+    controller.window.isFullScreen = () => true;
+    controller.exitFullScreenIfActive();
+    expect(controller.window.setFullScreen).toHaveBeenCalledWith(false);
+  });
 });
+

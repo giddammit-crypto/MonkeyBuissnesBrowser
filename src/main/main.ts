@@ -202,6 +202,9 @@ function registerIpc(): void {
       controller.activateTab(tabId);
     }
   });
+  ipcMain.on('page:exit-fullscreen', (event) => {
+    if (controller?.isTrustedPage(event.sender.id)) controller.exitFullScreenIfActive();
+  });
   ipcMain.on('page:reader-status', (event, data: { available?: boolean }) => {
     if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabReaderStatus(event.sender.id, Boolean(data?.available));
   });
@@ -236,6 +239,7 @@ function registerIpc(): void {
   ipcMain.handle('browser:create-note-from-tab', (event, tabId: string, textSnippet?: string) => requireShell(event).createNoteFromTab(tabId, textSnippet));
   ipcMain.handle('window:minimize', (event) => requireShell(event).minimizeWindow());
   ipcMain.handle('window:toggle-maximize', (event) => requireShell(event).toggleMaximizeWindow());
+  ipcMain.handle('window:toggle-fullscreen', (event) => requireShell(event).toggleFullScreen());
   ipcMain.handle('window:close', (event) => requireShell(event).closeWindow());
 }
 

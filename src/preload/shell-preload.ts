@@ -82,6 +82,7 @@ const api: BrowserApi = {
   removeGoogleAccount: (accountId) => ipcRenderer.invoke('browser:remove-google-account', accountId),
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
+  toggleFullScreen: () => ipcRenderer.invoke('window:toggle-fullscreen'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
   toggleReaderMode: (tabId) => ipcRenderer.invoke('browser:toggle-reader-mode', tabId),
   getReaderArticle: (tabId) => ipcRenderer.invoke('browser:get-reader-article', tabId),

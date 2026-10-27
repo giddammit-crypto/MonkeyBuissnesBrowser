@@ -326,6 +326,7 @@ export interface GoogleAccount {
 export interface BrowserSnapshot {
   tabs: TabSnapshot[];
   activeTabId: string;
+  isFullScreen?: boolean;
   privacy: { privateTabCount: number; proxy: string };
   history: HistoryEntry[];
   bookmarks: BookmarkEntry[];

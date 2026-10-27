@@ -239,6 +239,16 @@ export class BrowserController {
     this.window.on('maximize', () => this.refreshViewBounds());
     this.window.on('unmaximize', () => this.refreshViewBounds());
     this.window.on('restore', () => this.refreshViewBounds());
+    this.window.on('enter-full-screen', () => {
+      this.refreshViewBounds();
+      this.notifyFullscreenChange(true);
+      if (this.stores) this.emitSnapshot();
+    });
+    this.window.on('leave-full-screen', () => {
+      this.refreshViewBounds();
+      this.notifyFullscreenChange(false);
+      if (this.stores) this.emitSnapshot();
+    });
     this.window.on('closed', () => this.dispose());
     this.memoryManager.sample();
     this.metricsTimer = setInterval(() => {
@@ -278,6 +288,7 @@ export class BrowserController {
     return {
       tabs: Array.from(this.tabs.values()).map((tab) => this.toSnapshot(tab)),
       activeTabId: this.activeTabId,
+      isFullScreen: Boolean(this.window && !this.window.isDestroyed() && this.window.isFullScreen()),
       privacy: { privateTabCount: [...this.tabs.values()].filter((tab) => tab.isPrivate).length, proxy: this.privateProxy },
       history: this.stores.history.get(),
       bookmarks: this.stores.bookmarks.get(),
@@ -1508,7 +1519,9 @@ export class BrowserController {
         width: w,
         height: safeH,
       };
-      this.lastValidBounds = { ...this.chromeBounds };
+      if (!this.window?.isFullScreen()) {
+        this.lastValidBounds = { ...this.chromeBounds };
+      }
     }
     this.refreshViewBounds();
   }
@@ -1953,6 +1966,42 @@ export class BrowserController {
     if (!this.window) return;
     if (this.window.isMaximized()) this.window.unmaximize();
     else this.window.maximize();
+  }
+
+  toggleFullScreen(): boolean {
+    if (!this.window || this.window.isDestroyed()) return false;
+    if (this.htmlFullscreenTabId) {
+      this.exitPageFullscreen();
+      return false;
+    }
+    const next = !this.window.isFullScreen();
+    this.window.setFullScreen(next);
+    if (typeof this.refreshViewBounds === 'function') this.refreshViewBounds();
+    if (typeof this.notifyFullscreenChange === 'function') this.notifyFullscreenChange(next);
+    if (this.stores) this.emitSnapshot();
+    return next;
+  }
+
+  exitFullScreenIfActive(): void {
+    if (!this.window || this.window.isDestroyed()) return;
+    if (this.htmlFullscreenTabId) {
+      this.exitPageFullscreen();
+    } else if (this.window.isFullScreen()) {
+      this.toggleFullScreen();
+    }
+  }
+
+  private notifyFullscreenChange(isFullScreen: boolean): void {
+    const activeTab = this.tabs?.get(this.activeTabId);
+    if (activeTab?.view && !activeTab.view.webContents.isDestroyed()) {
+      activeTab.view.webContents.send('tab:fullscreen-changed', {
+        isFullScreen,
+        isHtmlFullscreen: Boolean(this.htmlFullscreenTabId),
+      });
+    }
+    if (this.shellView && !this.shellView.webContents.isDestroyed()) {
+      this.shellView.webContents.send('shell:fullscreen-changed', { isFullScreen });
+    }
   }
 
   closeWindow(): void {
@@ -2663,8 +2712,16 @@ export class BrowserController {
       this.htmlFullscreenTabId = tab.id;
       this.window.setFullScreen(true);
       this.refreshViewBounds();
+      this.notifyFullscreenChange(true);
+      if (this.stores) this.emitSnapshot();
     });
-    contents.on('leave-html-full-screen', () => { if (this.htmlFullscreenTabId === tab.id) this.leaveHtmlFullscreen(); });
+    contents.on('leave-html-full-screen', () => {
+      if (this.htmlFullscreenTabId === tab.id) {
+        this.leaveHtmlFullscreen();
+        this.notifyFullscreenChange(Boolean(this.window && !this.window.isDestroyed() && this.window.isFullScreen()));
+        if (this.stores) this.emitSnapshot();
+      }
+    });
     contents.on('found-in-page', (_event, result) => { if (tab.id === this.activeTabId) this.eventListener?.({ type: 'find-result', message: `${result.activeMatchOrdinal} / ${result.matches}` }); });
     contents.on('render-process-gone', (_event, details) => {
       if (this.htmlFullscreenTabId === tab.id) this.leaveHtmlFullscreen();
@@ -2806,7 +2863,11 @@ export class BrowserController {
     }
     const bounds = this.window?.getContentBounds();
     if (!bounds) return;
-    if (this.htmlFullscreenTabId === tab.id) { tab.view.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height }); return; }
+    const isFullScreen = Boolean(this.window && !this.window.isDestroyed() && this.window.isFullScreen());
+    if (this.htmlFullscreenTabId === tab.id || (isFullScreen && tab.id === this.activeTabId)) {
+      tab.view.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height });
+      return;
+    }
     const chrome = (this.chromeBounds.width > 0 && this.chromeBounds.height > 0)
       ? this.chromeBounds
       : (this.lastValidBounds.width > 0 && this.lastValidBounds.height > 0)
@@ -3633,13 +3694,19 @@ export class BrowserController {
       else if (input.alt && key === 'arrowright' && tab) run(() => { void this.goForward(tab.id); });
       else if (key === 'f11') run(() => {
         if (this.htmlFullscreenTabId) this.exitPageFullscreen();
-        else if (this.window && !this.window.isDestroyed()) this.window.setFullScreen(!this.window.isFullScreen());
+        else this.toggleFullScreen();
       });
       else if (key === 'f12' || (modifier && input.shift && key === 'i')) run(() => {
         void this.toggleDevTools();
       });
-      // Shell dialogs/find own Escape even while the underlying site is loading.
-      else if (key === 'escape' && tab?.isLoading && contents.id === tab.webContentsId) run(() => { void this.stop(tab.id); });
+      // Escape exits fullscreen (HTML5 video or F11) or stops loading if page is loading.
+      else if (key === 'escape') {
+        if (this.htmlFullscreenTabId) run(() => { this.exitPageFullscreen(); });
+        else if (this.window && !this.window.isDestroyed() && this.window.isFullScreen()) run(() => {
+          this.toggleFullScreen();
+        });
+        else if (tab?.isLoading && contents.id === tab.webContentsId) run(() => { void this.stop(tab.id); });
+      }
     });
   }
 

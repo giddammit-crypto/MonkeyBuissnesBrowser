@@ -115,6 +115,7 @@ export interface BrowserApi {
   removeGoogleAccount(accountId: string): Promise<void>;
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<void>;
+  toggleFullScreen(): Promise<boolean>;
   closeWindow(): Promise<void>;
   toggleReaderMode(tabId: string): Promise<boolean>;
   getReaderArticle(tabId: string): Promise<ReaderArticle | null>;

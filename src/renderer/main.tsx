@@ -694,7 +694,18 @@ function App(): React.JSX.Element {
         if (findOpen && currentTab) {
           setFindOpen(false);
           run(window.browserApi.stopFindInPage(currentTab.id));
-        } else if (panel !== "home") setPanel("home");
+        } else if (panel !== "home") {
+          setPanel("home");
+        } else if (snapshot?.isFullScreen) {
+          run(window.browserApi.toggleFullScreen());
+        }
+        return;
+      }
+
+      // Fullscreen: F11
+      if (key === "f11") {
+        event.preventDefault();
+        run(window.browserApi.toggleFullScreen());
         return;
       }
 
@@ -840,8 +851,21 @@ function App(): React.JSX.Element {
 
   return (
     <div
-      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${findOpen ? "find-open" : ""} ${isPrivate ? "private-mode" : ""} ${isPopoverOpen ? "popover-open" : ""} ${isPopoverOpen && hasActiveWebPage ? "popover-with-webpage" : ""}`}
+      className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${findOpen ? "find-open" : ""} ${isPrivate ? "private-mode" : ""} ${isPopoverOpen ? "popover-open" : ""} ${isPopoverOpen && hasActiveWebPage ? "popover-with-webpage" : ""} ${snapshot.isFullScreen ? "is-fullscreen" : ""}`}
     >
+      {snapshot.isFullScreen && (currentTab?.isInternal || panel !== "home") && (
+        <div className="fullscreen-hud" role="status" aria-live="polite">
+          <span>Полноэкранный режим · Нажмите F11 или Esc для выхода</span>
+          <button
+            className="fullscreen-hud-close"
+            title="Выйти из полноэкранного режима (Esc / F11)"
+            aria-label="Выйти из полноэкранного режима"
+            onClick={() => run(window.browserApi.toggleFullScreen())}
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
       <div className="window-titlebar">
         <div className="title-brand">
           <img className="title-brand-icon" src={chloeIcon} alt="soulm8te" />

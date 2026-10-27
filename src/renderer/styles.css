@@ -197,6 +197,91 @@ select {
 .app-shell.find-open {
   --chrome-height: calc(var(--toolbar-bottom) + 48px);
 }
+.app-shell.is-fullscreen {
+  --toolbar-bottom: 104px;
+  --chrome-height: var(--toolbar-bottom);
+}
+.app-shell.is-fullscreen.find-open {
+  --chrome-height: calc(var(--toolbar-bottom) + 48px);
+}
+.app-shell.is-fullscreen .window-titlebar {
+  display: none !important;
+}
+.app-shell.is-fullscreen .tab-strip {
+  top: 0 !important;
+}
+.app-shell.is-fullscreen .toolbar {
+  top: 48px !important;
+}
+.fullscreen-hud {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 16px 9px 20px;
+  background: rgba(15, 17, 23, 0.92);
+  color: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.015em;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 1px rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  pointer-events: auto;
+  user-select: none;
+  animation: fullscreenHudFade 3.5s forwards;
+  transition: opacity 0.28s ease, transform 0.28s ease;
+}
+.fullscreen-hud:hover {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  animation: none;
+}
+@keyframes fullscreenHudFade {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-14px);
+  }
+  10% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  80% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(-50%) translateY(-14px);
+  }
+}
+.fullscreen-hud-close {
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
+  color: #ffffff;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.18s ease, transform 0.15s ease;
+  outline: none;
+}
+.fullscreen-hud-close:hover {
+  background: rgba(239, 68, 68, 0.85);
+  transform: scale(1.08);
+}
 .sidebar-collapsed {
   --sidebar-width: 64px;
 }
