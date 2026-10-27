@@ -163,14 +163,18 @@ try {
 // unsaved input; a completed main-frame navigation resets this in the controller.
 let dirty = false;
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-  window.addEventListener('input', (event) => {
+  const protectUnsavedInput = (event: Event) => {
     if (!event.isTrusted || dirty) return;
-    const target = event.target;
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)) {
+    // Shadow DOM retargets event.target to the host; composedPath preserves
+    // the actual editable control for open shadow roots.
+    const target = event.composedPath?.()[0] ?? event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (typeof HTMLSelectElement !== 'undefined' && target instanceof HTMLSelectElement) || (target instanceof HTMLElement && target.isContentEditable)) {
       dirty = true;
       ipcRenderer.send('page:form-state', true);
     }
-  }, true);
+  };
+  window.addEventListener('input', protectUnsavedInput, true);
+  window.addEventListener('change', protectUnsavedInput, true);
 }
 // Submitting a form does not guarantee data was saved (SPA handlers may cancel
 // navigation or receive a server error). Keep the guard until document navigation.
@@ -903,8 +907,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       } catch {}
     };
 
+    // A stream/chat page may mutate hundreds of times per second. Coalesce
+    // discovery rather than walking its entire DOM in every observer callback.
+    let videoCheckTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleVideoCheck = () => {
+      if (videoCheckTimer !== undefined) return;
+      videoCheckTimer = setTimeout(() => {
+        videoCheckTimer = undefined;
+        checkVideo();
+      }, 250);
+    };
     checkVideo();
-    setInterval(checkVideo, 2500);
+    setInterval(scheduleVideoCheck, 2500);
     document.addEventListener('play', checkVideo, true);
     document.addEventListener('playing', checkVideo, true);
     document.addEventListener('loadeddata', checkVideo, true);
@@ -913,7 +927,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     document.addEventListener('emptied', checkVideo, true);
     document.addEventListener('suspend', checkVideo, true);
     try {
-      const observer = new MutationObserver(() => checkVideo());
+      const observer = new MutationObserver(scheduleVideoCheck);
       observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
     } catch {}
 
@@ -921,7 +935,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       try {
         if (document.pictureInPictureElement) {
           await document.exitPictureInPicture();
-          ipcRenderer.send('page:pip-changed', { isPip: false });
+          ipcRenderer.send('page:pip-changed', { isPip: false, source: 'native' });
           return { success: true, isPip: false };
         }
         const videos = findVideos(document);
@@ -942,7 +956,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             target.disablePictureInPicture = false;
           } catch {}
           await target.requestPictureInPicture();
-          ipcRenderer.send('page:pip-changed', { isPip: true });
+          ipcRenderer.send('page:pip-changed', { isPip: true, source: 'native' });
           return { success: true, isPip: true };
         }
         return { success: false, isPip: false };
@@ -958,40 +972,61 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     }
 
     document.addEventListener('enterpictureinpicture', () => {
-      ipcRenderer.send('page:pip-changed', { isPip: true });
+      ipcRenderer.send('page:pip-changed', { isPip: true, source: 'native' });
     }, true);
     document.addEventListener('leavepictureinpicture', () => {
-      ipcRenderer.send('page:pip-changed', { isPip: false });
+      if (miniPipActive || nativePipTransition) return;
+      ipcRenderer.send('page:pip-changed', { isPip: false, source: 'native' });
     }, true);
 
     let miniPipActive = false;
+    let nativePipTransition = false;
+    let miniPipGeneration = 0;
+    let miniPipTabId: string | undefined;
+    let miniPipCleanup: (() => void) | undefined;
+    let miniPipShadowStyle: HTMLStyleElement | null = null;
+    let miniPipResize: HTMLButtonElement | null = null;
+    (window as unknown as { __hasPipVideo?: () => boolean }).__hasPipVideo = () => findVideos(document).some(hasValidVideoSource);
     let miniPipVideo: HTMLVideoElement | null = null;
+    let miniPipOriginalControls = false;
     let miniPipStyles: HTMLStyleElement | null = null;
     let miniPipHud: HTMLDivElement | null = null;
     let miniPipBorder: HTMLDivElement | null = null;
 
     const setMiniPipMode = async (enabled: boolean, tabId?: string, tabTitle?: string) => {
+      if (tabId) miniPipTabId = tabId;
       if (enabled === miniPipActive) return;
+      const generation = ++miniPipGeneration;
       miniPipActive = enabled;
 
       if (enabled) {
+        const videos = findVideos(document).filter(hasValidVideoSource);
+        const playing = videos.filter((video) => !video.paused && video.readyState > 0);
+        const target = playing.find((video) => video.currentTime > 0) || playing[0] || videos[0];
+        if (!target) {
+          miniPipActive = false;
+          ipcRenderer.send('page:pip-changed', { isPip: false, source: 'mini' });
+          return;
+        }
         if (document.pictureInPictureElement) {
-          try { await document.exitPictureInPicture(); } catch {}
+          nativePipTransition = true;
+          try { await document.exitPictureInPicture(); } catch {
+            if (generation === miniPipGeneration) miniPipActive = false;
+            ipcRenderer.send('page:pip-changed', { isPip: Boolean(document.pictureInPictureElement), source: 'native' });
+            return;
+          } finally { nativePipTransition = false; }
         }
-        const videos = findVideos(document);
-        const playing = videos.filter((v) => !v.paused && v.readyState > 0);
-        let target = playing.find((v) => v.currentTime > 0) || playing[0] || videos[0];
-        if (!target && videos.length) target = videos[0];
-
-        if (target) {
-          miniPipVideo = target;
-          target.classList.add('soulm8te-mini-pip-target');
-        }
+        if (generation !== miniPipGeneration || !miniPipActive) return;
+        miniPipVideo = target;
+        miniPipOriginalControls = target.controls;
+        target.controls = false;
+        target.classList.add('soulm8te-mini-pip-target');
 
         if (!miniPipStyles) {
           miniPipStyles = document.createElement('style');
           miniPipStyles.id = 'soulm8te-mini-pip-styles';
           miniPipStyles.textContent = `
+            #soulm8te-video-pip-btn { display: none !important; }
             video.soulm8te-mini-pip-target {
               position: fixed !important;
               top: 0 !important;
@@ -1011,7 +1046,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               top: 0 !important;
               left: 0 !important;
               right: 0 !important;
-              height: 38px !important;
+              min-height: 38px !important;
+              flex-wrap: wrap !important;
+              gap: 4px !important;
               background: linear-gradient(180deg, rgba(13, 16, 23, 0.95) 0%, rgba(13, 16, 23, 0.6) 80%, transparent 100%) !important;
               display: flex !important;
               align-items: center !important;
@@ -1034,7 +1071,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               white-space: nowrap !important;
               overflow: hidden !important;
               text-overflow: ellipsis !important;
-              max-width: 180px !important;
+              min-width: 0 !important;
+              flex: 1 !important;
+              cursor: move !important;
+              touch-action: none !important;
+              user-select: none !important;
             }
             .soulm8te-mini-pip-actions {
               display: flex !important;
@@ -1055,6 +1096,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               color: #ffffff !important;
               transition: all 0.15s ease !important;
             }
+            .soulm8te-mini-pip-btn:focus-visible { outline: 2px solid #38bdf8 !important; outline-offset: 2px !important; }
+            .soulm8te-mini-pip-btn:disabled { opacity: .45 !important; cursor: default !important; }
+            .soulm8te-mini-pip-playback { flex-basis: 100% !important; justify-content: center !important; padding-bottom: 6px !important; }
+            #soulm8te-mini-pip-resize { position: fixed !important; right: 0 !important; bottom: 0 !important; width: 24px !important; height: 24px !important; padding: 0 !important; color: white !important; background: #1e293bcc !important; border: 0 !important; z-index: 2147483647 !important; cursor: nwse-resize !important; touch-action: none !important; }
             .soulm8te-mini-pip-btn:hover {
               background: #2563eb !important;
               border-color: #3b82f6 !important;
@@ -1078,6 +1123,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             }
           `;
           document.head?.appendChild(miniPipStyles);
+          const root = target.getRootNode();
+          if (root instanceof ShadowRoot) {
+            miniPipShadowStyle = miniPipStyles.cloneNode(true) as HTMLStyleElement;
+            root.appendChild(miniPipShadowStyle);
+          }
         }
 
         if (!miniPipHud) {
@@ -1091,31 +1141,119 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           const actionsDiv = document.createElement('div');
           actionsDiv.className = 'soulm8te-mini-pip-actions';
 
-          const returnBtn = document.createElement('button');
-          returnBtn.className = 'soulm8te-mini-pip-btn';
-          returnBtn.title = 'Вернуться к вкладке';
-          returnBtn.textContent = '↗ К вкладке';
-          returnBtn.onclick = (e) => {
-            e.stopPropagation();
-            if (tabId) {
-              ipcRenderer.send('page:request-activate-tab', tabId);
-            }
+          const makeButton = (label: string, text: string, action: () => void) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'soulm8te-mini-pip-btn';
+            button.title = label;
+            button.setAttribute('aria-label', label);
+            button.textContent = text;
+            button.onclick = (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              if (event.isTrusted) action();
+            };
+            return button;
           };
-          actionsDiv.appendChild(returnBtn);
-
-          const closeBtn = document.createElement('button');
-          closeBtn.className = 'soulm8te-mini-pip-btn soulm8te-mini-pip-close';
-          closeBtn.title = 'Закрыть';
-          closeBtn.textContent = '✕';
-          closeBtn.onclick = (e) => {
-            e.stopPropagation();
+          const returnBtn = makeButton('Вернуться к вкладке', '↗', () => {
+            if (miniPipTabId) ipcRenderer.send('page:request-activate-tab', miniPipTabId);
+          });
+          const closeBtn = makeButton('Закрыть мини-плеер', '✕', () => {
             void setMiniPipMode(false);
-            ipcRenderer.send('page:pip-changed', { isPip: false });
-          };
-          actionsDiv.appendChild(closeBtn);
-
+            ipcRenderer.send('page:pip-changed', { isPip: false, source: 'mini' });
+          });
+          closeBtn.classList.add('soulm8te-mini-pip-close');
+          actionsDiv.append(returnBtn, closeBtn);
           miniPipHud.appendChild(actionsDiv);
+
+          const playback = document.createElement('div');
+          playback.className = 'soulm8te-mini-pip-actions soulm8te-mini-pip-playback';
+          const seek = (delta: number) => {
+            if (!Number.isFinite(target.duration) || target.duration <= 0) return;
+            try { target.currentTime = Math.max(0, Math.min(target.duration, target.currentTime + delta)); } catch {}
+          };
+          const rewind = makeButton('Назад на 10 секунд', '−10', () => seek(-10));
+          const playPause = makeButton('Пауза', 'Ⅱ', () => {
+            if (target.paused) void target.play().catch(() => syncControls());
+            else target.pause();
+          });
+          const forward = makeButton('Вперёд на 10 секунд', '+10', () => seek(10));
+          const mute = makeButton('Выключить звук', '♪', () => { target.muted = !target.muted; });
+          const labelButton = (button: HTMLButtonElement, label: string, text: string) => {
+            button.title = label;
+            button.setAttribute('aria-label', label);
+            button.textContent = text;
+          };
+          const syncControls = () => {
+            labelButton(playPause, target.paused ? 'Воспроизвести' : 'Пауза', target.paused ? '▶' : 'Ⅱ');
+            labelButton(mute, target.muted ? 'Включить звук' : 'Выключить звук', target.muted ? '♩×' : '♪');
+            rewind.disabled = forward.disabled = !Number.isFinite(target.duration) || target.duration <= 0;
+          };
+          const mediaEvents = ['play', 'pause', 'ended', 'volumechange', 'durationchange', 'loadedmetadata'];
+          mediaEvents.forEach(name => target.addEventListener(name, syncControls));
+          syncControls();
+          playback.append(rewind, playPause, forward, mute);
+          miniPipHud.appendChild(playback);
           document.body?.appendChild(miniPipHud);
+
+          // screen coordinates remain stable while the native view itself moves.
+          const wirePointer = (handle: HTMLElement, resize: boolean) => {
+            let pointerId: number | undefined;
+            let previousX = 0, previousY = 0, startX = 0, startWidth = 0;
+            let frame: number | undefined;
+            let deltaX = 0, deltaY = 0, width: number | undefined;
+            const flush = () => {
+              frame = undefined;
+              if (!miniPipActive) return;
+              if (resize && width !== undefined) ipcRenderer.send('page:pip-layout', { width });
+              else if (deltaX || deltaY) ipcRenderer.send('page:pip-layout', { deltaX, deltaY });
+              deltaX = deltaY = 0;
+              width = undefined;
+            };
+            const end = () => {
+              if (frame !== undefined) { cancelAnimationFrame(frame); flush(); }
+              if (pointerId !== undefined && handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+              pointerId = undefined;
+            };
+            const down = (event: PointerEvent) => {
+              if (!event.isTrusted || event.button !== 0 || pointerId !== undefined) return;
+              event.preventDefault(); event.stopPropagation();
+              pointerId = event.pointerId;
+              previousX = startX = event.screenX; previousY = event.screenY;
+              startWidth = window.innerWidth;
+              handle.setPointerCapture(pointerId);
+            };
+            const move = (event: PointerEvent) => {
+              if (!event.isTrusted || event.pointerId !== pointerId) return;
+              event.preventDefault(); event.stopPropagation();
+              if (resize) width = startWidth + event.screenX - startX;
+              else { deltaX += event.screenX - previousX; deltaY += event.screenY - previousY; }
+              previousX = event.screenX; previousY = event.screenY;
+              if (frame === undefined) frame = requestAnimationFrame(flush);
+            };
+            handle.addEventListener('pointerdown', down);
+            handle.addEventListener('pointermove', move);
+            handle.addEventListener('pointerup', end);
+            handle.addEventListener('pointercancel', end);
+            handle.addEventListener('lostpointercapture', end);
+            return () => {
+              end();
+              handle.removeEventListener('pointerdown', down);
+              handle.removeEventListener('pointermove', move);
+              handle.removeEventListener('pointerup', end);
+              handle.removeEventListener('pointercancel', end);
+              handle.removeEventListener('lostpointercapture', end);
+            };
+          };
+          const releaseDrag = wirePointer(titleSpan, false);
+          miniPipResize = makeButton('Изменить размер мини-плеера', '◢', () => undefined);
+          miniPipResize.id = 'soulm8te-mini-pip-resize';
+          document.body?.appendChild(miniPipResize);
+          const releaseResize = wirePointer(miniPipResize, true);
+          miniPipCleanup = () => {
+            mediaEvents.forEach(name => target.removeEventListener(name, syncControls));
+            releaseDrag(); releaseResize();
+          };
         }
 
         if (!miniPipBorder) {
@@ -1124,7 +1262,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           document.body?.appendChild(miniPipBorder);
         }
       } else {
+        miniPipCleanup?.();
+        miniPipCleanup = undefined;
+        miniPipResize?.remove();
+        miniPipResize = null;
+        miniPipShadowStyle?.remove();
+        miniPipShadowStyle = null;
         if (miniPipVideo) {
+          miniPipVideo.controls = miniPipOriginalControls;
           miniPipVideo.classList.remove('soulm8te-mini-pip-target');
           miniPipVideo = null;
         }
@@ -1212,12 +1357,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           try {
             if (document.pictureInPictureElement) {
               await document.exitPictureInPicture();
-              ipcRenderer.send('page:pip-changed', { isPip: false });
+              ipcRenderer.send('page:pip-changed', { isPip: false, source: 'native' });
             } else {
               activeVideo.removeAttribute('disablePictureInPicture');
               activeVideo.disablePictureInPicture = false;
               await activeVideo.requestPictureInPicture();
-              ipcRenderer.send('page:pip-changed', { isPip: true });
+              ipcRenderer.send('page:pip-changed', { isPip: true, source: 'native' });
             }
           } catch (err) {
             console.error('PiP error:', err);
@@ -1230,6 +1375,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       };
 
       const positionButton = (video: HTMLVideoElement) => {
+        if (miniPipActive) {
+          if (pipButton) pipButton.style.display = 'none';
+          return;
+        }
         const btn = createPipButton();
         const rect = video.getBoundingClientRect();
         if (rect.width < 120 || rect.height < 90 || rect.bottom < 0 || rect.top > window.innerHeight) {
@@ -1274,8 +1423,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     // Video Speed Controller Hotkeys (Chrome Extension Standard: [, ], \, z, x)
     document.addEventListener('keydown', (e) => {
-      const activeTag = (document.activeElement?.tagName || '').toLowerCase();
-      if (activeTag === 'input' || activeTag === 'textarea' || (document.activeElement as HTMLElement)?.isContentEditable) {
+      if (!['[', ']', '\\', 'z', 'x', 'я', 'ч'].includes(e.key) || e.defaultPrevented || e.isComposing) return;
+      const activeElement = (e.composedPath?.()[0] as HTMLElement | undefined) ?? document.activeElement as HTMLElement | null;
+      const activeTag = (activeElement?.tagName || '').toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select' || activeElement?.isContentEditable) {
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;

@@ -27,11 +27,23 @@ export class MemoryManager {
 
   updateTab(tabId: string, patch: Partial<MemoryTabState>): void {
     const current = this.tabs.get(tabId);
-    if (current) this.tabs.set(tabId, { ...current, ...patch });
+    if (!current) return;
+    const next = { ...current, ...patch };
+    // Reading a page does not necessarily emit input events. Its idle period
+    // must start when it leaves the foreground, not when it was first opened.
+    if (current.active && !next.active && next.lifecycle === 'background') {
+      next.lastInteractionAt = Date.now();
+    }
+    this.tabs.set(tabId, next);
   }
 
   removeTab(tabId: string): void {
     this.tabs.delete(tabId);
+  }
+
+  clear(): void {
+    this.tabs.clear();
+    this.lastMetrics = null;
   }
 
   markInteraction(tabId: string): void {
@@ -50,6 +62,7 @@ export class MemoryManager {
     if (tab.hasFormEdits) return { allowed: false, reason: 'unsaved-form' };
     if (tab.capturing) return { allowed: false, reason: 'media-capture' };
     if (tab.lifecycle !== 'background') return { allowed: false, reason: 'not-background-tab' };
+    if (!Number.isFinite(tab.lastInteractionAt)) return { allowed: false, reason: 'invalid-interaction-time' };
     if (Date.now() - tab.lastInteractionAt < idleMinutes * 60_000) return { allowed: false, reason: 'recent-interaction' };
     return { allowed: true };
   }

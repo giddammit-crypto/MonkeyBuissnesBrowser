@@ -92,7 +92,10 @@ export const TaskManagerModal: React.FC<TaskManagerModalProps> = ({
   // Metrics polling: initial load and interval every 1000ms
   useEffect(() => {
     let isMounted = true;
+    let inFlight = false;
     const fetchMetrics = async () => {
+      if (inFlight || !isMounted) return;
+      inFlight = true;
       try {
         const snapshot = await window.browserApi.getTaskManagerMetrics();
         if (isMounted) {
@@ -102,6 +105,8 @@ export const TaskManagerModal: React.FC<TaskManagerModalProps> = ({
         if (isMounted) {
           onError?.(err);
         }
+      } finally {
+        inFlight = false;
       }
     };
 

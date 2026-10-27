@@ -190,11 +190,15 @@ function registerIpc(): void {
   ipcMain.on('page:video-detected', (event, data: { hasVideo?: boolean }) => {
     if (controller?.isTrustedPage(event.sender.id)) controller.markTabVideoDetected(event.sender.id, Boolean(data?.hasVideo));
   });
-  ipcMain.on('page:pip-changed', (event, data: { isPip?: boolean }) => {
-    if (controller?.isTrustedPage(event.sender.id)) controller.markTabPipChanged(event.sender.id, Boolean(data?.isPip));
+  ipcMain.on('page:pip-changed', (event, data: { isPip?: boolean; source?: 'native' | 'mini' }) => {
+    if (controller?.isTrustedPage(event.sender.id)) controller.markTabPipChanged(event.sender.id, Boolean(data?.isPip), data?.source === 'native' ? 'native' : 'mini');
   });
-  ipcMain.on('page:request-activate-tab', (_event, tabId?: string) => {
-    if (typeof tabId === 'string' && tabId && controller) {
+  ipcMain.on('page:pip-layout', (event, patch: { deltaX?: number; deltaY?: number; width?: number }) => {
+    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.updatePictureInPictureLayout(event.sender.id, patch);
+  });
+  ipcMain.on('page:request-activate-tab', (event, tabId?: string) => {
+    if (typeof tabId === 'string' && tabId && controller?.isTrustedPage(event.sender.id)
+      && event.senderFrame === event.sender.mainFrame && controller.tabs.get(tabId)?.webContentsId === event.sender.id) {
       controller.activateTab(tabId);
     }
   });

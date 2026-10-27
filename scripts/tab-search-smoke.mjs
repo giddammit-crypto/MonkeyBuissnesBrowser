@@ -80,6 +80,15 @@ try {
     return view?.getBounds().width === 0 || (shellIndex > -1 && shellIndex > viewIndex);
   }, `${base}/alpha`);
   assert.equal(isCoveredOrBehind, true, 'native website must not cover the modal');
+  await app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0].setSize(960, 680));
+  await expect.poll(() => app.evaluate(({ BaseWindow }, url) => {
+    const children = BaseWindow.getAllWindows()[0].contentView.children;
+    const pageIndex = children.findIndex(view => view.webContents?.getURL() === url);
+    const shellIndex = children.findIndex(view => view.webContents?.getURL()?.includes('app://shell'));
+    return pageIndex >= 0 && (children[pageIndex].getBounds().width === 0 || shellIndex > pageIndex);
+  }, `${base}/alpha`)).toBe(true);
+  await expect(input()).toBeVisible();
+  console.log('PASS native page stays behind tab search after window resize');
   await input().fill('unique-only-url');
   await expect(dialog().locator('.tab-search-row')).toHaveCount(1);
   assert.equal(await dialog().locator('.tab-search-url').innerText(), `${base}${longPath}`, 'full URL remains available without application truncation');

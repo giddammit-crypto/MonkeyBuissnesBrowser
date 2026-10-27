@@ -344,7 +344,13 @@ function App(): React.JSX.Element {
   const suggestionsListRef = useRef<HTMLDivElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
   const [optimisticTabId, setOptimisticTabId] = useState<string | null>(null);
-  useEffect(() => { setOptimisticTabId(null); }, [snapshot?.activeTabId]);
+  useEffect(() => {
+    // An older activation response must not cancel a newer tab selection.
+    if (optimisticTabId && (snapshot?.activeTabId === optimisticTabId ||
+      !snapshot?.tabs.some((tab) => tab.id === optimisticTabId))) {
+      setOptimisticTabId(null);
+    }
+  }, [snapshot?.activeTabId, snapshot?.tabs, optimisticTabId]);
   const effectiveSnapshot = useMemo(() => {
     if (!snapshot || !optimisticTabId) return snapshot;
     return { ...snapshot, activeTabId: optimisticTabId };
@@ -583,10 +589,20 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
+    let frame = 0;
+    let previousBounds = "";
+    const drawer = notesDrawerOpen ? document.querySelector<HTMLElement>(".notes-drawer") : null;
     const update = () => {
+      frame = 0;
       const b = viewport.getBoundingClientRect();
       const hidden = panel !== "home";
-      const effectiveWidth = notesDrawerOpen ? Math.max(200, b.width - 360) : b.width;
+      // The notes drawer is capped to the viewport on narrow windows. Never
+      // leave a native page underneath its controls or invent a minimum width.
+      const drawerWidth = drawer?.getBoundingClientRect().width ?? 0;
+      const effectiveWidth = Math.max(0, b.width - drawerWidth);
+      const boundsKey = `${hidden}:${b.left}:${b.top}:${effectiveWidth}:${b.height}`;
+      if (boundsKey === previousBounds) return;
+      previousBounds = boundsKey;
       run(
         window.browserApi.setChromeBounds(
           hidden
@@ -601,12 +617,17 @@ function App(): React.JSX.Element {
       );
     };
     update();
-    const observer = new ResizeObserver(update);
+    const scheduleUpdate = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    const observer = new ResizeObserver(scheduleUpdate);
     observer.observe(viewport);
-    window.addEventListener("resize", update);
+    if (drawer) observer.observe(drawer);
+    window.addEventListener("resize", scheduleUpdate);
     return () => {
+      cancelAnimationFrame(frame);
       observer.disconnect();
-      window.removeEventListener("resize", update);
+      window.removeEventListener("resize", scheduleUpdate);
     };
   }, [
     panel,
@@ -698,7 +719,10 @@ function App(): React.JSX.Element {
             const nextTab = visible[nextIdx];
             if (nextTab) {
               setOptimisticTabId(nextTab.id);
-              run(window.browserApi.activateTab(nextTab.id));
+              run(window.browserApi.activateTab(nextTab.id).catch((error) => {
+                setOptimisticTabId((pending) => pending === nextTab.id ? null : pending);
+                throw error;
+              }));
             }
           }
         }
@@ -756,7 +780,7 @@ function App(): React.JSX.Element {
       } else if (modifier && event.altKey && key === "r") {
         event.preventDefault();
         if (currentTab && !currentTab.isInternal) {
-          void window.browserApi.toggleReaderMode(currentTab.id);
+          run(window.browserApi.toggleReaderMode(currentTab.id));
         }
       } else if (modifier && event.altKey && key === "n") {
         event.preventDefault();
@@ -859,7 +883,10 @@ function App(): React.JSX.Element {
         onActivate={(id) => {
           setPanel("home");
           setOptimisticTabId(id);
-          run(window.browserApi.activateTab(id));
+          run(window.browserApi.activateTab(id).catch((error) => {
+            setOptimisticTabId((pending) => pending === id ? null : pending);
+            throw error;
+          }));
         }}
         onClose={(id) => run(window.browserApi.closeTab(id))}
         onCreate={() => createTab()}
@@ -1056,6 +1083,7 @@ function App(): React.JSX.Element {
             spellCheck={false}
             autoComplete="off"
           />
+          <div className="omnibox-tools" role="group" aria-label="Действия со страницей">
           {Math.round((currentTab?.zoomFactor ?? 1) * 100) !== 100 && (
             <button
               type="button"
@@ -1078,7 +1106,7 @@ function App(): React.JSX.Element {
                 aria-label="Скачать видео (MP4)"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
-                  void window.browserApi.downloadMediaUrl(currentTab.url, currentTab.title, false);
+                  run(window.browserApi.downloadMediaUrl(currentTab.url, currentTab.title, false));
                 }}
               >
                 <Download size={13} strokeWidth={2.4} />
@@ -1091,7 +1119,7 @@ function App(): React.JSX.Element {
                 aria-label="Скачать аудио (MP3)"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
-                  void window.browserApi.downloadMediaUrl(currentTab.url, currentTab.title, true);
+                  run(window.browserApi.downloadMediaUrl(currentTab.url, currentTab.title, true));
                 }}
               >
                 <Music2 size={13} strokeWidth={2.4} />
@@ -1113,7 +1141,7 @@ function App(): React.JSX.Element {
                   aria-label="Режим чтения"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => {
-                    void window.browserApi.toggleReaderMode(currentTab.id);
+                    run(window.browserApi.toggleReaderMode(currentTab.id));
                   }}
                 >
                   <BookOpen size={15} />
@@ -1131,7 +1159,9 @@ function App(): React.JSX.Element {
                   aria-label="Picture-in-Picture"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => {
-                    void window.browserApi.togglePictureInPicture(currentTab.id);
+                    run(window.browserApi.togglePictureInPicture(currentTab.id).then((result) => {
+                      if (!result.success) throw new Error("Не удалось включить мини-плеер. Дождитесь загрузки видео и повторите попытку.");
+                    }));
                   }}
                 >
                   <PictureInPicture2 size={15} />
@@ -1170,6 +1200,7 @@ function App(): React.JSX.Element {
           >
             <Star size={17} fill={bookmarked ? "currentColor" : "none"} />
           </button>
+          </div>
           {editingAddress && omniboxSuggestions.length > 0 && (
             <div
               ref={suggestionsListRef}
@@ -1911,6 +1942,14 @@ function App(): React.JSX.Element {
             />
           </div>
         )}
+        {toast && (
+          <div className={`app-toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"}>
+            <span>{toast.message}</span>
+            <button className="icon-button" aria-label="Закрыть уведомление" onClick={() => setToast(null)}>
+              <X size={16} />
+            </button>
+          </div>
+        )}
         {panel === "home" &&
           authNotice &&
           !authNoticeDismissed &&
@@ -1938,7 +1977,7 @@ function App(): React.JSX.Element {
               url={currentTab.url}
               title={currentTab.title}
               onClose={() => {
-                void window.browserApi.toggleReaderMode(currentTab.id);
+                run(window.browserApi.toggleReaderMode(currentTab.id));
               }}
               initialSettings={snapshot.readerSettings}
             />
@@ -2096,8 +2135,8 @@ function TabStrip({
     .filter((tab) => tab.workspaceId === active?.workspaceId)
     .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
   const unpinnedCount = tabs.filter((t) => !t.isPinned).length;
-  const dynamicTabWidth = unpinnedCount <= 10 ? 212 : Math.max(38, Math.round(212 - (unpinnedCount - 10) * 7.5));
-  const dynamicActiveTabWidth = unpinnedCount <= 10 ? 240 : Math.max(48, Math.round(240 - (unpinnedCount - 10) * 8.5));
+  const dynamicTabWidth = unpinnedCount <= 10 ? 212 : Math.max(120, Math.round(212 - (unpinnedCount - 10) * 7.5));
+  const dynamicActiveTabWidth = unpinnedCount <= 10 ? 240 : Math.max(160, Math.round(240 - (unpinnedCount - 10) * 8.5));
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
@@ -2118,10 +2157,20 @@ function TabStrip({
     const observer = new ResizeObserver(update);
     observer.observe(list);
     list.addEventListener("scroll", update, { passive: true });
+    const scrollWithWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY) ||
+          list.scrollWidth <= list.clientWidth) return;
+      event.preventDefault();
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 24
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? list.clientWidth : 1;
+      list.scrollLeft += event.deltaY * unit;
+    };
+    list.addEventListener("wheel", scrollWithWheel, { passive: false });
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       list.removeEventListener("scroll", update);
+      list.removeEventListener("wheel", scrollWithWheel);
     };
   }, [snapshot.activeTabId, tabs.length]);
   useEffect(() => {
@@ -2267,6 +2316,10 @@ function TabStrip({
               </span>
               <span className="tab-title">{tab.title || "Новая вкладка"}</span>
               {tab.isPinned && <Pin size={12} className="tab-state-icon" />}
+              {tab.lifecycle === "hibernated" && (
+                <span className="sleep-indicator">Спит</span>
+              )}
+            </button>
               {(tab.isAudible || tab.isMuted) && (
                 <button
                   type="button"
@@ -2289,10 +2342,6 @@ function TabStrip({
                   )}
                 </button>
               )}
-              {tab.lifecycle === "hibernated" && (
-                <span className="sleep-indicator">Спит</span>
-              )}
-            </button>
             <button
               className="tab-close"
               aria-label={`Закрыть вкладку ${tab.title}`}

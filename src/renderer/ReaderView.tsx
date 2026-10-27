@@ -20,6 +20,7 @@ import type {
   ReaderTheme,
 } from "../shared/types";
 import "./reader.css";
+import { sanitizeReaderHtml } from "./sanitizeReaderHtml";
 
 export interface ReaderViewProps {
   tabId: string;
@@ -48,6 +49,8 @@ export function ReaderView({
   const [article, setArticle] = useState<ReaderArticle | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const sanitizedContent = useMemo(() => sanitizeReaderHtml(article?.content || "", url), [article?.content, url]);
 
   // Text to speech state
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -420,7 +423,14 @@ export function ReaderView({
 
             <div
               className="reader-body"
-              dangerouslySetInnerHTML={{ __html: article.content }}
+              onClick={(event) => {
+                const anchor = (event.target as Element).closest('a[href]');
+                if (!anchor) return;
+                event.preventDefault();
+                const href = anchor.getAttribute('href');
+                if (href) void window.browserApi.navigate(tabId, href).catch(() => setError("Не удалось открыть ссылку."));
+              }}
+              dangerouslySetInnerHTML={{ __html: sanitizedContent }}
             />
           </article>
         ) : null}

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Globe2 } from "lucide-react";
 
 interface SiteFaviconProps {
@@ -16,17 +16,11 @@ export const SiteFavicon: React.FC<SiteFaviconProps> = ({
 }) => {
   const [loadFailed, setLoadFailed] = useState(false);
 
-  let hostname = "";
-  try {
-    hostname = new URL(url).hostname;
-  } catch {}
-
-  const primarySrc = favicon && favicon.trim() ? favicon : null;
-  const fallbackSrc = hostname
-    ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`
-    : null;
-
-  const currentSrc = !loadFailed ? (primarySrc || fallbackSrc) : null;
+  // Do not send browsing history (including private/local hosts) to an
+  // unrelated favicon service just because a page has no icon.
+  const source = favicon && favicon.trim() ? favicon : null;
+  useEffect(() => setLoadFailed(false), [source]);
+  const currentSrc = !loadFailed ? source : null;
 
   if (currentSrc) {
     return (

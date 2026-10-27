@@ -58,6 +58,15 @@ try {
   const normal = await invoke('createTab', {url: `${base}/first`});
   await check('navigation and history', async()=>{
     await waitTab(normal.id, {isLoading:false, title:'Browser fixture'});
+    await expect(shell.locator('[data-newtab-wallpaper]')).toHaveCount(0);
+    await expect.poll(() => app.evaluate(({ BaseWindow }, url) => {
+      const window = BaseWindow.getAllWindows()[0];
+      const page = window.contentView.children.find(view => view.webContents?.getURL() === url);
+      if (!page) return false;
+      const bounds = page.getBounds();
+      return bounds.height > 100 && bounds.y + bounds.height === window.getContentSize()[1];
+    }, `${base}/first`)).toBe(true);
+
     await invoke('navigate', normal.id, `${base}/second`);
     await waitTab(normal.id, {canGoBack:true, title:'Second fixture'});
     await invoke('goBack', normal.id);

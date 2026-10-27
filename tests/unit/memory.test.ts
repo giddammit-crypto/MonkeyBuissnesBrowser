@@ -1,7 +1,40 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryManager } from '../../src/services/memory/MemoryManager';
 
 describe('MemoryManager eligibility', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('starts the idle countdown when a long-viewed page becomes background', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T12:00:00Z'));
+    const manager = new MemoryManager();
+    manager.registerTab({ tabId: 'reading', active: true, pinned: false, audible: false, loading: false, downloading: false, lastInteractionAt: Date.now(), lifecycle: 'active' });
+    vi.advanceTimersByTime(60 * 60_000);
+    manager.updateTab('reading', { active: false, lifecycle: 'background' });
+    expect(manager.canHibernate('reading', 5).reason).toBe('recent-interaction');
+    vi.advanceTimersByTime(4 * 60_000);
+    // Routine background updates must not indefinitely postpone sleeping.
+    manager.updateTab('reading', { active: false, lifecycle: 'background', loading: false });
+    vi.advanceTimersByTime(60_000);
+    expect(manager.canHibernate('reading', 5)).toEqual({ allowed: true });
+  });
+
+  it('clears removed and disposed tab state', () => {
+    const manager = new MemoryManager();
+    for (const tabId of ['closed', 'remaining']) manager.registerTab({ tabId, active: false, pinned: false, audible: false, loading: false, downloading: false, lastInteractionAt: 0, lifecycle: 'background' });
+    manager.removeTab('closed');
+    expect(manager.canHibernate('closed', 0).reason).toBe('unknown-tab');
+    expect(manager.canHibernate('remaining', 0).allowed).toBe(true);
+    manager.clear();
+    expect(manager.canHibernate('remaining', 0).reason).toBe('unknown-tab');
+    expect(manager.metrics()).toBeNull();
+  });
+
+  it('does not discard a tab with an invalid interaction timestamp', () => {
+    const manager = new MemoryManager();
+    manager.registerTab({ tabId: 'invalid', active: false, pinned: false, audible: false, loading: false, downloading: false, lastInteractionAt: Number.NaN, lifecycle: 'background' });
+    expect(manager.canHibernate('invalid', 5).reason).toBe('invalid-interaction-time');
+  });
   it('protects active, audible, loading, downloading and pinned tabs', () => {
     const manager = new MemoryManager();
     manager.registerTab({ tabId: 'tab-1', active: true, pinned: false, audible: false, loading: false, downloading: false, lastInteractionAt: 0, lifecycle: 'active' });

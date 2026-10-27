@@ -28,6 +28,10 @@ const launch = async () => {
   shell = await app.firstWindow(); shell.on('pageerror',error=>shellErrors.push(error.message));
   await shell.waitForSelector('.app-shell');
   await expect(page()).toBeVisible();
+  await expect.poll(() => shell.locator('.page-viewport').evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return bounds.height > 100 && bounds.width > 100 && bounds.left >= 0 && bounds.right <= innerWidth + 1 && bounds.bottom <= innerHeight + 1;
+  })).toBe(true);
 };
 const check = async (name, operation) => {await operation();checks.push(name);console.log(`PASS ${name}`);};
 const expectPortrait = async () => {

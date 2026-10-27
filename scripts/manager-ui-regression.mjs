@@ -57,6 +57,12 @@ try {
     ],
   });
   const shell = await app.firstWindow();
+  const evidence = process.env.SOUL_EVIDENCE_DIR;
+  const capture = async name => {
+    if (!evidence) return;
+    fs.mkdirSync(evidence, { recursive: true });
+    await shell.screenshot({ path: path.join(evidence, name) });
+  };
   await shell.waitForSelector(".app-shell");
   await app.evaluate(({ BaseWindow }) =>
     BaseWindow.getAllWindows()[0].setSize(920, 640),
@@ -87,6 +93,7 @@ try {
   });
   assert(heroContrast >= 4.5, `Light-theme submit arrow contrast too low: ${heroContrast}`);
   console.log("PASS light-theme new-tab submit arrow remains visible");
+  await capture("01-home-light-920.png");
   await shell
     .locator(".sidebar")
     .getByRole("button", { name: "Центр приватности", exact: true })
@@ -274,6 +281,33 @@ try {
     )
     .toBe(true);
   console.log("PASS compact 420px toolbar and settings stay within the viewport");
+  await capture("02-settings-dark-420.png");
+  for (const width of [360, 680, 768, 800, 1280, 1920]) {
+    await app.evaluate(({ BaseWindow }, width) => BaseWindow.getAllWindows()[0].setSize(width, 800), width);
+    await expect.poll(() => shell.evaluate(() => window.innerWidth)).toBe(width);
+    await expect.poll(() => shell.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    await expect.poll(() => shell.locator('.page-viewport').evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.height > 100 && bounds.width > 100 && bounds.left >= 0 && bounds.right <= innerWidth + 1 && bounds.bottom <= innerHeight + 1;
+    })).toBe(true);
+    await shell.getByRole('button', { name: 'Поиск по вкладкам', exact: true }).click();
+    const dialog = shell.getByRole('dialog', { name: 'Поиск по вкладкам', exact: true });
+    await expect(dialog).toBeVisible();
+    const bounds = await dialog.boundingBox();
+    assert(bounds && bounds.x >= -1 && bounds.x + bounds.width <= width + 1, `Tab search fits ${width}px`);
+    await capture(`03-tab-search-dark-${width}.png`);
+    await shell.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    console.log(`PASS settings and tab search fit ${width}px`);
+  }
+  for (let index = 0; index < 30; index++) await shell.evaluate(() => window.browserApi.createTab());
+  await app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0].setSize(800, 640));
+  await expect.poll(() => shell.evaluate(() => window.innerWidth)).toBe(800);
+  await expect.poll(() => shell.locator('.tab-container:not(.pinned-tab)').evaluateAll(tabs => tabs.length >= 30 && tabs.every(tab => tab.getBoundingClientRect().width >= 99))).toBe(true);
+  await expect(shell.getByRole('button', { name: 'Прокрутить вкладки влево', exact: true })).toBeEnabled();
+  assert.equal(await shell.locator('button button').count(), 0, 'tab controls must not nest buttons');
+  await capture('04-many-tabs-800.png');
+  console.log('PASS thirty tabs remain legible, scrollable and have no nested buttons');
 } finally {
   if (app) await app.close();
   fs.rmSync(profile, { recursive: true, force: true });

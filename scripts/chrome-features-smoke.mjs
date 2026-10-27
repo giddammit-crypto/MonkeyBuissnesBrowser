@@ -2,9 +2,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
+import { once } from 'node:events';
 import { _electron as electron, expect } from '@playwright/test';
 
 const dataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-features-smoke-'));
+const server = http.createServer((_req, res) => {
+  res.writeHead(200, { 'content-type': 'text/html' });
+  res.end('<title>Task manager fixture</title><h1>Local browser regression fixture</h1>');
+});
+server.listen(0, '127.0.0.1');
+await once(server, 'listening');
+const fixtureUrl = `http://127.0.0.1:${server.address().port}/`;
 let app;
 let shell;
 const errors = [];
@@ -55,18 +64,16 @@ try {
   // Test 2: Tab creation reflected in Task Manager metrics
   let tabId;
   await check('TaskManager reflects new tabs and reports killable status', async () => {
-    const tab = await shell.evaluate(() => window.browserApi.createTab());
+    const tab = await shell.evaluate(url => window.browserApi.createTab({ url }), fixtureUrl);
     tabId = tab.id;
-    // Wait for tab process to appear in metrics
-    let tabProc;
-    for (let i = 0; i < 20; i++) {
-      const snap = await shell.evaluate(() => window.browserApi.getTaskManagerMetrics());
-      tabProc = snap.processes.find((p) => p.type === 'tab' && p.tabId === tabId);
-      if (tabProc) break;
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    const snap = await shell.evaluate(() => window.browserApi.getTaskManagerMetrics());
-    assert(snap.processes.length >= 2);
+    await expect.poll(async () => {
+      const snapshot = await shell.evaluate(() => window.browserApi.getSnapshot());
+      return snapshot.tabs.find(entry => entry.id === tabId)?.isLoading;
+    }).toBe(false);
+    await expect.poll(async () => {
+      const metrics = await shell.evaluate(() => window.browserApi.getTaskManagerMetrics());
+      return metrics.processes.find(process => process.type === 'tab' && process.tabId === tabId);
+    }).toMatchObject({ tabId, isKillable: true });
   });
 
   // Test 3: System process kill protection
@@ -157,13 +164,27 @@ try {
   // Test 9: Ctrl+Tab and Ctrl+Shift+Tab switching
   await check('Ctrl+Tab tab switching', async () => {
     const tab2 = await shell.evaluate(() => window.browserApi.createTab());
-    await shell.keyboard.press('Control+Tab');
-    await shell.keyboard.press('Control+Shift+Tab');
+    const primary = process.platform === 'darwin' ? 'meta' : 'control';
+    const snapshot = await shell.evaluate(() => window.browserApi.getSnapshot());
+    const visible = snapshot.tabs.filter(tab => tab.workspaceId === tab2.workspaceId && !tab.isPrivate)
+      .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+    const next = visible[(visible.findIndex(tab => tab.id === tab2.id) + 1) % visible.length];
+    const sendTabKey = modifiers => app.evaluate(({ webContents }, modifiers) => {
+      const contents = webContents.getAllWebContents().find(contents => contents.getURL().includes('app://shell'));
+      contents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers });
+      contents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab', modifiers });
+    }, modifiers);
+    await sendTabKey([primary]);
+    await expect.poll(() => shell.evaluate(() => window.browserApi.getSnapshot().then(state => state.activeTabId))).toBe(next.id);
+    await sendTabKey([primary, 'shift']);
+    await expect.poll(() => shell.evaluate(() => window.browserApi.getSnapshot().then(state => state.activeTabId))).toBe(tab2.id);
   });
 
   assert.deepEqual(errors, [], 'No uncaught page errors should occur');
   console.log(JSON.stringify({ ok: true, checks: passed, uncaughtShellErrors: errors }, null, 2));
 } finally {
   if (app) await app.close();
+  server.closeAllConnections();
+  await new Promise(resolve => server.close(resolve));
   fs.rmSync(dataPath, { recursive: true, force: true });
 }

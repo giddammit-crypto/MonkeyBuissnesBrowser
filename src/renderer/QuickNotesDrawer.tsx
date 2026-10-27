@@ -11,8 +11,28 @@ import {
   Check,
   Link as LinkIcon,
 } from "lucide-react";
-import type { NoteColor, NoteEntry, TabSnapshot } from "../shared/types";
+import type { NoteColor, NoteEntry, SaveNoteInput, TabSnapshot } from "../shared/types";
 import "./quick-notes.css";
+
+// Serialize persistence so a delayed save can never overtake pin or delete.
+export class NoteMutationQueue {
+  private tail: Promise<unknown> = Promise.resolve();
+  private pending = new Map<string, () => Promise<unknown>>();
+  schedule(id: string, operation: () => Promise<unknown>): void {
+    this.pending.set(id, operation);
+  }
+  cancel(id: string): void { this.pending.delete(id); }
+  enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(operation);
+    this.tail = result.catch(() => undefined);
+    return result;
+  }
+  flush(): Promise<unknown> {
+    for (const operation of this.pending.values()) void this.enqueue(operation).catch(() => undefined);
+    this.pending.clear();
+    return this.tail;
+  }
+}
 
 export interface QuickNotesDrawerProps {
   currentTab?: TabSnapshot | null;
@@ -45,10 +65,27 @@ export function QuickNotesDrawer({
   const [color, setColor] = useState<NoteColor>("default");
   const [url, setUrl] = useState<string | undefined>(undefined);
   const [tabTitle, setTabTitle] = useState<string | undefined>(undefined);
-  const [isPinned, setIsPinned] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "idle">("idle");
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "idle" | "error">("idle");
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const queue = useRef(new NoteMutationQueue()).current;
+  const selectedRef = useRef<string | null>(null);
+  const notesRef = useRef<NoteEntry[]>([]);
+  const revisions = useRef(new Map<string, number>());
+  const deleted = useRef(new Set<string>());
+  const failedSaves = useRef(new Set<string>());
+  const mounted = useRef(true);
+  const selectionVersion = useRef(0);
+  const updateNotes = (list: NoteEntry[]) => {
+    notesRef.current = list;
+    if (mounted.current) setNotes(list);
+  };
+  const flush = () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = null;
+    return queue.flush();
+  };
 
   // Extract current tab host
   const currentTabHost = useMemo(() => {
@@ -64,8 +101,9 @@ export function QuickNotesDrawer({
   const loadNotes = async () => {
     try {
       const list = await window.browserApi.getNotes();
-      setNotes(list);
-      if (list.length > 0 && !selectedNoteId) {
+      if (!mounted.current) return;
+      updateNotes([...notesRef.current, ...list.filter(n => !notesRef.current.some(existing => existing.id === n.id) && !deleted.current.has(n.id))]);
+      if (list.length > 0 && !selectedRef.current) {
         selectNote(list[0]);
       }
     } catch (err) {
@@ -74,18 +112,27 @@ export function QuickNotesDrawer({
   };
 
   useEffect(() => {
+    mounted.current = true;
     void loadNotes();
+    return () => {
+      mounted.current = false;
+      void flush();
+    };
   }, []);
 
   // Set note in editor
-  const selectNote = (note: NoteEntry) => {
+  const selectNote = (candidate: NoteEntry) => {
+    void flush();
+    if (deleted.current.has(candidate.id)) return;
+    const note = notesRef.current.find(entry => entry.id === candidate.id) || candidate;
+    selectedRef.current = note.id;
+    selectionVersion.current++;
     setSelectedNoteId(note.id);
     setTitle(note.title);
     setContent(note.content);
     setColor(note.color || "default");
     setUrl(note.url);
     setTabTitle(note.tabTitle);
-    setIsPinned(Boolean(note.isPinned));
     setSaveStatus("idle");
   };
 
@@ -124,44 +171,37 @@ export function QuickNotesDrawer({
     newUrl?: string,
     newTabTitle?: string
   ) => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
-
+    const id = selectedRef.current;
+    if (!id || deleted.current.has(id)) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    const revision = (revisions.current.get(id) || 0) + 1;
+    revisions.current.set(id, revision);
+    // Pin is a separate mutation: including an old pin value here would undo it.
+    const input: SaveNoteInput = { id, title: newTitle || "Без названия", content: newContent,
+      color: newColor, url: newUrl, tabTitle: newTabTitle };
+    updateNotes(notesRef.current.map(note => note.id === id ? { ...note, ...input, id } : note));
     setSaveStatus("saving");
-
-    saveTimerRef.current = setTimeout(async () => {
+    const save = async () => {
+      if (deleted.current.has(id)) return;
       try {
-        const saved = await window.browserApi.saveNote({
-          id: selectedNoteId || undefined,
-          title: newTitle || "Без названия",
-          content: newContent,
-          color: newColor,
-          url: newUrl,
-          tabTitle: newTabTitle,
-          isPinned,
-        });
-
-        setSelectedNoteId(saved.id);
-        setSaveStatus("saved");
-
-        // Update list
-        setNotes((prev) => {
-          const idx = prev.findIndex((n) => n.id === saved.id);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = saved;
-            return next;
-          }
-          return [saved, ...prev];
-        });
-
-        setTimeout(() => setSaveStatus("idle"), 1500);
+        const saved = await window.browserApi.saveNote(input);
+        failedSaves.current.delete(id);
+        if (!deleted.current.has(id) && revisions.current.get(id) === revision) {
+          updateNotes(notesRef.current.map(note => note.id === id ? saved : note));
+          if (mounted.current && selectedRef.current === id) setSaveStatus("saved");
+        }
       } catch (err) {
         console.error("Failed to auto-save note:", err);
-        setSaveStatus("idle");
+        if (!deleted.current.has(id) && revisions.current.get(id) === revision) {
+          failedSaves.current.add(id);
+          queue.schedule(id, save);
+          if (mounted.current && selectedRef.current === id) setSaveStatus("error");
+        }
+        throw err;
       }
-    }, 400);
+    };
+    queue.schedule(id, save);
+    saveTimerRef.current = setTimeout(() => { void flush(); }, 400);
   };
 
   // Handle title change
@@ -184,69 +224,53 @@ export function QuickNotesDrawer({
 
   // Create new blank note or from current tab
   const handleCreateNew = async (fromTab = false) => {
+    void flush();
+    const version = selectionVersion.current;
     try {
-      if (fromTab && currentTab && !currentTab.isInternal) {
-        const newNote = await window.browserApi.createNoteFromTab(currentTab.id);
-        setNotes((prev) => [newNote, ...prev]);
-        selectNote(newNote);
-      } else {
-        const blank = await window.browserApi.saveNote({
-          title: "Новая заметка",
-          content: "",
-          color: "default",
-          url: currentTab && !currentTab.isInternal ? currentTab.url : undefined,
-          tabTitle: currentTab && !currentTab.isInternal ? currentTab.title : undefined,
-        });
-        setNotes((prev) => [blank, ...prev]);
-        selectNote(blank);
-      }
-    } catch (err) {
-      console.error("Failed to create note:", err);
-    }
+      const note = await queue.enqueue(() => fromTab && currentTab && !currentTab.isInternal
+        ? window.browserApi.createNoteFromTab(currentTab.id)
+        : window.browserApi.saveNote({ title: "Новая заметка", content: "", color: "default",
+            url: currentTab && !currentTab.isInternal ? currentTab.url : undefined,
+            tabTitle: currentTab && !currentTab.isInternal ? currentTab.title : undefined }));
+      updateNotes([note, ...notesRef.current]);
+      if (mounted.current && selectionVersion.current === version) selectNote(note);
+    } catch (err) { console.error("Failed to create note:", err); }
   };
 
-  // Toggle pin
   const handleTogglePin = async (noteId: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
+    e?.stopPropagation();
+    void flush();
     try {
-      const updated = await window.browserApi.togglePinNote(noteId);
-      if (updated) {
-        setNotes((prev) => {
-          const next = prev.map((n) => (n.id === updated.id ? updated : n));
-          return next.sort((a, b) => {
-            if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
-            return b.updatedAt - a.updatedAt;
-          });
-        });
-        if (selectedNoteId === noteId) {
-          setIsPinned(Boolean(updated.isPinned));
-        }
+      const updated = await queue.enqueue(() => window.browserApi.togglePinNote(noteId));
+      if (updated && !deleted.current.has(noteId)) {
+        // Preserve edits made while the pin IPC call was in flight.
+        updateNotes(notesRef.current.map(note => note.id === noteId
+          ? { ...note, isPinned: updated.isPinned } : note).sort((a, b) =>
+          a.isPinned !== b.isPinned ? (a.isPinned ? -1 : 1) : b.updatedAt - a.updatedAt));
       }
-    } catch (err) {
-      console.error("Failed to toggle pin:", err);
-    }
+    } catch (err) { console.error("Failed to toggle pin:", err); }
   };
 
-  // Delete note
   const handleDeleteNote = async (noteId: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
+    e?.stopPropagation();
+    deleted.current.add(noteId);
+    failedSaves.current.delete(noteId);
+    queue.cancel(noteId);
+    const remaining = notesRef.current.filter(note => note.id !== noteId);
+    updateNotes(remaining);
+    if (selectedRef.current === noteId) {
+      selectedRef.current = null;
+      selectionVersion.current++;
+      setSelectedNoteId(null);
+      if (remaining.length) selectNote(remaining[0]);
+      else { setTitle(""); setContent(""); setUrl(undefined); setTabTitle(undefined); }
+    }
     try {
-      await window.browserApi.deleteNote(noteId);
-      const remaining = notes.filter((n) => n.id !== noteId);
-      setNotes(remaining);
-      if (selectedNoteId === noteId) {
-        if (remaining.length > 0) {
-          selectNote(remaining[0]);
-        } else {
-          setSelectedNoteId(null);
-          setTitle("");
-          setContent("");
-          setUrl(undefined);
-          setTabTitle(undefined);
-        }
-      }
+      await queue.enqueue(() => window.browserApi.deleteNote(noteId));
     } catch (err) {
+      deleted.current.delete(noteId);
       console.error("Failed to delete note:", err);
+      await loadNotes();
     }
   };
 
@@ -291,7 +315,7 @@ export function QuickNotesDrawer({
           <button
             type="button"
             className="icon-button"
-            onClick={onClose}
+            onClick={() => { void flush().then(() => { if (!failedSaves.current.size) onClose(); }); }}
             title="Закрыть заметки"
             aria-label="Закрыть"
           >
@@ -493,6 +517,7 @@ export function QuickNotesDrawer({
               ) : null}
 
               {saveStatus === "saving" && <span>Сохранение…</span>}
+              {saveStatus === "error" && <span role="alert">Не удалось сохранить. Повторите изменение.</span>}
               {saveStatus === "saved" && (
                 <span style={{ color: "var(--cyber-green)", display: "inline-flex", alignItems: "center", gap: "3px" }}>
                   <Check size={12} />

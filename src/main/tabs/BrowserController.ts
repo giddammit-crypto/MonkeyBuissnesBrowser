@@ -72,6 +72,7 @@ type TabRecord = TabSnapshot & {
   webContentsId?: number;
   hasDownloadableMedia?: boolean;
   capturedAudioFilename?: string;
+  pipMode?: 'mini' | 'native';
 };
 
 const NEW_TAB_URL = 'browser://newtab';
@@ -107,6 +108,7 @@ export class BrowserController {
   private sessionSignature = '';
   private restoring = false;
   private disposed = false;
+  private popoverOpen = false;
   private htmlFullscreenTabId?: string;
   private fullscreenBeforeVideo = false;
   private privateSession?: Electron.Session;
@@ -121,6 +123,7 @@ export class BrowserController {
   private readonly popupWindows = new Set<Electron.BrowserWindow>();
   private readonly popupToTab = new Map<number, string>();
   private readonly findQueries = new Map<string, string>();
+  private readonly pipBounds = new Map<string, ChromeBounds>();
   private readonly capturedMediaStreams = new Map<number, { video?: string; audio?: string }>();
   private readonly notificationPermissions = new Map<string, NotificationPermissionDecision>();
   private readonly extensionsManager: LocalExtensionManager;
@@ -157,7 +160,8 @@ export class BrowserController {
       return contents;
     });
     this.browsec.onSnapshot((snapshot) => {
-      this.shellView?.webContents.send('browsec:snapshot', snapshot);
+      if (this.disposed) return;
+      if (this.shellView && !this.shellView.webContents.isDestroyed()) this.shellView.webContents.send('browsec:snapshot', snapshot);
       this.emitSnapshot();
     });
     void this.browsec.registerSession(this.browserSession);
@@ -515,10 +519,10 @@ export class BrowserController {
       active: false,
       pinned: false,
       audible: false,
-      loading: !isInternal,
+      loading: tab.isLoading,
       downloading: false,
       lastInteractionAt: Date.now(),
-      lifecycle: 'background',
+      lifecycle: tab.lifecycle,
     });
     if (!isInternal && !input.lazy) this.attachWebContents(tab, url);
     if (input.active ?? true) this.activateTab(id);
@@ -526,14 +530,62 @@ export class BrowserController {
     return this.toSnapshot(tab);
   }
 
-  private getMiniPipBounds(): { x: number; y: number; width: number; height: number } {
-    const miniWidth = 380;
-    const miniHeight = 214;
+  private getMiniPipBounds(tabId?: string): { x: number; y: number; width: number; height: number } {
     const margin = 16;
     const windowBounds = this.window?.getContentBounds() || { width: 1440, height: 900 };
-    const x = Math.max(0, windowBounds.width - miniWidth - margin);
-    const y = Math.max(0, windowBounds.height - miniHeight - margin);
-    return { x, y, width: miniWidth, height: miniHeight };
+    const chrome = (this.chromeBounds.width > 0 && this.chromeBounds.height > 0)
+      ? this.chromeBounds
+      : (this.lastValidBounds.width > 0 && this.lastValidBounds.height > 0)
+        ? this.lastValidBounds
+        : { x: 200, y: 144, width: Math.max(0, windowBounds.width - 200), height: Math.max(0, windowBounds.height - 144) };
+    // Keep the upstream bottom-right window anchor, while scaling the player
+    // to fit the available content region on compact windows.
+    const right = windowBounds.width;
+    const bottom = windowBounds.height;
+    const availableWidth = Math.max(1, right - chrome.x - margin * 2);
+    const availableHeight = Math.max(1, bottom - chrome.y - margin * 2);
+    const saved = tabId ? this.pipBounds.get(tabId) : undefined;
+    const miniWidth = Math.max(1, Math.floor(Math.min(saved?.width ?? 380, availableWidth, availableHeight * 380 / 214)));
+    const miniHeight = Math.max(1, Math.round(miniWidth * 214 / 380));
+    const minX = Math.min(Math.max(0, chrome.x), Math.max(0, right - miniWidth));
+    const minY = Math.min(Math.max(0, chrome.y), Math.max(0, bottom - miniHeight));
+    const x = Math.max(minX, Math.min(saved?.x ?? right - miniWidth - margin, right - miniWidth));
+    const y = Math.max(minY, Math.min(saved?.y ?? bottom - miniHeight - margin, bottom - miniHeight));
+    return { x: Math.round(x), y: Math.round(y), width: miniWidth, height: miniHeight };
+  }
+
+  updatePictureInPictureLayout(senderId: number, patch: { deltaX?: number; deltaY?: number; width?: number }): void {
+    if (!patch || typeof patch !== 'object') return;
+    const tab = [...this.tabs.values()].find(entry => entry.webContentsId === senderId);
+    if (!tab?.isPictureInPicture || tab.id === this.activeTabId || !tab.view || tab.view.webContents.isDestroyed()) return;
+    const bounds = this.getMiniPipBounds(tab.id);
+    const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+    const next = {
+      ...bounds,
+      x: bounds.x + (finite(patch.deltaX) ? Math.max(-4096, Math.min(4096, patch.deltaX)) : 0),
+      y: bounds.y + (finite(patch.deltaY) ? Math.max(-4096, Math.min(4096, patch.deltaY)) : 0),
+      width: finite(patch.width) ? Math.max(240, Math.min(960, patch.width)) : bounds.width,
+    };
+    this.pipBounds.set(tab.id, next);
+    const clamped = this.getMiniPipBounds(tab.id);
+    this.pipBounds.set(tab.id, clamped);
+    tab.view.setBounds(clamped);
+  }
+
+  private stopOtherPictureInPictureTabs(tabId: string): void {
+    for (const other of this.tabs.values()) {
+      if (other.id === tabId || !other.isPictureInPicture) continue;
+      other.isPictureInPicture = false;
+      other.pipMode = undefined;
+      if (other.view && !other.view.webContents.isDestroyed()) {
+        other.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: other.id });
+        if (other.id !== this.activeTabId) {
+          other.view.setVisible(false);
+          other.view.webContents.setBackgroundThrottling(true);
+        }
+        void other.view.webContents.executeJavaScript('if (document.pictureInPictureElement) document.exitPictureInPicture();').catch(() => undefined);
+      }
+    }
   }
 
   activateTab(tabId: string): void {
@@ -568,7 +620,8 @@ export class BrowserController {
           // Floating in-browser PiP mini-player over other tabs
           (tab.view as any).setVisible?.(true);
           tab.view.webContents.setBackgroundThrottling(false);
-          tab.view.setBounds(this.getMiniPipBounds());
+          tab.view.setBounds(this.getMiniPipBounds(tab.id));
+          tab.pipMode = 'mini';
           tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: true, tabId: tab.id, title: tab.title });
         } else {
           tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
@@ -603,6 +656,7 @@ export class BrowserController {
         this.window?.contentView.addChildView(tab.view);
       }
     }
+    this.raiseShellOverlay();
     this.emitSnapshot();
   }
 
@@ -615,6 +669,7 @@ export class BrowserController {
     }
     this.tabs.delete(tabId);
     this.findQueries.delete(tabId);
+    this.pipBounds.delete(tabId);
     const openerId = this.popupOpeners.get(tabId);
     this.popupOpeners.delete(tabId);
     for (const [popupId, openerTabId] of this.popupToTab.entries()) {
@@ -911,8 +966,8 @@ export class BrowserController {
     const tab = this.tabs.get(tabId);
     // OAuth popups need their original WebContents/WindowProxy until the flow
     // finishes. Discarding either endpoint would silently break postMessage.
-    if (this.popupOpeners.has(tabId) || [...this.popupOpeners.values()].includes(tabId)) return false;
-    if (!tab || tab.id === this.activeTabId || tab.isInternal || !tab.view) return false;
+    if (this.popupOpeners.has(tabId) || [...this.popupOpeners.values()].includes(tabId) || [...this.popupToTab.values()].includes(tabId)) return false;
+    if (!tab || tab.id === this.activeTabId || tab.isInternal || tab.isPictureInPicture || !tab.view) return false;
     const eligible = this.memoryManager.canHibernate(tabId, 0);
     if (!eligible.allowed) return false;
     this.detachView(tab);
@@ -1436,6 +1491,7 @@ export class BrowserController {
   }
 
   setChromeBounds(bounds: ChromeBounds): void {
+    if (!bounds || typeof bounds !== 'object') return;
     const safeNumber = (value: number, fallback: number): number => Number.isFinite(value) ? Math.round(value) : fallback;
     const w = safeNumber(bounds.width, 0);
     const h = safeNumber(bounds.height, 0);
@@ -1459,25 +1515,22 @@ export class BrowserController {
 
   setPopoverOpen(open: boolean): void {
     if (!this.window || this.window.isDestroyed() || this.disposed) return;
+    const wasOpen = this.popoverOpen;
+    this.popoverOpen = Boolean(open);
+    this.refreshViewBounds();
     const activeTab = this.tabs.get(this.activeTabId);
-    const children = this.window.contentView.children;
-    const isShellTop = children.length > 0 && children[children.length - 1] === this.shellView;
+    if (wasOpen && !this.popoverOpen && activeTab?.view && !activeTab.view.webContents.isDestroyed()
+      && !activeTab.isInternal && !activeTab.isReaderActive && activeTab.lifecycle !== 'crashed') {
+      activeTab.view.webContents.focus();
+    }
+  }
 
-    if (open) {
-      if (this.shellView && !this.shellView.webContents.isDestroyed() && !isShellTop) {
-        try { this.window.contentView.removeChildView(this.shellView); } catch {}
-        this.window.contentView.addChildView(this.shellView);
-      }
-    } else {
-      if (activeTab?.view && !activeTab.view.webContents.isDestroyed() && !activeTab.isInternal && activeTab.lifecycle !== 'crashed') {
-        const isTabTop = children.length > 0 && children[children.length - 1] === activeTab.view;
-        if (!isTabTop) {
-          try { this.window.contentView.removeChildView(activeTab.view); } catch {}
-          this.window.contentView.addChildView(activeTab.view);
-          this.applyBounds(activeTab);
-          activeTab.view.webContents.focus();
-        }
-      }
+  private raiseShellOverlay(): void {
+    if (!this.popoverOpen || !this.window || this.window.isDestroyed() || !this.shellView || this.shellView.webContents.isDestroyed()) return;
+    const children = this.window.contentView.children;
+    if (children[children.length - 1] !== this.shellView) {
+      try { this.window.contentView.removeChildView(this.shellView); } catch {}
+      this.window.contentView.addChildView(this.shellView);
     }
   }
 
@@ -2032,6 +2085,11 @@ export class BrowserController {
     }
     for (const [id, download] of this.liveDownloads) {
       if (this.downloads.find((entry) => entry.id === id)?.isPrivate) download.item.cancel();
+    }
+    for (const [id, process] of this.ytDlpProcesses) {
+      if (!this.downloads.find((entry) => entry.id === id)?.isPrivate) continue;
+      try { if (process.isPaused) process.child.kill('SIGCONT'); process.child.kill('SIGTERM'); } catch {}
+      this.ytDlpProcesses.delete(id);
     }
     this.downloads.splice(0, this.downloads.length, ...this.downloads.filter((entry) => !entry.isPrivate));
     if (target) {
@@ -2664,6 +2722,11 @@ export class BrowserController {
     tab.isReaderAvailable = false;
     tab.isReaderActive = false;
     tab.isPictureInPicture = false;
+    tab.isLoading = false;
+    tab.isAudible = false;
+    tab.favicon = undefined;
+    tab.lastError = undefined;
+    tab.capturedAudioFilename = undefined;
     tab.url = NEW_TAB_URL;
     tab.title = tab.isPrivate ? 'Приватная вкладка' : 'Новая вкладка';
     tab.isInternal = true;
@@ -2691,7 +2754,8 @@ export class BrowserController {
       } else if (tab.isPictureInPicture && !tab.isInternal && tab.lifecycle !== 'crashed') {
         (tab.view as any).setVisible?.(true);
         tab.view.webContents.setBackgroundThrottling(false);
-        tab.view.setBounds(this.getMiniPipBounds());
+        tab.view.setBounds(this.getMiniPipBounds(tab.id));
+        tab.pipMode = 'mini';
         tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: true, tabId: tab.id, title: tab.title });
       } else if (tab.isInternal || tab.lifecycle === 'crashed' || tab.isReaderActive) {
         (tab.view as any).setVisible?.(false);
@@ -2728,6 +2792,8 @@ export class BrowserController {
         this.window.contentView.addChildView(tab.view);
       }
     }
+    // Bounds updates arrive after React layout and must never cover a dialog.
+    this.raiseShellOverlay();
   }
 
   private applyBounds(tab: TabRecord): void {
@@ -3111,7 +3177,7 @@ export class BrowserController {
   }
 
   private toSnapshot(tab: TabRecord): TabSnapshot {
-    const { view: _view, webContentsId, ...snapshot } = tab;
+    const { view: _view, webContentsId, pipMode: _pipMode, ...snapshot } = tab;
     const stream = webContentsId ? this.capturedMediaStreams.get(webContentsId) : undefined;
     const url = tab.url || '';
     const isVideoSite = Boolean(
@@ -3146,9 +3212,12 @@ export class BrowserController {
     }
   }
 
-  markTabPipChanged(webContentsId: number, isPip: boolean): void {
+  markTabPipChanged(webContentsId: number, isPip: boolean, source?: 'native' | 'mini'): void {
     const tab = [...this.tabs.values()].find((entry) => entry.webContentsId === webContentsId);
+    if (tab && !isPip && source === 'native' && tab.pipMode === 'mini') return;
     if (tab && tab.isPictureInPicture !== isPip) {
+      if (isPip) this.stopOtherPictureInPictureTabs(tab.id);
+      tab.pipMode = isPip ? (source ?? 'mini') : undefined;
       tab.isPictureInPicture = isPip;
       if (tab.view && !tab.view.webContents.isDestroyed()) {
         const isActive = tab.id === this.activeTabId;
@@ -3156,7 +3225,8 @@ export class BrowserController {
         if (!isActive) {
           (tab.view as any).setVisible?.(isPip);
           if (isPip) {
-            tab.view.setBounds(this.getMiniPipBounds());
+            tab.view.setBounds(this.getMiniPipBounds(tab.id));
+            tab.pipMode = 'mini';
             tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: true, tabId: tab.id, title: tab.title });
           } else {
             tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
@@ -3191,9 +3261,10 @@ export class BrowserController {
     const tab = this.tabs.get(tabId);
     if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return null;
     try {
-      const article = await tab.view.webContents.executeJavaScript(
-        `typeof window.__extractReaderArticle === 'function' ? window.__extractReaderArticle() : null`,
-        true
+      // Preload helpers live in Electron's isolated world (999), not in the
+      // site's main world. Never execute a similarly named site-owned helper.
+      const article = await tab.view.webContents.executeJavaScriptInIsolatedWorld(
+        999, [{ code: `typeof window.__extractReaderArticle === 'function' ? window.__extractReaderArticle() : null` }], true,
       );
       return article as ReaderArticle | null;
     } catch {
@@ -3223,84 +3294,16 @@ export class BrowserController {
     const tab = this.tabs.get(tabId);
     if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return { success: false, isPip: false };
     try {
-      const script = `
-      (async () => {
-        try {
-          if (document.pictureInPictureElement) {
-            await document.exitPictureInPicture();
-            return { success: true, isPip: false };
-          }
-
-          function collectVideos(root) {
-            const list = [];
-            if (!root) return list;
-            try {
-              if (root.querySelectorAll) {
-                list.push(...Array.from(root.querySelectorAll('video')));
-              }
-            } catch {}
-            try {
-              if (root.querySelectorAll) {
-                const all = root.querySelectorAll('*');
-                for (let i = 0; i < all.length; i++) {
-                  const el = all[i];
-                  if (el.shadowRoot) {
-                    list.push(...collectVideos(el.shadowRoot));
-                  }
-                }
-              }
-            } catch {}
-            return list;
-          }
-
-          let videos = collectVideos(document);
-
-          try {
-            const iframes = document.querySelectorAll('iframe');
-            for (let i = 0; i < iframes.length; i++) {
-              try {
-                const doc = iframes[i].contentDocument;
-                if (doc) videos.push(...collectVideos(doc));
-              } catch {}
-            }
-          } catch {}
-
-          if (!videos.length) {
-            return { success: false, isPip: false, error: 'no-videos' };
-          }
-
-          const playing = videos.filter((v) => !v.paused && !v.ended && v.readyState > 0);
-          let target = playing.find((v) => v.currentTime > 0) || playing[0];
-
-          if (!target) {
-            videos.sort((a, b) => {
-              const rA = a.getBoundingClientRect();
-              const rB = b.getBoundingClientRect();
-              return (rB.width * rB.height) - (rA.width * rA.height);
-            });
-            target = videos[0];
-          }
-
-          if (!target) return { success: false, isPip: false };
-
-          try {
-            target.removeAttribute('disablePictureInPicture');
-            target.disablePictureInPicture = false;
-          } catch {}
-
-          if (typeof target.requestPictureInPicture === 'function') {
-            await target.requestPictureInPicture();
-            return { success: true, isPip: true };
-          }
-
-          return { success: false, isPip: false, error: 'not-supported' };
-        } catch (e) {
-          return { success: false, isPip: Boolean(document.pictureInPictureElement), error: String(e) };
-        }
-      })()
-      `;
-
+      if (!tab.isPictureInPicture) {
+        const hasVideo = await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+          code: `typeof window.__hasPipVideo === 'function' && window.__hasPipVideo()`,
+        }], true);
+        if (!hasVideo) return { success: false, isPip: false };
+        if (!tab.view || tab.view.webContents.isDestroyed() || this.tabs.get(tabId) !== tab) return { success: false, isPip: false };
+      }
       const nextPip = !tab.isPictureInPicture;
+      if (nextPip) this.stopOtherPictureInPictureTabs(tab.id);
+      tab.pipMode = nextPip ? 'mini' : undefined;
       tab.isPictureInPicture = nextPip;
       await tab.view.webContents.executeJavaScript(`
         (async () => {
@@ -3318,7 +3321,8 @@ export class BrowserController {
         if (!isActive) {
           (tab.view as any).setVisible?.(nextPip);
           if (nextPip) {
-            tab.view.setBounds(this.getMiniPipBounds());
+            tab.view.setBounds(this.getMiniPipBounds(tab.id));
+            tab.pipMode = 'mini';
             tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: true, tabId: tab.id, title: tab.title });
           } else {
             tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
@@ -3593,7 +3597,11 @@ export class BrowserController {
       });
       else if (input.alt && key === 'arrowleft' && tab) run(() => { void this.goBack(tab.id); });
       else if (input.alt && key === 'arrowright' && tab) run(() => { void this.goForward(tab.id); });
-      else if (key === 'f11' || key === 'f12' || (modifier && input.shift && key === 'i')) run(() => {
+      else if (key === 'f11') run(() => {
+        if (this.htmlFullscreenTabId) this.exitPageFullscreen();
+        else if (this.window && !this.window.isDestroyed()) this.window.setFullScreen(!this.window.isFullScreen());
+      });
+      else if (key === 'f12' || (modifier && input.shift && key === 'i')) run(() => {
         void this.toggleDevTools();
       });
       // Shell dialogs/find own Escape even while the underlying site is loading.
@@ -3623,6 +3631,7 @@ export class BrowserController {
   }
 
   private dispose(): void {
+    if (this.disposed) return;
     this.persistSession();
     this.disposed = true;
     if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
@@ -3636,9 +3645,21 @@ export class BrowserController {
     for (const [target, handler] of this.sessionDownloadHandlers) target.removeListener('will-download', handler);
     this.sessionDownloadHandlers.clear();
     for (const { item } of this.liveDownloads.values()) item.cancel();
+    for (const [id, process] of this.ytDlpProcesses) {
+      // A stopped POSIX child cannot handle SIGTERM until resumed.
+      try { if (process.isPaused) process.child.kill('SIGCONT'); process.child.kill('SIGTERM'); } catch {}
+      const entry = this.downloads.find((download) => download.id === id);
+      if (entry) { entry.state = 'interrupted'; entry.isLive = false; entry.canResume = false; }
+    }
+    this.ytDlpProcesses.clear();
     this.persistDownloads(true);
     for (const tab of this.tabs.values()) this.detachView(tab);
     this.tabs.clear();
+    this.memoryManager.clear();
+    this.findQueries.clear();
+    this.pipBounds.clear();
+    this.capturedMediaStreams.clear();
+    this.popupOpeners.clear();
     void this.endPrivateSession();
     if (this.shellView && !this.shellView.webContents.isDestroyed()) this.shellView.webContents.close();
     if (this.metricsTimer) clearInterval(this.metricsTimer);
