@@ -18,9 +18,6 @@ import type {
   NotificationPermissionDecision,
   PrivacyDashboardSnapshot,
   VpnHealthStatus,
-  CanonModelKey,
-  SystemDiagnosticReport,
-  SystemErrorItem,
 } from './types';
 
 export interface ChromeBounds {
@@ -111,10 +108,6 @@ export interface BrowserApi {
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<void>;
   closeWindow(): Promise<void>;
-  getSystemDiagnosticReport(): Promise<SystemDiagnosticReport>;
-  generateCanonDriverScript(model: CanonModelKey, mode: 'capt-systemd' | 'rastertocapt', port?: string): Promise<{ script: string; filename: string }>;
-  analyzeCustomError(errorText: string): Promise<SystemErrorItem>;
-  testPrintPage(printerName: string): Promise<{ success: boolean; message: string }>;
   onSnapshotChanged(callback: (snapshot: BrowserSnapshot) => void): () => void;
   onTabEvent(callback: (event: { type: string; tab?: TabSnapshot; message?: string }) => void): () => void;
   onBrowsecSnapshot(callback: (snapshot: BrowsecState) => void): () => void;

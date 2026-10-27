@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Cpu,
   Database,
   Download,
   ExternalLink,
@@ -88,11 +87,10 @@ import TabSearch from "./TabSearch";
 import SiteFavicon from "./SiteFavicon";
 import SiteErrorPage from "./SiteErrorPage";
 import PrivacyDashboard from "./PrivacyDashboard";
-import { SystemAssistant } from "./SystemAssistant";
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
-type Panel = "home" | "bookmarks" | "history" | "downloads" | "privacy" | "settings" | "system";
+type Panel = "home" | "bookmarks" | "history" | "downloads" | "privacy" | "settings";
 type Toast = { tone: "error" | "success" | "info"; message: string };
 // User wallpapers are kept in the trusted shell's IndexedDB. Never load
 // remote/CSS URLs, SVG or arbitrary files into the privileged browser shell.
@@ -1510,13 +1508,6 @@ function App(): React.JSX.Element {
              collapsed={sidebarCollapsed}
              onClick={() => openPanel("privacy")}
            />
-           <NavItem
-             icon={<Cpu size={18} />}
-             label="Система & Драйверы"
-             active={panel === "system"}
-             collapsed={sidebarCollapsed}
-             onClick={() => openPanel("system")}
-           />
         </nav>
         <div className="sidebar-divider" />
         {!sidebarCollapsed && <div className="sidebar-label">Пространства</div>}
@@ -1733,7 +1724,6 @@ function App(): React.JSX.Element {
                }}
              />
            )}
-           {panel === "system" && <SystemAssistant />}
            {panel === "settings" && (
             <SettingsPanel
               snapshot={snapshot}

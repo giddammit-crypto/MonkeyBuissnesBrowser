@@ -175,12 +175,6 @@ function registerIpc(): void {
   ipcMain.handle('browser:add-google-account', (event, email: string, name?: string) => requireShell(event).addGoogleAccount(email, name));
   ipcMain.handle('browser:switch-google-account', (event, accountId: string) => requireShell(event).switchGoogleAccount(accountId));
   ipcMain.handle('browser:remove-google-account', (event, accountId: string) => requireShell(event).removeGoogleAccount(accountId));
-  ipcMain.handle('system:get-diagnostic-report', (event) => requireShell(event).getSystemDiagnosticReport());
-  ipcMain.handle('system:generate-canon-script', (event, model: import('../shared/types').CanonModelKey, mode: 'capt-systemd' | 'rastertocapt', port?: string) =>
-    requireShell(event).generateCanonDriverScript(model, mode, port)
-  );
-  ipcMain.handle('system:analyze-custom-error', (event, errorText: string) => requireShell(event).analyzeCustomError(errorText));
-  ipcMain.handle('system:test-print-page', (event, printerName: string) => requireShell(event).testPrintPage(printerName));
   ipcMain.on('page:download-media', (event, data: { url: string; filename?: string; isAudio?: boolean }) => {
     if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id) && data?.url && typeof data.url === 'string' && (data.url.startsWith('https://') || data.url.startsWith('http://'))) {
       controller.downloadMediaUrl(data.url, typeof data.filename === 'string' ? data.filename : undefined, typeof data.isAudio === 'boolean' ? data.isAudio : false, event.sender.id);
