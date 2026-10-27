@@ -368,16 +368,100 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // YouTube native stream downloader
     if (isHostOrSubdomain('youtube.com')) {
       const injectYtButton = () => {
+        // Inject native adaptive stylesheet once
+        if (!document.getElementById('soul-yt-adaptive-styles')) {
+          const style = document.createElement('style');
+          style.id = 'soul-yt-adaptive-styles';
+          style.textContent = `
+            .soul-yt-chip-btn {
+              display: inline-flex !important;
+              align-items: center !important;
+              justify-content: center !important;
+              gap: 6px !important;
+              height: 36px !important;
+              padding: 0 14px !important;
+              border-radius: 18px !important;
+              border: none !important;
+              font-family: "Roboto", "Arial", sans-serif !important;
+              font-size: 14px !important;
+              font-weight: 500 !important;
+              line-height: 36px !important;
+              cursor: pointer !important;
+              margin-left: 8px !important;
+              user-select: none !important;
+              box-sizing: border-box !important;
+              background: var(--yt-spec-badge-chip-background, rgba(255, 255, 255, 0.1)) !important;
+              color: var(--yt-spec-text-primary, #f1f1f1) !important;
+              transition: background-color 0.2s cubic-bezier(0.05, 0, 0, 1), transform 0.1s ease !important;
+              white-space: nowrap !important;
+              flex-shrink: 0 !important;
+              text-decoration: none !important;
+              vertical-align: middle !important;
+            }
+            .soul-yt-chip-btn:hover {
+              background: var(--yt-spec-button-chip-background-hover, rgba(255, 255, 255, 0.2)) !important;
+            }
+            .soul-yt-chip-btn:active {
+              transform: scale(0.97) !important;
+            }
+            .soul-yt-chip-btn svg {
+              display: inline-block !important;
+              vertical-align: middle !important;
+              flex-shrink: 0 !important;
+              width: 18px !important;
+              height: 18px !important;
+              fill: currentColor !important;
+            }
+            .soul-yt-shorts-dl-btn,
+            .soul-yt-shorts-audio-btn {
+              display: inline-flex !important;
+              align-items: center !important;
+              justify-content: center !important;
+              gap: 5px !important;
+              min-height: 36px !important;
+              padding: 6px 14px !important;
+              border-radius: 18px !important;
+              border: 1px solid rgba(255, 255, 255, 0.2) !important;
+              font-family: "Roboto", "Arial", sans-serif !important;
+              font-size: 13px !important;
+              font-weight: 500 !important;
+              cursor: pointer !important;
+              margin: 4px 0 !important;
+              user-select: none !important;
+              box-sizing: border-box !important;
+              background: var(--yt-spec-badge-chip-background, rgba(255, 255, 255, 0.15)) !important;
+              backdrop-filter: blur(8px) !important;
+              -webkit-backdrop-filter: blur(8px) !important;
+              color: var(--yt-spec-text-primary, #ffffff) !important;
+              transition: background-color 0.15s ease, transform 0.1s ease !important;
+            }
+            .soul-yt-shorts-dl-btn:hover,
+            .soul-yt-shorts-audio-btn:hover {
+              background: var(--yt-spec-button-chip-background-hover, rgba(255, 255, 255, 0.25)) !important;
+              transform: scale(1.03) !important;
+            }
+            .soul-yt-shorts-dl-btn svg,
+            .soul-yt-shorts-audio-btn svg {
+              display: inline-block !important;
+              vertical-align: middle !important;
+              flex-shrink: 0 !important;
+              width: 16px !important;
+              height: 16px !important;
+              fill: currentColor !important;
+            }
+          `;
+          (document.head || document.documentElement).appendChild(style);
+        }
+
         // Standard video target (action bar under video)
-        const targetContainer = document.querySelector('#owner, #actions #top-level-buttons-computed, ytd-watch-metadata #actions, #actions.ytd-watch-metadata, #top-row');
+        const targetContainer = document.querySelector(
+          '#actions #top-level-buttons-computed, #top-level-buttons-computed, ytd-watch-metadata #actions, #actions.ytd-watch-metadata, #actions, #top-row, #owner'
+        );
         if (targetContainer && !document.querySelector('.soul-yt-dl-btn')) {
           const btn = document.createElement('button');
-          btn.className = 'soul-yt-dl-btn';
-          btn.textContent = '⬇ Скачать MP4';
-          btn.title = 'Прямое скачивание видео в высоком качестве (MP4)';
-          btn.style.cssText = 'background:#065fd4;color:#ffffff;border:none;border-radius:18px;padding:0 16px;height:36px;font-size:13px;font-weight:600;cursor:pointer;margin-left:8px;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(6,95,212,0.3);transition:transform 0.2s ease;';
-          btn.onmouseenter = () => { btn.style.transform = 'scale(1.04)'; };
-          btn.onmouseleave = () => { btn.style.transform = 'scale(1)'; };
+          btn.className = 'soul-yt-chip-btn soul-yt-dl-btn';
+          btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24"><path d="M17 18v1H6v-1h11zm-.5-6.6-.7-.7-3.8 3.7V4h-1v10.4l-3.8-3.8-.7.7 5 5 5-5.1z"/></svg><span>Скачать MP4</span>';
+          btn.title = 'Скачать видео в MP4 (высокое качество)';
           btn.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -385,17 +469,18 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               url: window.location.href,
               filename: (document.title.replace(/[\\/:*?"<>|]/g, '') || 'youtube-video') + '.mp4',
             });
-            btn.textContent = '✓ Скачивается';
-            setTimeout(() => { btn.textContent = '⬇ Скачать MP4'; }, 3000);
+            btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>Скачивается</span>';
+            setTimeout(() => {
+              btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24"><path d="M17 18v1H6v-1h11zm-.5-6.6-.7-.7-3.8 3.7V4h-1v10.4l-3.8-3.8-.7.7 5 5 5-5.1z"/></svg><span>Скачать MP4</span>';
+            }, 3000);
           };
           targetContainer.appendChild(btn);
         }
         if (targetContainer && !document.querySelector('.soul-yt-audio-dl-btn')) {
           const audioBtn = document.createElement('button');
-          audioBtn.className = 'soul-yt-audio-dl-btn';
-          audioBtn.textContent = '♫ MP3';
+          audioBtn.className = 'soul-yt-chip-btn soul-yt-audio-dl-btn';
+          audioBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg><span>MP3</span>';
           audioBtn.title = 'Скачать аудиодорожку в MP3';
-          audioBtn.style.cssText = 'background:#f1f3f4;color:#202124;border:1px solid #dadce0;border-radius:18px;padding:0 14px;height:36px;font-size:13px;font-weight:600;cursor:pointer;margin-left:8px;display:inline-flex;align-items:center;gap:6px;';
           audioBtn.onclick = (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -404,8 +489,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               filename: (document.title.replace(/[\\/:*?"<>|]/g, '') || 'youtube-audio') + '.mp3',
               isAudio: true,
             });
-            audioBtn.textContent = '✓ Скачивается';
-            setTimeout(() => { audioBtn.textContent = '♫ MP3'; }, 3000);
+            audioBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>Скачивается</span>';
+            setTimeout(() => {
+              audioBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg><span>MP3</span>';
+            }, 3000);
           };
           targetContainer.appendChild(audioBtn);
         }
@@ -525,11 +612,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             if (reelActions && !reelActions.querySelector('.soul-yt-shorts-dl-btn')) {
               const shortsBtn = document.createElement('button');
               shortsBtn.className = 'soul-yt-shorts-dl-btn';
-              shortsBtn.textContent = '⬇ MP4';
+              shortsBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24"><path d="M17 18v1H6v-1h11zm-.5-6.6-.7-.7-3.8 3.7V4h-1v10.4l-3.8-3.8-.7.7 5 5 5-5.1z"/></svg><span>MP4</span>';
               shortsBtn.title = 'Скачать Shorts в высоком качестве (MP4)';
-              shortsBtn.style.cssText = 'background:#065fd4;color:#ffffff;border:none;border-radius:18px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;margin:4px 0;display:inline-flex;align-items:center;justify-content:center;gap:4px;box-shadow:0 2px 8px rgba(6,95,212,0.4);transition:transform 0.15s ease;';
-              shortsBtn.onmouseenter = () => { shortsBtn.style.transform = 'scale(1.05)'; };
-              shortsBtn.onmouseleave = () => { shortsBtn.style.transform = 'scale(1)'; };
               shortsBtn.onclick = (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -542,8 +626,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
                   filename: shortTitle + '.mp4',
                   isAudio: false,
                 });
-                shortsBtn.textContent = '✓ Загрузка';
-                setTimeout(() => { shortsBtn.textContent = '⬇ MP4'; }, 3000);
+                shortsBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>Загрузка</span>';
+                setTimeout(() => {
+                  shortsBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24"><path d="M17 18v1H6v-1h11zm-.5-6.6-.7-.7-3.8 3.7V4h-1v10.4l-3.8-3.8-.7.7 5 5 5-5.1z"/></svg><span>MP4</span>';
+                }, 3000);
               };
               reelActions.appendChild(shortsBtn);
             }
@@ -551,11 +637,8 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             if (reelActions && !reelActions.querySelector('.soul-yt-shorts-audio-btn')) {
               const shortsAudioBtn = document.createElement('button');
               shortsAudioBtn.className = 'soul-yt-shorts-audio-btn';
-              shortsAudioBtn.textContent = '♫ MP3';
+              shortsAudioBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg><span>MP3</span>';
               shortsAudioBtn.title = 'Скачать звук Shorts в MP3';
-              shortsAudioBtn.style.cssText = 'background:rgba(255,255,255,0.18);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);color:#ffffff;border:1px solid rgba(255,255,255,0.3);border-radius:18px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;margin:4px 0;display:inline-flex;align-items:center;justify-content:center;gap:4px;transition:transform 0.15s ease;';
-              shortsAudioBtn.onmouseenter = () => { shortsAudioBtn.style.transform = 'scale(1.05)'; };
-              shortsAudioBtn.onmouseleave = () => { shortsAudioBtn.style.transform = 'scale(1)'; };
               shortsAudioBtn.onclick = (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -568,8 +651,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
                   filename: shortTitle + '.mp3',
                   isAudio: true,
                 });
-                shortsAudioBtn.textContent = '✓ Загрузка';
-                setTimeout(() => { shortsAudioBtn.textContent = '♫ MP3'; }, 3000);
+                shortsAudioBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>Загрузка</span>';
+                setTimeout(() => {
+                  shortsAudioBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg><span>MP3</span>';
+                }, 3000);
               };
               reelActions.appendChild(shortsAudioBtn);
             }

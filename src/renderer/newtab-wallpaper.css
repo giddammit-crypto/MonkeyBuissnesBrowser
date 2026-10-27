@@ -76,8 +76,7 @@
   border-color: var(--wallpaper-line);
 }
 .new-tab-page[data-new-tab-background="portrait"] .saved-card:hover,
-.new-tab-page[data-new-tab-background="portrait"] .recent-page-row:hover,
-.new-tab-page[data-new-tab-background="portrait"] .quick-links button:hover {
+.new-tab-page[data-new-tab-background="portrait"] .recent-page-row:hover {
   background: var(--wallpaper-panel-hover);
 }
 .new-tab-page[data-new-tab-background="portrait"] .section-heading {
@@ -704,8 +703,11 @@
 }
 
 /* Wallpaper enhancements for visual bookmarks and modal */
-.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-btn:hover {
-  background: var(--wallpaper-panel-hover, rgba(255, 255, 255, 0.1));
+.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-tile:hover .quick-link-icon-btn,
+.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-icon-btn:hover {
+  border-color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3), 0 4px 14px rgba(0, 0, 0, 0.3);
 }
 
 .new-tab-page:not([data-new-tab-background="plain"]) .quick-link-label {
@@ -715,16 +717,27 @@
 
 .new-tab-page:not([data-new-tab-background="plain"]) .quick-link-delete-btn {
   background: #ef4444 !important;
-  border: 1px solid rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid #ffffff !important;
   color: #ffffff !important;
   border-radius: 4px !important;
-  width: 17px !important;
-  height: 17px !important;
-  min-width: 17px !important;
-  max-width: 17px !important;
-  min-height: 17px !important;
-  max-height: 17px !important;
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  max-width: 18px !important;
+  min-height: 18px !important;
+  max-height: 18px !important;
+  padding: 0 !important;
+  line-height: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45) !important;
+}
+
+.new-tab-page:not([data-new-tab-background="plain"]) .quick-link-delete-btn svg {
+  display: block !important;
+  margin: auto !important;
+  flex-shrink: 0 !important;
 }
 
 .new-tab-page:not([data-new-tab-background="plain"]) .quick-link-delete-btn:hover {

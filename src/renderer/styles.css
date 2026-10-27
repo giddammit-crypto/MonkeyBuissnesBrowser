@@ -1211,10 +1211,10 @@ select {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: clamp(70px, 10vw, 88px);
-  min-width: 66px;
+  width: clamp(64px, 8vw, 76px);
+  min-width: 60px;
   flex-shrink: 0;
-  gap: 7px;
+  gap: 6px;
 }
 
 .quick-link-icon-wrap {
@@ -1223,30 +1223,40 @@ select {
   align-items: center;
   justify-content: center;
   margin: 0 auto;
+  width: fit-content;
 }
 
 .quick-link-icon-btn {
   background: transparent;
-  border: none;
-  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 18px; /* Outlines the 14px icon with 4px offset */
+  padding: 4px; /* Exact 4px offset around the icon */
   margin: 0;
   cursor: pointer;
-  display: block;
-  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   outline: none;
-  transition: transform 0.16s ease;
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+  width: auto !important;
+  height: auto !important;
+  box-sizing: border-box;
 }
 
 .quick-link-tile:hover .quick-link-icon-btn,
 .quick-link-icon-btn:hover {
+  border-color: var(--signal, #3b82f6);
+  background: rgba(59, 130, 246, 0.08);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
   transform: translateY(-2px);
 }
 
 .quick-link-symbol {
-  display: grid;
-  place-items: center;
-  width: clamp(44px, 5.5vw, 50px);
-  height: clamp(44px, 5.5vw, 50px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
   border-radius: 14px;
   background: var(--canvas);
   color: var(--text-secondary);
@@ -1254,29 +1264,37 @@ select {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
   transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
   overflow: hidden;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.quick-link-symbol svg,
+.quick-link-symbol img {
+  display: block;
+  margin: auto;
 }
 
 .quick-link-tile:hover .quick-link-symbol {
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
-  border-color: var(--signal);
+  border-color: var(--signal, #3b82f6);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
 }
 
 /* Stylish small square delete cross in the top-right corner of the bookmark icon */
 .quick-link-delete-btn {
   position: absolute !important;
-  top: -4px !important;
-  right: -4px !important;
-  width: 17px !important;
-  height: 17px !important;
-  min-width: 17px !important;
-  max-width: 17px !important;
-  min-height: 17px !important;
-  max-height: 17px !important;
+  top: -2px !important;
+  right: -2px !important;
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  max-width: 18px !important;
+  min-height: 18px !important;
+  max-height: 18px !important;
   padding: 0 !important;
   margin: 0 !important;
   border-radius: 4px !important; /* Little square */
   background: #ef4444 !important;
-  border: 1px solid rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid #ffffff !important;
   color: #ffffff !important;
   display: flex !important;
   align-items: center !important;
@@ -1286,10 +1304,16 @@ select {
   pointer-events: none;
   transform: scale(0.65);
   transition: opacity 0.15s ease, transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.14s ease, box-shadow 0.14s ease;
-  z-index: 15 !important;
+  z-index: 20 !important;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45) !important;
-  line-height: 1 !important;
+  line-height: 0 !important;
   box-sizing: border-box !important;
+}
+
+.quick-link-delete-btn svg {
+  display: block !important;
+  margin: auto !important;
+  flex-shrink: 0 !important;
 }
 
 .quick-link-tile:hover .quick-link-delete-btn,
@@ -1520,10 +1544,19 @@ select {
   border: 1px solid var(--border);
   color: var(--text-muted);
   cursor: pointer;
-  display: grid;
-  place-items: center;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  line-height: 0 !important;
   flex-shrink: 0;
   transition: background 0.14s ease, color 0.14s ease, transform 0.14s ease, border-color 0.14s ease;
+}
+
+.newtab-modal-close svg {
+  display: block !important;
+  margin: auto !important;
+  flex-shrink: 0 !important;
 }
 
 .newtab-modal-close:hover {
@@ -3226,15 +3259,6 @@ select {
   .quick-links {
     margin-top: 16px;
   }
-  .quick-links button:not(.quick-link-delete-btn) {
-    gap: 9px;
-    padding: 8px 0;
-  }
-  .quick-links button:not(.quick-link-delete-btn) > span {
-    width: 40px;
-    height: 40px;
-    border-radius: 12px;
-  }
   .newtab-tip {
     margin-top: 20px;
     padding-top: 18px;
@@ -4022,40 +4046,7 @@ select:focus-visible {
   gap: 16px;
   margin-top: 16px;
 }
-.quick-links button:not(.quick-link-delete-btn) {
-  width: 104px;
-  padding: 10px 6px;
-  gap: 9px;
-  font-size: 12px;
-  border: 1px solid transparent;
-  transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
-}
-.quick-links button:not(.quick-link-delete-btn):hover {
-  border-color: var(--border);
-  background: var(--canvas);
-}
-.quick-links button:not(.quick-link-delete-btn) > .quick-link-symbol {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  background: var(--canvas);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-  display: grid;
-  place-items: center;
-}
-.quick-links button:not(.quick-link-delete-btn) > .quick-link-label {
-  display: block;
-  width: auto;
-  height: auto;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: inherit;
-  white-space: nowrap;
-}
+
 .mail-shortcut-symbol {
   font-size: 23px;
   font-weight: 500;
@@ -4680,15 +4671,6 @@ select:focus-visible {
   .quick-links {
     margin-top: 10px;
   }
-  .quick-links button:not(.quick-link-delete-btn) {
-    padding: 7px 4px;
-    gap: 7px;
-  }
-  .quick-links button:not(.quick-link-delete-btn) > .quick-link-symbol {
-    height: 36px;
-    width: 36px;
-    border-radius: 10px;
-  }
   .newtab-workspace {
     margin-top: 18px;
     padding-top: 18px;
@@ -4762,9 +4744,6 @@ select:focus-visible {
   .quick-links {
     gap: 8px;
   }
-  .quick-links button:not(.quick-link-delete-btn) {
-    width: 88px;
-  }
   .privacy-facts {
     grid-template-columns: 1fr;
     gap: 12px;
@@ -4826,11 +4805,6 @@ select:focus-visible {
 .hero-search {
   margin-top: 22px;
 }
-.quick-links button:not(.quick-link-delete-btn) {
-  padding-top: 8px;
-  padding-bottom: 8px;
-  gap: 8px;
-}
 .newtab-workspace {
   margin-top: 20px;
   padding-top: 18px;
@@ -4862,16 +4836,6 @@ select:focus-visible {
   }
   .quick-links {
     margin-top: 8px;
-  }
-  .quick-links button:not(.quick-link-delete-btn) {
-    padding-top: 4px;
-    padding-bottom: 4px;
-    gap: 6px;
-  }
-  .quick-links button:not(.quick-link-delete-btn) > .quick-link-symbol {
-    height: 32px;
-    width: 32px;
-    border-radius: 9px;
   }
   .quick-links .mail-shortcut-symbol {
     font-size: 21px;
