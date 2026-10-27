@@ -2879,8 +2879,10 @@ export class BrowserController {
       if (entry.state !== 'completed') entry.error = state === 'cancelled' ? 'Загрузка отменена.' : 'Загрузка прервана.';
       if (sourceTab) this.memoryManager.updateTab(sourceTab.id, { downloading: [...this.liveDownloads.values()].some((download) => download.tabId === sourceTab.id) });
       this.persistDownloads(true);
-      this.emitSnapshot();
-      if (entry.state === 'completed' && entry.kind === 'image' && entry.path && !entry.isPrivate) void this.createDownloadThumbnail(entry);
+      if (entry.state === 'completed' && entry.path && !entry.isPrivate) {
+        const isImage = entry.kind === 'image' || /\.(png|jpe?g|webp|gif|bmp|ico|svg|avif)$/i.test(entry.filename);
+        if (isImage) void this.createDownloadThumbnail(entry);
+      }
     });
     this.persistDownloads();
     this.emitSnapshot();
@@ -2918,14 +2920,46 @@ export class BrowserController {
       }
     }
     if (changed) this.persistDownloads();
+    this.populateMissingThumbnails();
+  }
+
+  private populateMissingThumbnails(): void {
+    for (const download of this.downloads) {
+      if (download.state === 'completed' && download.path && !download.thumbnail && !download.isPrivate) {
+        const isImage = download.kind === 'image' || /\.(png|jpe?g|webp|gif|bmp|ico|svg|avif)$/i.test(download.filename);
+        if (isImage) {
+          void this.createDownloadThumbnail(download);
+        }
+      }
+    }
   }
 
   private async createDownloadThumbnail(entry: DownloadEntry): Promise<void> {
-    if (!entry.path) return;
+    if (!entry.path || !fs.existsSync(entry.path)) return;
     try {
-      const image = await nativeImage.createThumbnailFromPath(entry.path, { width: 96, height: 72 });
-      if (image.isEmpty()) return;
-      entry.thumbnail = image.toDataURL();
+      const isImage = entry.kind === 'image' || /\.(png|jpe?g|webp|gif|bmp|ico|svg|avif)$/i.test(entry.filename);
+      if (!isImage) return;
+
+      const img = nativeImage.createFromPath(entry.path);
+      if (img.isEmpty()) return;
+      const size = img.getSize();
+      if (size.width <= 0 || size.height <= 0) return;
+
+      // High quality adaptive thumbnail for high-DPI displays (120px)
+      const targetDim = 120;
+      let width = targetDim;
+      let height = targetDim;
+      if (size.width >= size.height) {
+        width = targetDim;
+        height = Math.max(1, Math.round((size.height / size.width) * targetDim));
+      } else {
+        height = targetDim;
+        width = Math.max(1, Math.round((size.width / size.height) * targetDim));
+      }
+
+      const resized = img.resize({ width, height, quality: 'better' });
+      if (resized.isEmpty()) return;
+      entry.thumbnail = resized.toDataURL();
       this.persistDownloads();
       this.emitSnapshot();
     } catch {

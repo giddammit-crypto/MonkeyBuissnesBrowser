@@ -35,6 +35,27 @@ function formatTime(timestamp?: number): string {
   return `${d.toLocaleDateString([], { day: "numeric", month: "short" })} ${time}`;
 }
 
+function DownloadPreviewIcon({ item, size = 20 }: { item: DownloadEntry; size?: number }): React.JSX.Element {
+  const [imgError, setImgError] = React.useState(false);
+  const isError = item.state === "cancelled" || item.state === "interrupted" || Boolean(item.error);
+
+  if (item.thumbnail && !imgError) {
+    return (
+      <img
+        src={item.thumbnail}
+        alt={item.filename}
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
+  if (item.kind === "video") return <Film size={size} />;
+  if (item.kind === "audio") return <Music2 size={size} />;
+  if (item.kind === "image") return <Image size={size} />;
+  if (isError) return <AlertCircle size={size} className="downloads-error-icon" />;
+  return <File size={size} />;
+}
+
 export function DownloadsPopover({
   snapshot,
   onClose,
@@ -166,17 +187,7 @@ export function DownloadsPopover({
               return (
                 <div key={item.id} className="downloads-popover-item is-active-download">
                   <div className="downloads-item-preview">
-                    {item.thumbnail ? (
-                      <img src={item.thumbnail} alt="" />
-                    ) : item.kind === "video" ? (
-                      <Film size={20} />
-                    ) : item.kind === "audio" ? (
-                      <Music2 size={20} />
-                    ) : item.kind === "image" ? (
-                      <Image size={20} />
-                    ) : (
-                      <File size={20} />
-                    )}
+                    <DownloadPreviewIcon item={item} size={20} />
                   </div>
                   <div className="downloads-item-info">
                     <strong className="downloads-item-name" title={item.filename}>
@@ -258,19 +269,7 @@ export function DownloadsPopover({
                   }}
                 >
                   <div className="downloads-item-preview">
-                    {item.thumbnail ? (
-                      <img src={item.thumbnail} alt="" />
-                    ) : item.kind === "video" ? (
-                      <Film size={20} />
-                    ) : item.kind === "audio" ? (
-                      <Music2 size={20} />
-                    ) : item.kind === "image" ? (
-                      <Image size={20} />
-                    ) : isError ? (
-                      <AlertCircle size={20} className="downloads-error-icon" />
-                    ) : (
-                      <File size={20} />
-                    )}
+                    <DownloadPreviewIcon item={item} size={20} />
                   </div>
 
                   <div className="downloads-item-info">

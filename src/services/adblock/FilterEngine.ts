@@ -66,6 +66,14 @@ const builtInRules: FilterRule[] = [
   { token: '/ptracking', kind: 'path' },
   { token: '/get_midroll_info', kind: 'path' },
   { token: 'pixel.gif', kind: 'path' },
+  // YouTube advertising & tracking
+  { token: 'ad.youtube.com', kind: 'host' },
+  { token: 'ads.youtube.com', kind: 'host' },
+  { token: '/youtubei/v1/player/ad_break', kind: 'path' },
+  { token: '/pagead/parallel_ad_break', kind: 'path' },
+  { token: '/pagead/lv_ad_break', kind: 'path' },
+  { token: '/api/stats/qoe?adformat=', kind: 'path' },
+  { token: '/youtubei/v1/att/get', kind: 'path' },
 ];
 
 export class FilterEngine {

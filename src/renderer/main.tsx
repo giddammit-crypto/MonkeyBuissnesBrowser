@@ -1293,15 +1293,6 @@ function App(): React.JSX.Element {
             </span>
           </button>
           <button
-            className={`icon-button ${notesDrawerOpen ? "selected" : ""}`}
-            title="Быстрые заметки · Боковая панель"
-            aria-label="Быстрые заметки"
-            aria-expanded={notesDrawerOpen}
-            onClick={() => setNotesDrawerOpen((val) => !val)}
-          >
-            <StickyNote size={18} />
-          </button>
-          <button
             className={`mode-chip ${isPrivate ? "is-private" : ""}`}
             onClick={() => createTab(!isPrivate)}
             title={
@@ -3281,7 +3272,13 @@ function DownloadsPanel({
               >
                 <div className="download-preview">
                   {download.thumbnail ? (
-                    <img src={download.thumbnail} alt="" />
+                    <img
+                      src={download.thumbnail}
+                      alt={download.filename}
+                      onError={(e) => {
+                        (e.currentTarget as HTMLElement).style.display = "none";
+                      }}
+                    />
                   ) : download.kind === "image" ? (
                     <Image size={23} />
                   ) : download.kind === "video" ? (

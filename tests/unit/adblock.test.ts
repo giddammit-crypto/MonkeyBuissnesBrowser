@@ -37,5 +37,15 @@ describe('FilterEngine', () => {
     // On other site (not in exceptions) -> STILL blocked
     expect(engine.shouldBlock('https://an.yandex.ru/count/123', 'script', 'https://news.example.com/')).toBe(true);
   });
+
+  it('blocks YouTube ad break and ad server requests when exceptions list is empty', () => {
+    const engine = new FilterEngine();
+    expect(engine.shouldBlock('https://www.youtube.com/youtubei/v1/player/ad_break', 'xhr')).toBe(true);
+    expect(engine.shouldBlock('https://www.youtube.com/pagead/parallel_ad_break?ad_break_id=123', 'xhr')).toBe(true);
+    expect(engine.shouldBlock('https://ad.youtube.com/pagead/ad_unit', 'script')).toBe(true);
+    expect(engine.shouldBlock('https://www.youtube.com/api/stats/qoe?adformat=1_2_3', 'xhr')).toBe(true);
+    // Regular video playback request should NOT be blocked
+    expect(engine.shouldBlock('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'mainFrame')).toBe(false);
+  });
 });
 

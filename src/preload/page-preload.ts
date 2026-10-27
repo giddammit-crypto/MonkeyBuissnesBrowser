@@ -370,8 +370,145 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       window.addEventListener('popstate', scheduleInjection);
     }
 
-    // YouTube native stream downloader
+    // YouTube native stream downloader & AdBlocker
     if (isHostOrSubdomain('youtube.com')) {
+      const initYouTubeAdBlocker = () => {
+        try {
+          // 1. Inject cosmetic ad blocking styles
+          if (typeof document !== 'undefined' && !document.getElementById('soul-yt-adblock-styles')) {
+            const style = document.createElement('style');
+            style.id = 'soul-yt-adblock-styles';
+            style.textContent = `
+              /* Banners, Feed and Search Ads */
+              ytd-ad-slot-renderer,
+              ytd-in-feed-ad-layout-renderer,
+              ytd-banner-promo-renderer,
+              ytd-statement-banner-renderer,
+              ytd-rich-item-renderer:has(ytd-ad-slot-renderer),
+              ytd-promoted-video-renderer,
+              ytd-promoted-sparkles-web-renderer,
+              ytd-player-legacy-desktop-watch-ads-renderer,
+              ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-ads"],
+              ytd-search-pyv-renderer,
+              #masthead-ad,
+              #player-ads,
+              #panels:has(ytd-ads-engagement-panel-content-renderer),
+              /* In-player overlays and message containers */
+              .ytp-ad-overlay-container,
+              .ytp-ad-message-container,
+              .ytp-ad-player-overlay,
+              .ytp-ad-player-overlay-layout,
+              .ytp-ad-overlay-image,
+              .ytp-ad-text-overlay,
+              .ytp-ad-action-interstitial,
+              .ytp-ad-feedback-dialog-background,
+              /* YouTube Anti-Adblock modal enforcement */
+              ytd-enforcement-message-view-model,
+              tp-yt-paper-dialog:has(ytd-enforcement-message-view-model),
+              ytd-popup-container:has(ytd-enforcement-message-view-model) {
+                display: none !important;
+                visibility: hidden !important;
+                height: 0 !important;
+                min-height: 0 !important;
+                overflow: hidden !important;
+                pointer-events: none !important;
+              }
+            `;
+            (document.head || document.documentElement)?.appendChild(style);
+          }
+
+          let isSkippingAd = false;
+          let originalPlaybackRate = 1;
+          let wasMuted = false;
+
+          const handlePlayerAds = () => {
+            try {
+              if (typeof document === 'undefined') return;
+
+              // A. Anti-Adblock popup automatic dismissal & video playback resume
+              const enforcementModal = document.querySelector('ytd-enforcement-message-view-model, tp-yt-paper-dialog:has(ytd-enforcement-message-view-model)');
+              if (enforcementModal) {
+                // Dismiss modal backdrop
+                const backdrops = document.querySelectorAll('tp-yt-iron-overlay-backdrop');
+                backdrops.forEach((backdrop) => {
+                  backdrop.remove();
+                });
+                const dialog = enforcementModal.closest('tp-yt-paper-dialog, ytd-popup-container') || enforcementModal;
+                dialog.remove();
+
+                const video = document.querySelector('video') as HTMLVideoElement | null;
+                if (video && video.paused) {
+                  video.play().catch(() => {});
+                }
+              }
+
+              // B. Active In-Stream Video Ad Detection & Automatic Skip
+              const player = document.querySelector('#movie_player, .html5-video-player') as HTMLElement | null;
+              const isAdShowing = player?.classList.contains('ad-showing') ||
+                                  player?.classList.contains('ad-interrupting') ||
+                                  Boolean(document.querySelector('.ytp-ad-player-overlay, .ytp-ad-showing, .ytp-ad-preview-container'));
+
+              const video = (player?.querySelector('video') || document.querySelector('video')) as HTMLVideoElement | null;
+
+              if (isAdShowing && video) {
+                if (!isSkippingAd) {
+                  isSkippingAd = true;
+                  originalPlaybackRate = (video.playbackRate && video.playbackRate <= 2) ? video.playbackRate : 1;
+                  wasMuted = video.muted;
+                }
+
+                // Mute ad immediately to prevent loud audio pop
+                video.muted = true;
+
+                // Step 1: Click skip button if present
+                const skipButtons = document.querySelectorAll<HTMLElement>(
+                  '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, button.ytp-ad-skip-button-text, .ytp-ad-skip-button-slot button'
+                );
+                for (const btn of Array.from(skipButtons)) {
+                  if (btn && typeof btn.click === 'function') {
+                    btn.click();
+                    return;
+                  }
+                }
+
+                // Step 2: Unskippable or countdown ad: accelerate 16x and jump to end
+                video.playbackRate = 16;
+                if (isFinite(video.duration) && video.duration > 0) {
+                  video.currentTime = Math.max(0, video.duration - 0.05);
+                }
+              } else if (isSkippingAd && !isAdShowing) {
+                // Ad finished: restore original user settings
+                isSkippingAd = false;
+                if (video) {
+                  video.playbackRate = originalPlaybackRate;
+                  video.muted = wasMuted;
+                  if (video.paused) {
+                    video.play().catch(() => {});
+                  }
+                }
+              }
+            } catch {
+              // Ignore DOM exceptions
+            }
+          };
+
+          setInterval(handlePlayerAds, 150);
+          if (typeof MutationObserver !== 'undefined' && (document.documentElement || document.body)) {
+            const observer = new MutationObserver(handlePlayerAds);
+            observer.observe(document.documentElement || document.body, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['class', 'style'],
+            });
+          }
+        } catch {
+          // Gracefully ignore
+        }
+      };
+
+      initYouTubeAdBlocker();
+
       const injectYtButton = () => {
         // Inject native adaptive stylesheet once
         if (!document.getElementById('soul-yt-adaptive-styles')) {
