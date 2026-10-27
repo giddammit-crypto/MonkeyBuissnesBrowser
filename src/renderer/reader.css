@@ -9,8 +9,9 @@
   --reader-text-muted: #6b7280;
   --reader-surface: #f9fafb;
   --reader-border: #e5e7eb;
-  --reader-accent: #35678f;
-  --reader-accent-soft: rgba(53, 103, 143, 0.12);
+  --reader-accent: #2563eb;
+  --reader-accent-contrast: #ffffff;
+  --reader-accent-soft: rgba(37, 99, 235, 0.12);
   --reader-link: #1d4ed8;
   --reader-code-bg: #f3f4f6;
   --reader-highlight: #fef08a;
@@ -24,6 +25,7 @@
   --reader-surface: #efe7d7;
   --reader-border: #e0d4be;
   --reader-accent: #8b5e34;
+  --reader-accent-contrast: #ffffff;
   --reader-accent-soft: rgba(139, 94, 52, 0.15);
   --reader-link: #87501a;
   --reader-code-bg: #eadecc;
@@ -33,26 +35,28 @@
 
 .reader-overlay[data-reader-theme="dark"] {
   --reader-bg: #14171c;
-  --reader-text: #e2e8f0;
+  --reader-text: #f1f5f9;
   --reader-text-muted: #94a3b8;
   --reader-surface: #1e232b;
   --reader-border: #2e3642;
-  --reader-accent: #8cbce8;
-  --reader-accent-soft: rgba(140, 188, 232, 0.15);
-  --reader-link: #93c5fd;
+  --reader-accent: #38bdf8;
+  --reader-accent-contrast: #0b1120;
+  --reader-accent-soft: rgba(56, 189, 248, 0.16);
+  --reader-link: #60a5fa;
   --reader-code-bg: #1a1e24;
-  --reader-highlight: rgba(140, 188, 232, 0.3);
+  --reader-highlight: rgba(56, 189, 248, 0.3);
   --reader-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
 }
 
 .reader-overlay[data-reader-theme="graphite"] {
   --reader-bg: #0d0f12;
-  --reader-text: #d1d5db;
-  --reader-text-muted: #6b7280;
+  --reader-text: #e5e7eb;
+  --reader-text-muted: #9ca3af;
   --reader-surface: #161a1f;
   --reader-border: #242a32;
   --reader-accent: #38bdf8;
-  --reader-accent-soft: rgba(56, 189, 248, 0.14);
+  --reader-accent-contrast: #0b1120;
+  --reader-accent-soft: rgba(56, 189, 248, 0.16);
   --reader-link: #7dd3fc;
   --reader-code-bg: #13171d;
   --reader-highlight: rgba(56, 189, 248, 0.35);
@@ -160,7 +164,8 @@
 
 .reader-tool-btn.active {
   background: var(--reader-accent);
-  color: #ffffff;
+  color: var(--reader-accent-contrast);
+  font-weight: 650;
   border-color: transparent;
 }
 
@@ -235,7 +240,8 @@
 
 .reader-speech-btn.speaking {
   background: var(--reader-accent);
-  color: #ffffff;
+  color: var(--reader-accent-contrast);
+  font-weight: 650;
 }
 
 .reader-speech-speed-btn {

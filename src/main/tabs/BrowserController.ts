@@ -3019,7 +3019,7 @@ export class BrowserController {
       canDownloadMedia,
       isReaderAvailable: Boolean(tab.isReaderAvailable),
       isReaderActive: Boolean(tab.isReaderActive),
-      hasVideoMedia: Boolean(tab.hasVideoMedia),
+      hasVideoMedia: Boolean(tab.hasVideoMedia || isVideoSite),
       isPictureInPicture: Boolean(tab.isPictureInPicture),
     };
   }
@@ -3101,10 +3101,84 @@ export class BrowserController {
     const tab = this.tabs.get(tabId);
     if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return { success: false, isPip: false };
     try {
-      const res = await tab.view.webContents.executeJavaScript(
-        `typeof window.__togglePictureInPicture === 'function' ? window.__togglePictureInPicture() : { success: false, isPip: false }`,
-        true
-      );
+      const script = `
+      (async () => {
+        try {
+          if (document.pictureInPictureElement) {
+            await document.exitPictureInPicture();
+            return { success: true, isPip: false };
+          }
+
+          function collectVideos(root) {
+            const list = [];
+            if (!root) return list;
+            try {
+              if (root.querySelectorAll) {
+                list.push(...Array.from(root.querySelectorAll('video')));
+              }
+            } catch {}
+            try {
+              if (root.querySelectorAll) {
+                const all = root.querySelectorAll('*');
+                for (let i = 0; i < all.length; i++) {
+                  const el = all[i];
+                  if (el.shadowRoot) {
+                    list.push(...collectVideos(el.shadowRoot));
+                  }
+                }
+              }
+            } catch {}
+            return list;
+          }
+
+          let videos = collectVideos(document);
+
+          try {
+            const iframes = document.querySelectorAll('iframe');
+            for (let i = 0; i < iframes.length; i++) {
+              try {
+                const doc = iframes[i].contentDocument;
+                if (doc) videos.push(...collectVideos(doc));
+              } catch {}
+            }
+          } catch {}
+
+          if (!videos.length) {
+            return { success: false, isPip: false, error: 'no-videos' };
+          }
+
+          const playing = videos.filter((v) => !v.paused && !v.ended && v.readyState > 0);
+          let target = playing.find((v) => v.currentTime > 0) || playing[0];
+
+          if (!target) {
+            videos.sort((a, b) => {
+              const rA = a.getBoundingClientRect();
+              const rB = b.getBoundingClientRect();
+              return (rB.width * rB.height) - (rA.width * rA.height);
+            });
+            target = videos[0];
+          }
+
+          if (!target) return { success: false, isPip: false };
+
+          try {
+            target.removeAttribute('disablePictureInPicture');
+            target.disablePictureInPicture = false;
+          } catch {}
+
+          if (typeof target.requestPictureInPicture === 'function') {
+            await target.requestPictureInPicture();
+            return { success: true, isPip: true };
+          }
+
+          return { success: false, isPip: false, error: 'not-supported' };
+        } catch (e) {
+          return { success: false, isPip: Boolean(document.pictureInPictureElement), error: String(e) };
+        }
+      })()
+      `;
+
+      const res = await tab.view.webContents.executeJavaScript(script, true);
       const isPip = Boolean(res?.isPip);
       tab.isPictureInPicture = isPip;
       this.emitSnapshot();

@@ -585,6 +585,7 @@ function App(): React.JSX.Element {
     const update = () => {
       const b = viewport.getBoundingClientRect();
       const hidden = panel !== "home";
+      const effectiveWidth = notesDrawerOpen ? Math.max(200, b.width - 360) : b.width;
       run(
         window.browserApi.setChromeBounds(
           hidden
@@ -592,7 +593,7 @@ function App(): React.JSX.Element {
             : {
                 x: b.left,
                 y: b.top,
-                width: b.width,
+                width: effectiveWidth,
                 height: b.height,
               },
         ),
@@ -608,13 +609,14 @@ function App(): React.JSX.Element {
     };
   }, [
     panel,
+    notesDrawerOpen,
     currentTab?.id,
     currentTab?.isInternal,
     currentTab?.url,
     currentTab?.lifecycle,
     snapshot?.activeTabId,
   ]);
-  const isPopoverOpen = Boolean(popover) || tabSearchOpen || editingAddress || taskManagerOpen;
+  const isPopoverOpen = Boolean(popover) || tabSearchOpen || editingAddress || taskManagerOpen || notesDrawerOpen;
   const hasActiveWebPage = panel === "home" && Boolean(currentTab && !currentTab.isInternal && currentTab.lifecycle !== "crashed");
   useEffect(() => {
     void window.browserApi.setPopoverOpen(isPopoverOpen || panel !== "home");
@@ -1241,6 +1243,15 @@ function App(): React.JSX.Element {
             <span className="browsec-btn-status">
               {snapshot.browsec?.enabled ? "ON" : "OFF"}
             </span>
+          </button>
+          <button
+            className={`icon-button ${notesDrawerOpen ? "selected" : ""}`}
+            title="Быстрые заметки · Боковая панель"
+            aria-label="Быстрые заметки"
+            aria-expanded={notesDrawerOpen}
+            onClick={() => setNotesDrawerOpen((val) => !val)}
+          >
+            <StickyNote size={18} />
           </button>
           <button
             className={`mode-chip ${isPrivate ? "is-private" : ""}`}

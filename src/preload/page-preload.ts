@@ -871,11 +871,28 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       setInterval(checkGoogleAccount, 4000);
     }
 
-    // 6. Native Video & Picture-in-Picture Detection
+    // 6. Native Video, Picture-in-Picture & Speed Controller (Chrome & Yandex Flagship)
     let lastVideoPresence: boolean | undefined;
+
+    const findVideos = (root: Document | ShadowRoot | Element): HTMLVideoElement[] => {
+      const list: HTMLVideoElement[] = [];
+      if (!root) return list;
+      try {
+        if ('querySelectorAll' in root) {
+          list.push(...Array.from(root.querySelectorAll('video')));
+          const all = root.querySelectorAll('*');
+          for (let i = 0; i < all.length; i++) {
+            const sr = all[i].shadowRoot;
+            if (sr) list.push(...findVideos(sr));
+          }
+        }
+      } catch {}
+      return list;
+    };
+
     const checkVideo = () => {
       try {
-        const videos = document.querySelectorAll('video');
+        const videos = findVideos(document);
         const hasVideo = videos.length > 0;
         if (hasVideo !== lastVideoPresence) {
           lastVideoPresence = hasVideo;
@@ -883,8 +900,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         }
       } catch {}
     };
+
     checkVideo();
-    setInterval(checkVideo, 3000);
+    setInterval(checkVideo, 2500);
+    document.addEventListener('play', checkVideo, true);
+    document.addEventListener('playing', checkVideo, true);
+    document.addEventListener('loadeddata', checkVideo, true);
+    try {
+      const observer = new MutationObserver(() => checkVideo());
+      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+    } catch {}
 
     const togglePip = async (): Promise<{ success: boolean; isPip: boolean }> => {
       try {
@@ -893,12 +918,23 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           ipcRenderer.send('page:pip-changed', { isPip: false });
           return { success: true, isPip: false };
         }
-        const videos = Array.from(document.querySelectorAll('video'));
+        const videos = findVideos(document);
         if (!videos.length) return { success: false, isPip: false };
-        const target = videos.find((v) => !v.paused && v.readyState > 0)
-          || videos.find((v) => v.readyState > 0)
-          || videos[0];
+        const playing = videos.filter((v) => !v.paused && v.readyState > 0);
+        let target = playing.find((v) => v.currentTime > 0) || playing[0];
+        if (!target) {
+          videos.sort((a, b) => {
+            const rA = a.getBoundingClientRect();
+            const rB = b.getBoundingClientRect();
+            return (rB.width * rB.height) - (rA.width * rA.height);
+          });
+          target = videos[0];
+        }
         if (target && typeof target.requestPictureInPicture === 'function') {
+          try {
+            target.removeAttribute('disablePictureInPicture');
+            target.disablePictureInPicture = false;
+          } catch {}
           await target.requestPictureInPicture();
           ipcRenderer.send('page:pip-changed', { isPip: true });
           return { success: true, isPip: true };
@@ -922,7 +958,190 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       ipcRenderer.send('page:pip-changed', { isPip: false });
     }, true);
 
-    (window as unknown as { __togglePictureInPicture?: () => Promise<{ success: boolean; isPip: boolean }> }).__togglePictureInPicture = togglePip;
+    // In-page Floating PiP Overlay (Яндекс.Браузер стиль)
+    const setupVideoHoverOverlay = () => {
+      let pipButton: HTMLButtonElement | null = null;
+      let activeVideo: HTMLVideoElement | null = null;
+      let hideTimer: any = null;
+
+      const createPipButton = () => {
+        if (pipButton && pipButton.isConnected) return pipButton;
+        const btn = document.createElement('button');
+        btn.id = 'soulm8te-video-pip-btn';
+        btn.setAttribute('aria-label', 'Смотреть в отдельном окне (PiP)');
+        btn.innerHTML = `
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px;">
+            <rect width="18" height="14" x="3" y="5" rx="2"/>
+            <path d="M21 9v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9"/>
+            <rect width="8" height="6" x="11" y="11" rx="1" fill="currentColor"/>
+          </svg>
+          <span>Вынести видео</span>
+        `;
+        Object.assign(btn.style, {
+          position: 'fixed',
+          zIndex: '2147483647',
+          display: 'none',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '6px 14px',
+          background: 'rgba(15, 23, 42, 0.90)',
+          color: '#ffffff',
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+          fontSize: '12px',
+          fontWeight: '600',
+          letterSpacing: '0.02em',
+          border: '1px solid rgba(255, 255, 255, 0.22)',
+          borderRadius: '9999px',
+          boxShadow: '0 6px 20px rgba(0, 0, 0, 0.45), 0 0 12px rgba(56, 189, 248, 0.3)',
+          cursor: 'pointer',
+          backdropFilter: 'blur(10px)',
+          transition: 'all 0.16s ease',
+          pointerEvents: 'auto',
+          userSelect: 'none',
+        });
+
+        btn.onmouseenter = () => {
+          clearTimeout(hideTimer);
+          btn.style.background = '#2563eb';
+          btn.style.borderColor = '#38bdf8';
+          btn.style.transform = 'translateX(-50%) scale(1.05)';
+        };
+
+        btn.onmouseleave = () => {
+          btn.style.background = 'rgba(15, 23, 42, 0.90)';
+          btn.style.borderColor = 'rgba(255, 255, 255, 0.22)';
+          btn.style.transform = 'translateX(-50%) scale(1)';
+          scheduleHide();
+        };
+
+        btn.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!activeVideo) return;
+          try {
+            if (document.pictureInPictureElement) {
+              await document.exitPictureInPicture();
+              ipcRenderer.send('page:pip-changed', { isPip: false });
+            } else {
+              activeVideo.removeAttribute('disablePictureInPicture');
+              activeVideo.disablePictureInPicture = false;
+              await activeVideo.requestPictureInPicture();
+              ipcRenderer.send('page:pip-changed', { isPip: true });
+            }
+          } catch (err) {
+            console.error('PiP error:', err);
+          }
+        };
+
+        (document.fullscreenElement || document.body || document.documentElement).appendChild(btn);
+        pipButton = btn;
+        return btn;
+      };
+
+      const positionButton = (video: HTMLVideoElement) => {
+        const btn = createPipButton();
+        const rect = video.getBoundingClientRect();
+        if (rect.width < 120 || rect.height < 90 || rect.bottom < 0 || rect.top > window.innerHeight) {
+          btn.style.display = 'none';
+          return;
+        }
+
+        const top = Math.max(12, rect.top + 14);
+        const left = rect.left + (rect.width / 2);
+        btn.style.top = `${top}px`;
+        btn.style.left = `${left}px`;
+        btn.style.transform = 'translateX(-50%)';
+        btn.style.display = 'inline-flex';
+      };
+
+      const scheduleHide = () => {
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => {
+          if (pipButton) pipButton.style.display = 'none';
+        }, 1200);
+      };
+
+      document.addEventListener('mouseover', (e) => {
+        const target = e.target;
+        if (target instanceof HTMLVideoElement) {
+          activeVideo = target;
+          clearTimeout(hideTimer);
+          positionButton(target);
+        } else if (target instanceof Element && target.closest('#soulm8te-video-pip-btn')) {
+          clearTimeout(hideTimer);
+        } else if (activeVideo) {
+          scheduleHide();
+        }
+      }, true);
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', setupVideoHoverOverlay, { once: true });
+    } else {
+      setupVideoHoverOverlay();
+    }
+
+    // Video Speed Controller Hotkeys (Chrome Extension Standard: [, ], \, z, x)
+    document.addEventListener('keydown', (e) => {
+      const activeTag = (document.activeElement?.tagName || '').toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea' || (document.activeElement as HTMLElement)?.isContentEditable) {
+        return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const videos = findVideos(document);
+      const playing = videos.find((v) => !v.paused && v.readyState > 0) || videos[0];
+      if (!playing) return;
+
+      const showToast = (text: string) => {
+        let toast = document.getElementById('soulm8te-video-hud');
+        if (!toast) {
+          toast = document.createElement('div');
+          toast.id = 'soulm8te-video-hud';
+          Object.assign(toast.style, {
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            zIndex: '2147483647',
+            padding: '6px 14px',
+            background: 'rgba(15, 23, 42, 0.92)',
+            color: '#38bdf8',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            fontSize: '13px',
+            fontWeight: '700',
+            borderRadius: '8px',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.4)',
+            backdropFilter: 'blur(8px)',
+            pointerEvents: 'none',
+            transition: 'opacity 0.2s ease',
+          });
+          document.body.appendChild(toast);
+        }
+        toast.textContent = text;
+        toast.style.opacity = '1';
+        clearTimeout((toast as any).__timer);
+        (toast as any).__timer = setTimeout(() => {
+          if (toast) toast.style.opacity = '0';
+        }, 1200);
+      };
+
+      if (e.key === ']') {
+        playing.playbackRate = Math.min(4.0, Math.round((playing.playbackRate + 0.25) * 100) / 100);
+        showToast(`Скорость: ${playing.playbackRate}x`);
+      } else if (e.key === '[') {
+        playing.playbackRate = Math.max(0.25, Math.round((playing.playbackRate - 0.25) * 100) / 100);
+        showToast(`Скорость: ${playing.playbackRate}x`);
+      } else if (e.key === '\\') {
+        playing.playbackRate = 1.0;
+        showToast('Скорость: 1.0x');
+      } else if (e.key === 'z' || e.key === 'я') {
+        playing.currentTime = Math.max(0, playing.currentTime - 10);
+        showToast('-10 сек');
+      } else if (e.key === 'x' || e.key === 'ч') {
+        playing.currentTime = Math.min(playing.duration || Infinity, playing.currentTime + 10);
+        showToast('+10 сек');
+      }
+    });
 
     // 7. Reader Mode Availability Detector
     let lastReaderAvailable: boolean | undefined;

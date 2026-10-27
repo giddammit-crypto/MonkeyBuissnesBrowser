@@ -188,10 +188,10 @@ function registerIpc(): void {
     if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabHasMedia(event.sender.id, Boolean(data?.hasVideo || data?.hasAudio));
   });
   ipcMain.on('page:video-detected', (event, data: { hasVideo?: boolean }) => {
-    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabVideoDetected(event.sender.id, Boolean(data?.hasVideo));
+    if (controller?.isTrustedPage(event.sender.id)) controller.markTabVideoDetected(event.sender.id, Boolean(data?.hasVideo));
   });
   ipcMain.on('page:pip-changed', (event, data: { isPip?: boolean }) => {
-    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabPipChanged(event.sender.id, Boolean(data?.isPip));
+    if (controller?.isTrustedPage(event.sender.id)) controller.markTabPipChanged(event.sender.id, Boolean(data?.isPip));
   });
   ipcMain.on('page:reader-status', (event, data: { available?: boolean }) => {
     if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabReaderStatus(event.sender.id, Boolean(data?.available));
