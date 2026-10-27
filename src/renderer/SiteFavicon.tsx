@@ -1,11 +1,52 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Globe2 } from "lucide-react";
 
-interface SiteFaviconProps {
+export interface SiteFaviconProps {
   url: string;
   favicon?: string | null;
   size?: number;
   className?: string;
+}
+
+export function isPrivateHost(host: string): boolean {
+  if (!host) return true;
+  const h = host.toLowerCase().trim();
+  if (
+    h === "localhost" ||
+    h === "127.0.0.1" ||
+    h === "::1" ||
+    h.endsWith(".local") ||
+    h.endsWith(".internal")
+  ) {
+    return true;
+  }
+  if (
+    /^10\.\d+\.\d+\.\d+$/.test(h) ||
+    /^192\.168\.\d+\.\d+$/.test(h) ||
+    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(h)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function getFaviconSources(
+  url: string,
+  favicon?: string | null
+): { primarySrc: string | null; fallbackSrc: string | null } {
+  let hostname = "";
+  try {
+    const raw = url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
+    hostname = new URL(raw).hostname.replace(/^www\./, "");
+  } catch {}
+
+  const primarySrc = favicon && favicon.trim() ? favicon.trim() : null;
+  const fallbackSrc =
+    hostname && !isPrivateHost(hostname)
+      ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`
+      : null;
+
+  return { primarySrc, fallbackSrc };
 }
 
 export const SiteFavicon: React.FC<SiteFaviconProps> = ({
@@ -15,12 +56,31 @@ export const SiteFavicon: React.FC<SiteFaviconProps> = ({
   className = "",
 }) => {
   const [loadFailed, setLoadFailed] = useState(false);
+  const [useFallback, setUseFallback] = useState(false);
 
-  // Do not send browsing history (including private/local hosts) to an
-  // unrelated favicon service just because a page has no icon.
-  const source = favicon && favicon.trim() ? favicon : null;
-  useEffect(() => setLoadFailed(false), [source]);
-  const currentSrc = !loadFailed ? source : null;
+  useEffect(() => {
+    setLoadFailed(false);
+    setUseFallback(false);
+  }, [url, favicon]);
+
+  const { primarySrc, fallbackSrc } = useMemo(
+    () => getFaviconSources(url, favicon),
+    [url, favicon]
+  );
+
+  const currentSrc = !loadFailed
+    ? useFallback
+      ? fallbackSrc
+      : primarySrc || fallbackSrc
+    : null;
+
+  const handleImageError = () => {
+    if (!useFallback && primarySrc && fallbackSrc && primarySrc !== fallbackSrc) {
+      setUseFallback(true);
+    } else {
+      setLoadFailed(true);
+    }
+  };
 
   if (currentSrc) {
     return (
@@ -30,7 +90,7 @@ export const SiteFavicon: React.FC<SiteFaviconProps> = ({
         width={size}
         height={size}
         referrerPolicy="no-referrer"
-        onError={() => setLoadFailed(true)}
+        onError={handleImageError}
         className={className}
         style={{
           width: size,
