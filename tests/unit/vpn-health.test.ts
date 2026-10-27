@@ -715,6 +715,11 @@ describe('VPN Server Health Check Engine', () => {
         notified = true;
       });
 
+      vi.spyOn(service.getHealthCheck(), 'checkServer').mockImplementation(async (server) => {
+        service.getHealthCheck().markHealthy(server, 35);
+        return true;
+      });
+
       const updatedStatus = await service.triggerManualHealthCheck('us');
       expect(updatedStatus).toBeDefined();
       expect(updatedStatus.lastChecked).toBeTypeOf('number');

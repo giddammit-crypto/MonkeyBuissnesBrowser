@@ -1,4 +1,12 @@
 /* Local decorative artwork is separate from the interactive shell content. */
+.new-tab-page:not([data-new-tab-background="plain"]) {
+  position: relative;
+  isolation: isolate;
+  overflow-x: hidden;
+  min-height: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
 .new-tab-page[data-new-tab-background="portrait"] {
   position: relative;
   isolation: isolate;
@@ -11,6 +19,8 @@
 .newtab-wallpaper {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
@@ -377,10 +387,6 @@
   --accent: #38bdf8;
   --signal: #00d2ff;
   --accent-soft: rgb(0 210 255 / 22%);
-}
-:root[data-appearance="detroit"] .app-shell,
-:root[data-wallpaper="portrait"] .app-shell {
-  --chrome-height: 144px;
 }
 :root[data-appearance="detroit"] .window-titlebar,
 :root[data-wallpaper="portrait"] .window-titlebar {

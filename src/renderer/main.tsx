@@ -1808,7 +1808,7 @@ function App(): React.JSX.Element {
           )}
         <div
           ref={viewportRef}
-          className={`page-viewport ${panel !== "home" || Boolean(currentTab?.isInternal) || currentTab?.lifecycle === "crashed" ? "panel-visible" : ""}`}
+          className={`page-viewport ${panel !== "home" ? "panel-visible" : ""}`}
         >
           {panel === "home" && currentTab?.isInternal && (
             <NewTabPage
