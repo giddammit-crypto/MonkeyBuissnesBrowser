@@ -964,6 +964,191 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       ipcRenderer.send('page:pip-changed', { isPip: false });
     }, true);
 
+    let miniPipActive = false;
+    let miniPipVideo: HTMLVideoElement | null = null;
+    let miniPipStyles: HTMLStyleElement | null = null;
+    let miniPipHud: HTMLDivElement | null = null;
+    let miniPipBorder: HTMLDivElement | null = null;
+
+    const setMiniPipMode = async (enabled: boolean, tabId?: string, tabTitle?: string) => {
+      if (enabled === miniPipActive) return;
+      miniPipActive = enabled;
+
+      if (enabled) {
+        if (document.pictureInPictureElement) {
+          try { await document.exitPictureInPicture(); } catch {}
+        }
+        const videos = findVideos(document);
+        const playing = videos.filter((v) => !v.paused && v.readyState > 0);
+        let target = playing.find((v) => v.currentTime > 0) || playing[0] || videos[0];
+        if (!target && videos.length) target = videos[0];
+
+        if (target) {
+          miniPipVideo = target;
+          target.classList.add('soulm8te-mini-pip-target');
+        }
+
+        if (!miniPipStyles) {
+          miniPipStyles = document.createElement('style');
+          miniPipStyles.id = 'soulm8te-mini-pip-styles';
+          miniPipStyles.textContent = `
+            video.soulm8te-mini-pip-target {
+              position: fixed !important;
+              top: 0 !important;
+              left: 0 !important;
+              width: 100vw !important;
+              height: 100vh !important;
+              max-width: 100vw !important;
+              max-height: 100vh !important;
+              z-index: 2147483640 !important;
+              object-fit: contain !important;
+              background: #000000 !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
+            #soulm8te-mini-pip-hud {
+              position: fixed !important;
+              top: 0 !important;
+              left: 0 !important;
+              right: 0 !important;
+              height: 38px !important;
+              background: linear-gradient(180deg, rgba(13, 16, 23, 0.95) 0%, rgba(13, 16, 23, 0.6) 80%, transparent 100%) !important;
+              display: flex !important;
+              align-items: center !important;
+              justify-content: space-between !important;
+              padding: 0 10px !important;
+              z-index: 2147483647 !important;
+              opacity: 0 !important;
+              transition: opacity 0.2s ease !important;
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+              pointer-events: auto !important;
+              box-sizing: border-box !important;
+            }
+            body:hover #soulm8te-mini-pip-hud, #soulm8te-mini-pip-hud:hover, #soulm8te-mini-pip-hud:focus-within {
+              opacity: 1 !important;
+            }
+            .soulm8te-mini-pip-title {
+              font-size: 11px !important;
+              font-weight: 600 !important;
+              color: #f1f5f9 !important;
+              white-space: nowrap !important;
+              overflow: hidden !important;
+              text-overflow: ellipsis !important;
+              max-width: 180px !important;
+            }
+            .soulm8te-mini-pip-actions {
+              display: flex !important;
+              align-items: center !important;
+              gap: 6px !important;
+            }
+            .soulm8te-mini-pip-btn {
+              display: inline-flex !important;
+              align-items: center !important;
+              gap: 4px !important;
+              padding: 3px 8px !important;
+              border-radius: 5px !important;
+              font-size: 11px !important;
+              font-weight: 600 !important;
+              cursor: pointer !important;
+              border: 1px solid rgba(255, 255, 255, 0.25) !important;
+              background: rgba(30, 41, 59, 0.85) !important;
+              color: #ffffff !important;
+              transition: all 0.15s ease !important;
+            }
+            .soulm8te-mini-pip-btn:hover {
+              background: #2563eb !important;
+              border-color: #3b82f6 !important;
+            }
+            .soulm8te-mini-pip-close {
+              background: rgba(239, 68, 68, 0.85) !important;
+              border-color: rgba(239, 68, 68, 0.9) !important;
+              padding: 3px 6px !important;
+            }
+            .soulm8te-mini-pip-close:hover {
+              background: #dc2626 !important;
+            }
+            #soulm8te-mini-pip-border {
+              position: fixed !important;
+              inset: 0 !important;
+              border: 1.5px solid rgba(56, 189, 248, 0.45) !important;
+              box-shadow: 0 8px 32px rgba(0, 0, 0, 0.75) !important;
+              pointer-events: none !important;
+              z-index: 2147483646 !important;
+              box-sizing: border-box !important;
+            }
+          `;
+          document.head?.appendChild(miniPipStyles);
+        }
+
+        if (!miniPipHud) {
+          miniPipHud = document.createElement('div');
+          miniPipHud.id = 'soulm8te-mini-pip-hud';
+          const titleSpan = document.createElement('span');
+          titleSpan.className = 'soulm8te-mini-pip-title';
+          titleSpan.textContent = tabTitle || document.title || 'soulm8te Video';
+          miniPipHud.appendChild(titleSpan);
+
+          const actionsDiv = document.createElement('div');
+          actionsDiv.className = 'soulm8te-mini-pip-actions';
+
+          const returnBtn = document.createElement('button');
+          returnBtn.className = 'soulm8te-mini-pip-btn';
+          returnBtn.title = 'Вернуться к вкладке';
+          returnBtn.textContent = '↗ К вкладке';
+          returnBtn.onclick = (e) => {
+            e.stopPropagation();
+            if (tabId) {
+              ipcRenderer.send('page:request-activate-tab', tabId);
+            }
+          };
+          actionsDiv.appendChild(returnBtn);
+
+          const closeBtn = document.createElement('button');
+          closeBtn.className = 'soulm8te-mini-pip-btn soulm8te-mini-pip-close';
+          closeBtn.title = 'Закрыть';
+          closeBtn.textContent = '✕';
+          closeBtn.onclick = (e) => {
+            e.stopPropagation();
+            void setMiniPipMode(false);
+            ipcRenderer.send('page:pip-changed', { isPip: false });
+          };
+          actionsDiv.appendChild(closeBtn);
+
+          miniPipHud.appendChild(actionsDiv);
+          document.body?.appendChild(miniPipHud);
+        }
+
+        if (!miniPipBorder) {
+          miniPipBorder = document.createElement('div');
+          miniPipBorder.id = 'soulm8te-mini-pip-border';
+          document.body?.appendChild(miniPipBorder);
+        }
+      } else {
+        if (miniPipVideo) {
+          miniPipVideo.classList.remove('soulm8te-mini-pip-target');
+          miniPipVideo = null;
+        }
+        if (miniPipStyles && miniPipStyles.parentNode) {
+          miniPipStyles.remove();
+          miniPipStyles = null;
+        }
+        if (miniPipHud && miniPipHud.parentNode) {
+          miniPipHud.remove();
+          miniPipHud = null;
+        }
+        if (miniPipBorder && miniPipBorder.parentNode) {
+          miniPipBorder.remove();
+          miniPipBorder = null;
+        }
+      }
+    };
+
+    if (typeof ipcRenderer?.on === 'function') {
+      ipcRenderer.on('tab:set-pip-mini-mode', (_evt, data: { enabled: boolean; tabId?: string; title?: string }) => {
+        void setMiniPipMode(Boolean(data?.enabled), data?.tabId, data?.title);
+      });
+    }
+
     // In-page Floating PiP Overlay (Яндекс.Браузер стиль)
     const setupVideoHoverOverlay = () => {
       let pipButton: HTMLButtonElement | null = null;

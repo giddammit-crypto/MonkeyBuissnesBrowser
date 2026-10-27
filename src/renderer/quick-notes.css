@@ -58,16 +58,9 @@
   font-weight: 650;
   padding: 2px 7px;
   border-radius: 9999px;
-  background: rgba(59, 130, 246, 0.14);
-  color: #2563eb;
-  border: 1px solid rgba(59, 130, 246, 0.28);
-}
-
-:root[data-theme="dark"] .notes-count-badge,
-:root[data-theme="graphite"] .notes-count-badge {
-  background: rgba(56, 189, 248, 0.18);
-  color: #7dd3fc;
-  border-color: rgba(56, 189, 248, 0.35);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent);
 }
 
 .notes-header-actions {
@@ -82,31 +75,19 @@
   gap: 5px;
   padding: 5px 12px;
   border-radius: 6px;
-  background: #2563eb;
-  color: #ffffff;
+  background: var(--accent);
+  color: var(--accent-contrast, #ffffff);
   font-size: 12px;
   font-weight: 650;
   cursor: pointer;
   border: none;
-  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
+  box-shadow: 0 2px 6px var(--accent-soft);
   transition: all 0.15s ease;
 }
 
-:root[data-theme="dark"] .notes-btn-new,
-:root[data-theme="graphite"] .notes-btn-new {
-  background: #0284c7;
-  color: #ffffff;
-  box-shadow: 0 2px 6px rgba(2, 132, 199, 0.35);
-}
-
 .notes-btn-new:hover {
-  background: #1d4ed8;
+  opacity: 0.92;
   transform: translateY(-1px);
-}
-
-:root[data-theme="dark"] .notes-btn-new:hover,
-:root[data-theme="graphite"] .notes-btn-new:hover {
-  background: #0369a1;
 }
 
 /* Search and Filters */
@@ -151,15 +132,9 @@
 }
 
 .notes-search-input:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
   outline: none;
-}
-
-:root[data-theme="dark"] .notes-search-input:focus,
-:root[data-theme="graphite"] .notes-search-input:focus {
-  border-color: #38bdf8;
-  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
 }
 
 .notes-search-clear {
@@ -202,17 +177,10 @@
 }
 
 .notes-filter-pill.active {
-  background: rgba(59, 130, 246, 0.12);
-  color: #2563eb;
-  border-color: rgba(59, 130, 246, 0.35);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
   font-weight: 650;
-}
-
-:root[data-theme="dark"] .notes-filter-pill.active,
-:root[data-theme="graphite"] .notes-filter-pill.active {
-  background: rgba(56, 189, 248, 0.18);
-  color: #7dd3fc;
-  border-color: rgba(56, 189, 248, 0.45);
 }
 
 /* Notes List */
@@ -243,16 +211,9 @@
 }
 
 .note-card.active {
-  border-color: #2563eb;
+  border-color: var(--accent);
   background: var(--surface);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
-}
-
-:root[data-theme="dark"] .note-card.active,
-:root[data-theme="graphite"] .note-card.active {
-  border-color: #38bdf8;
-  background: var(--surface);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 4px 14px var(--accent-soft);
 }
 
 /* Color indicators on cards */
@@ -418,12 +379,7 @@
 
 .note-color-dot.selected {
   transform: scale(1.15);
-  box-shadow: 0 0 0 2px #2563eb;
-}
-
-:root[data-theme="dark"] .note-color-dot.selected,
-:root[data-theme="graphite"] .note-color-dot.selected {
-  box-shadow: 0 0 0 2px #38bdf8;
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .note-color-dot.default { background: #94a3b8; }
@@ -457,14 +413,8 @@
 
 .note-textarea-content:focus {
   outline: none;
-  border-color: #2563eb;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
-}
-
-:root[data-theme="dark"] .note-textarea-content:focus,
-:root[data-theme="graphite"] .note-textarea-content:focus {
-  border-color: #38bdf8;
-  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .note-editor-bottom {
@@ -492,12 +442,7 @@
 
 .note-attach-tab-btn:hover {
   background: var(--border);
-  color: #2563eb;
-}
-
-:root[data-theme="dark"] .note-attach-tab-btn:hover,
-:root[data-theme="graphite"] .note-attach-tab-btn:hover {
-  color: #7dd3fc;
+  color: var(--accent);
 }
 
 .note-delete-btn {
@@ -533,13 +478,8 @@
 }
 
 .notes-empty-icon {
-  opacity: 0.6;
-  color: #2563eb;
-}
-
-:root[data-theme="dark"] .notes-empty-icon,
-:root[data-theme="graphite"] .notes-empty-icon {
-  color: #7dd3fc;
+  opacity: 0.7;
+  color: var(--accent);
 }
 
 .notes-empty-text {

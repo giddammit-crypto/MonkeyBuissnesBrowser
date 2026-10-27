@@ -11,7 +11,7 @@
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  background: #e5e9ed;
+  background: transparent;
   --wallpaper-panel: rgb(247 248 250 / 92%);
   --wallpaper-panel-hover: rgb(231 240 248 / 97%);
   --wallpaper-line: rgb(120 139 159 / 25%);
@@ -123,22 +123,22 @@
   gap: 16px;
 }
 [data-theme="dark"] .new-tab-page[data-new-tab-background="portrait"] {
-  background: #171b20;
+  background: transparent;
   --wallpaper-panel: rgb(23 27 32 / 91%);
   --wallpaper-panel-hover: rgb(43 60 76 / 96%);
   --wallpaper-line: rgb(169 177 188 / 24%);
 }
 [data-theme="graphite"] .new-tab-page[data-new-tab-background="portrait"] {
-  background: #22262d;
+  background: transparent;
   --wallpaper-panel: rgb(34 38 45 / 91%);
   --wallpaper-panel-hover: rgb(52 58 70 / 96%);
   --wallpaper-line: rgb(136 147 163 / 24%);
 }
 [data-theme="dark"] .newtab-wallpaper::after {
-  background: linear-gradient(90deg, rgb(23 27 32 / 97%) 0%, rgb(23 27 32 / 95%) 32%, rgb(23 27 32 / 83%) 53%, rgb(23 27 32 / 35%) 76%, rgb(23 27 32 / 22%) 100%);
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.78) 0%, rgba(15, 23, 42, 0.55) 32%, rgba(15, 23, 42, 0.20) 65%, transparent 100%);
 }
 [data-theme="graphite"] .newtab-wallpaper::after {
-  background: linear-gradient(90deg, rgb(34 38 45 / 97%) 0%, rgb(34 38 45 / 95%) 32%, rgb(34 38 45 / 83%) 53%, rgb(34 38 45 / 35%) 76%, rgb(34 38 45 / 22%) 100%);
+  background: linear-gradient(90deg, rgba(23, 27 34, 0.78) 0%, rgba(23, 27, 34, 0.55) 32%, rgba(23, 27, 34, 0.20) 65%, transparent 100%);
 }
 @media (min-width: 1700px) {
   .new-tab-page[data-new-tab-background="portrait"] {
@@ -502,7 +502,7 @@
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  background: #0a0b10;
+  background: transparent;
   --wallpaper-panel: rgb(18 19 27 / 90%);
   --wallpaper-panel-hover: rgb(28 30 42 / 96%);
   --wallpaper-line: rgb(255 42 133 / 28%);
@@ -657,19 +657,19 @@
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  background: #0a0b12;
+  background: transparent;
   --wallpaper-panel: rgb(16 18 28 / 88%);
   --wallpaper-panel-hover: rgb(26 30 46 / 95%);
   --wallpaper-line: rgb(168 85 247 / 28%);
 }
 .new-tab-page[data-new-tab-background="tokyo-night"] {
-  background: #080d1a;
+  background: transparent;
   --wallpaper-panel: rgb(14 22 42 / 88%);
   --wallpaper-panel-hover: rgb(22 34 62 / 95%);
   --wallpaper-line: rgb(0 210 255 / 28%);
 }
 .new-tab-page[data-new-tab-background="celestial-palace"] {
-  background: #061317;
+  background: transparent;
   --wallpaper-panel: rgb(10 31 38 / 88%);
   --wallpaper-panel-hover: rgb(18 48 58 / 95%);
   --wallpaper-line: rgb(45 212 191 / 28%);
@@ -864,31 +864,44 @@
 }
 
 :root:not([data-wallpaper="plain"]) .window-titlebar {
-  background: rgba(13, 16, 23, 0.72);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: var(--chrome);
 }
 
 :root:not([data-wallpaper="plain"]) .tab-strip {
-  background: rgba(15, 20, 28, 0.60);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: var(--chrome);
+  border-bottom: 1px solid var(--border);
 }
 
 :root:not([data-wallpaper="plain"]) .toolbar {
-  background: rgba(18, 22, 32, 0.72);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: var(--chrome);
 }
 
 :root:not([data-wallpaper="plain"]) .sidebar {
-  background: rgba(12, 15, 22, 0.68);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: var(--canvas);
 }
 
 :root:not([data-wallpaper="plain"]) .content-area {
   background: transparent;
+  position: relative;
+}
+
+.content-area .workspace-wallpaper {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.content-area .workspace-wallpaper img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
 }
 
 :root:not([data-wallpaper="plain"]) .page-viewport:not(.panel-visible) {
@@ -896,42 +909,9 @@
 }
 
 :root:not([data-wallpaper="plain"]) .page-viewport.panel-visible {
-  background: rgba(13, 16, 23, 0.85);
+  background: rgba(13, 16, 23, 0.88);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-}
-
-:root:not([data-wallpaper="plain"]) .tab-container.active {
-  background: rgba(26, 32, 46, 0.82);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-
-:root:not([data-wallpaper="plain"]) .tab-container:not(.active) {
-  background: rgba(15, 18, 26, 0.45);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-:root:not([data-wallpaper="plain"]) .tab-container:not(.active):hover {
-  background: rgba(26, 32, 46, 0.65);
-}
-
-/* Light theme overrides for adaptive space wallpaper */
-:root[data-theme="light"]:not([data-wallpaper="plain"]) .window-titlebar {
-  background: rgba(240, 244, 248, 0.75);
-}
-
-:root[data-theme="light"]:not([data-wallpaper="plain"]) .tab-strip {
-  background: rgba(235, 240, 245, 0.65);
-}
-
-:root[data-theme="light"]:not([data-wallpaper="plain"]) .toolbar {
-  background: rgba(245, 247, 250, 0.75);
-}
-
-:root[data-theme="light"]:not([data-wallpaper="plain"]) .sidebar {
-  background: rgba(240, 244, 248, 0.70);
 }
 
 :root[data-theme="light"]:not([data-wallpaper="plain"]) .page-viewport.panel-visible {

@@ -193,6 +193,11 @@ function registerIpc(): void {
   ipcMain.on('page:pip-changed', (event, data: { isPip?: boolean }) => {
     if (controller?.isTrustedPage(event.sender.id)) controller.markTabPipChanged(event.sender.id, Boolean(data?.isPip));
   });
+  ipcMain.on('page:request-activate-tab', (_event, tabId?: string) => {
+    if (typeof tabId === 'string' && tabId && controller) {
+      controller.activateTab(tabId);
+    }
+  });
   ipcMain.on('page:reader-status', (event, data: { available?: boolean }) => {
     if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabReaderStatus(event.sender.id, Boolean(data?.available));
   });

@@ -526,6 +526,21 @@ export class BrowserController {
     return this.toSnapshot(tab);
   }
 
+  private getMiniPipBounds(): { x: number; y: number; width: number; height: number } {
+    const miniWidth = 380;
+    const miniHeight = 214;
+    const margin = 16;
+    const windowBounds = this.window?.getContentBounds() || { width: 1440, height: 900 };
+    const chrome = (this.chromeBounds.width > 0 && this.chromeBounds.height > 0)
+      ? this.chromeBounds
+      : (this.lastValidBounds.width > 0 && this.lastValidBounds.height > 0)
+        ? this.lastValidBounds
+        : { x: 200, y: 144, width: Math.max(0, windowBounds.width - 200), height: Math.max(0, windowBounds.height - 144) };
+    const x = Math.max(0, chrome.x + chrome.width - miniWidth - margin);
+    const y = Math.max(0, chrome.y + chrome.height - miniHeight - margin);
+    return { x, y, width: miniWidth, height: miniHeight };
+  }
+
   activateTab(tabId: string): void {
     const next = this.tabs.get(tabId);
     if (!next) return;
@@ -544,6 +559,7 @@ export class BrowserController {
       if (active && !tab.isInternal && tab.lifecycle !== 'crashed') {
         (tab.view as any).setVisible?.(true);
         tab.view.webContents.setBackgroundThrottling(false);
+        tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
         if (this.window && !this.window.contentView.children.includes(tab.view)) {
           this.window.contentView.addChildView(tab.view);
         } else {
@@ -554,14 +570,13 @@ export class BrowserController {
         tab.view.webContents.focus();
       } else {
         if (tab.isPictureInPicture && !tab.isInternal && tab.lifecycle !== 'crashed') {
-          // Keep PiP tab visible and unthrottled so video continues displaying in PiP window
+          // Floating in-browser PiP mini-player over other tabs
           (tab.view as any).setVisible?.(true);
           tab.view.webContents.setBackgroundThrottling(false);
-          if (this.window && !this.window.contentView.children.includes(tab.view)) {
-            this.window.contentView.addChildView(tab.view);
-          }
-          this.applyBounds(tab);
+          tab.view.setBounds(this.getMiniPipBounds());
+          tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: true, tabId: tab.id, title: tab.title });
         } else {
+          tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
           (tab.view as any).setVisible?.(false);
           tab.view.webContents.setBackgroundThrottling(true);
           if (tab.isInternal || tab.lifecycle === 'crashed') {
@@ -584,6 +599,13 @@ export class BrowserController {
           this.window.contentView.addChildView(next.view);
           next.view.webContents.focus();
         } catch {}
+      }
+    }
+    // Float background PiP tabs on top of the active view/shell
+    for (const tab of this.tabs.values()) {
+      if (tab.id !== tabId && tab.isPictureInPicture && !tab.isInternal && tab.view && !tab.view.webContents.isDestroyed() && tab.lifecycle !== 'crashed') {
+        try { this.window?.contentView.removeChildView(tab.view); } catch {}
+        this.window?.contentView.addChildView(tab.view);
       }
     }
     this.emitSnapshot();
@@ -2534,6 +2556,7 @@ export class BrowserController {
         }
       }
     };
+    contents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => { if (isMainFrame) { resetTabMediaAndReader(); this.emitSnapshot(); } });
     contents.on('did-navigate', (_event, url) => { resetTabMediaAndReader(); this.memoryManager.updateTab(tab.id, { hasFormEdits: false }); this.updateUrl(tab, url); });
     contents.on('did-navigate-in-page', (_event, url) => { resetTabMediaAndReader(); this.updateUrl(tab, url); });
     contents.on('page-title-updated', (event, title) => {
@@ -2659,6 +2682,7 @@ export class BrowserController {
       if (tab === activeTab && !tab.isInternal && tab.lifecycle !== 'crashed' && !tab.isReaderActive) {
         (tab.view as any).setVisible?.(true);
         tab.view.webContents.setBackgroundThrottling(false);
+        tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
         if (!this.window.contentView.children.includes(tab.view)) {
           this.window.contentView.addChildView(tab.view);
         }
@@ -2666,10 +2690,8 @@ export class BrowserController {
       } else if (tab.isPictureInPicture && !tab.isInternal && tab.lifecycle !== 'crashed') {
         (tab.view as any).setVisible?.(true);
         tab.view.webContents.setBackgroundThrottling(false);
-        if (!this.window.contentView.children.includes(tab.view)) {
-          this.window.contentView.addChildView(tab.view);
-        }
-        this.applyBounds(tab);
+        tab.view.setBounds(this.getMiniPipBounds());
+        tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: true, tabId: tab.id, title: tab.title });
       } else if (tab.isInternal || tab.lifecycle === 'crashed' || tab.isReaderActive) {
         (tab.view as any).setVisible?.(false);
         tab.view.webContents.setBackgroundThrottling(true);
@@ -2695,6 +2717,14 @@ export class BrowserController {
           this.window.contentView.removeChildView(activeTab.view);
           this.window.contentView.addChildView(activeTab.view);
         } catch {}
+      }
+    }
+
+    // Ensure floating PiP tabs stay on top of the active tab / shell
+    for (const tab of this.tabs.values()) {
+      if (tab !== activeTab && tab.isPictureInPicture && !tab.isInternal && tab.view && !tab.view.webContents.isDestroyed() && tab.lifecycle !== 'crashed') {
+        try { this.window.contentView.removeChildView(tab.view); } catch {}
+        this.window.contentView.addChildView(tab.view);
       }
     }
   }
@@ -3085,14 +3115,14 @@ export class BrowserController {
       (url.includes('pinterest.') && url.includes('/pin/')) ||
       url.includes('pin.it/')
     );
-    const canDownloadMedia = Boolean(tab.hasDownloadableMedia || isVideoSite || Boolean(stream?.video) || Boolean(stream?.audio));
+    const canDownloadMedia = Boolean(!tab.isInternal && (tab.hasDownloadableMedia || isVideoSite || Boolean(stream?.video) || Boolean(stream?.audio)));
     return {
       ...snapshot,
       canDownloadMedia,
-      isReaderAvailable: Boolean(tab.isReaderAvailable),
-      isReaderActive: Boolean(tab.isReaderActive),
-      hasVideoMedia: Boolean(tab.hasVideoMedia || isVideoSite),
-      isPictureInPicture: Boolean(tab.isPictureInPicture),
+      isReaderAvailable: Boolean(!tab.isInternal && tab.isReaderAvailable),
+      isReaderActive: Boolean(!tab.isInternal && tab.isReaderActive),
+      hasVideoMedia: Boolean(!tab.isInternal && (tab.hasVideoMedia || isVideoSite)),
+      isPictureInPicture: Boolean(!tab.isInternal && tab.isPictureInPicture),
     };
   }
 
@@ -3121,7 +3151,15 @@ export class BrowserController {
         tab.view.webContents.setBackgroundThrottling(!isActive && !isPip);
         if (!isActive) {
           (tab.view as any).setVisible?.(isPip);
+          if (isPip) {
+            tab.view.setBounds(this.getMiniPipBounds());
+            tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: true, tabId: tab.id, title: tab.title });
+          } else {
+            tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
+          }
           this.refreshViewBounds();
+        } else {
+          tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
         }
       }
       this.emitSnapshot();
@@ -3258,19 +3296,36 @@ export class BrowserController {
       })()
       `;
 
-      const res = await tab.view.webContents.executeJavaScript(script, true);
-      const isPip = Boolean(res?.isPip);
-      tab.isPictureInPicture = isPip;
+      const nextPip = !tab.isPictureInPicture;
+      tab.isPictureInPicture = nextPip;
+      await tab.view.webContents.executeJavaScript(`
+        (async () => {
+          try {
+            if (document.pictureInPictureElement) {
+              await document.exitPictureInPicture();
+            }
+          } catch {}
+        })()
+      `, true).catch(() => undefined);
+
       if (tab.view && !tab.view.webContents.isDestroyed()) {
         const isActive = tab.id === this.activeTabId;
-        tab.view.webContents.setBackgroundThrottling(!isActive && !isPip);
+        tab.view.webContents.setBackgroundThrottling(!isActive && !nextPip);
         if (!isActive) {
-          (tab.view as any).setVisible?.(isPip);
-          this.refreshViewBounds();
+          (tab.view as any).setVisible?.(nextPip);
+          if (nextPip) {
+            tab.view.setBounds(this.getMiniPipBounds());
+            tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: true, tabId: tab.id, title: tab.title });
+          } else {
+            tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
+          }
+        } else {
+          tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
         }
+        this.refreshViewBounds();
       }
       this.emitSnapshot();
-      return { success: Boolean(res?.success), isPip };
+      return { success: true, isPip: nextPip };
     } catch {
       return { success: false, isPip: Boolean(tab.isPictureInPicture) };
     }

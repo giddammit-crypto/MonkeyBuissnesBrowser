@@ -818,16 +818,6 @@ function App(): React.JSX.Element {
     <div
       className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""} ${findOpen ? "find-open" : ""} ${isPrivate ? "private-mode" : ""} ${isPopoverOpen ? "popover-open" : ""} ${isPopoverOpen && hasActiveWebPage ? "popover-with-webpage" : ""}`}
     >
-      {wallpaperBackground !== "plain" && (
-        <div className="workspace-wallpaper newtab-wallpaper" data-newtab-wallpaper data-workspace-wallpaper aria-hidden="true">
-          <img
-            src={wallpaperSrc}
-            alt=""
-            decoding="async"
-            draggable={false}
-          />
-        </div>
-      )}
       <div className="window-titlebar">
         <div className="title-brand">
           <img className="title-brand-icon" src={chloeIcon} alt="soulm8te" />
@@ -1911,6 +1901,16 @@ function App(): React.JSX.Element {
         </div>
       </aside>
       <main className="content-area">
+        {wallpaperBackground !== "plain" && (
+          <div className="workspace-wallpaper newtab-wallpaper" data-newtab-wallpaper data-workspace-wallpaper aria-hidden="true">
+            <img
+              src={wallpaperSrc}
+              alt=""
+              decoding="async"
+              draggable={false}
+            />
+          </div>
+        )}
         {panel === "home" &&
           authNotice &&
           !authNoticeDismissed &&
