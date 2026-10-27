@@ -6823,3 +6823,279 @@ select:focus-visible {
 .download-header-btn.is-downloading {
   color: var(--signal, #38bdf8);
 }
+
+/* ==========================================================================
+   Flagship Browser Features: Omnibox Actions, QR Popover, Equalizer
+   ========================================================================== */
+
+/* Omnibox Page Action Buttons */
+.omnibox-page-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.omnibox-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.16s ease;
+  position: relative;
+  padding: 0;
+}
+
+.omnibox-action-btn:hover {
+  background: var(--surface-subtle);
+  color: var(--text);
+  border-color: var(--border);
+  transform: translateY(-1px);
+}
+
+.omnibox-action-btn:active {
+  transform: translateY(0);
+}
+
+.omnibox-action-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(140, 188, 232, 0.4);
+  box-shadow: 0 0 8px rgba(140, 188, 232, 0.25);
+}
+
+.omnibox-action-btn.pip-active::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--signal, #38bdf8);
+  box-shadow: 0 0 6px var(--signal, #38bdf8);
+  animation: pip-pulse 2s infinite ease-in-out;
+}
+
+@keyframes pip-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+
+/* Tab Audio Equalizer Animation */
+.tab-equalizer {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  width: 13px;
+  height: 12px;
+}
+
+.tab-equalizer-bar {
+  flex: 1;
+  background: var(--signal, #38bdf8);
+  border-radius: 1px;
+  animation: eq-bounce 1.2s infinite ease-in-out;
+}
+
+.tab-equalizer-bar:nth-child(1) { height: 40%; animation-delay: 0s; }
+.tab-equalizer-bar:nth-child(2) { height: 90%; animation-delay: 0.2s; }
+.tab-equalizer-bar:nth-child(3) { height: 60%; animation-delay: 0.4s; }
+
+@keyframes eq-bounce {
+  0%, 100% { height: 30%; }
+  50% { height: 100%; }
+}
+
+/* QR Code Popover */
+.qr-popover {
+  position: absolute;
+  top: 46px;
+  right: 54px;
+  width: 300px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 14px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.2), 0 0 0 1px var(--border);
+  padding: 14px;
+  z-index: 120;
+  animation: qr-fade-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@keyframes qr-fade-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.qr-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.qr-popover-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  font-family: Montserrat, sans-serif;
+}
+
+.qr-icon-accent {
+  color: var(--accent);
+}
+
+.qr-page-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.qr-page-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.qr-page-preview-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.qr-page-preview-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qr-page-preview-domain {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.qr-code-canvas-box {
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+.qr-svg-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qr-svg-wrapper svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.qr-url-box {
+  width: 100%;
+}
+
+.qr-url-input {
+  width: 100%;
+  height: 28px;
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  box-sizing: border-box;
+}
+
+.qr-url-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.qr-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.qr-btn-primary {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s ease;
+}
+
+.qr-btn-primary:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.qr-btn-primary.copied {
+  background: var(--cyber-green, #10b981);
+}
+
+.qr-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.qr-btn-secondary:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.qr-footnote {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.qr-footnote-icon {
+  flex-shrink: 0;
+}
+

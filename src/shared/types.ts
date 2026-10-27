@@ -17,6 +17,10 @@ export interface TabSnapshot {
   lifecycle: TabLifecycle;
   workspaceId: string;
   canDownloadMedia?: boolean;
+  isReaderAvailable?: boolean;
+  isReaderActive?: boolean;
+  hasVideoMedia?: boolean;
+  isPictureInPicture?: boolean;
   lastError?: {
     errorCode?: number;
     errorDescription?: string;
@@ -70,6 +74,54 @@ export type NewTabBackground = 'portrait' | 'plain' | 'cyberpink' | 'cyberpink-f
 
 export type AccentColor = 'blue' | 'teal' | 'violet' | 'rose' | 'pink' | 'white' | 'milk' | 'graphite';
 
+export type ReaderTheme = 'light' | 'sepia' | 'dark' | 'graphite';
+export type ReaderFontFamily = 'sans' | 'serif' | 'mono';
+
+export interface ReaderSettings {
+  theme: ReaderTheme;
+  fontFamily: ReaderFontFamily;
+  fontSize: number;
+  lineHeight?: number;
+  maxWidth?: number;
+}
+
+export interface ReaderArticle {
+  title: string;
+  byline?: string;
+  excerpt?: string;
+  content: string;
+  textContent?: string;
+  length?: number;
+  siteName?: string;
+  publishedTime?: string;
+  readingTimeMinutes?: number;
+  lang?: string;
+}
+
+export type NoteColor = 'default' | 'yellow' | 'pink' | 'blue' | 'green' | 'violet';
+
+export interface NoteEntry {
+  id: string;
+  title: string;
+  content: string;
+  color?: NoteColor;
+  url?: string;
+  tabTitle?: string;
+  isPinned?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SaveNoteInput {
+  id?: string;
+  title?: string;
+  content: string;
+  color?: NoteColor;
+  url?: string;
+  tabTitle?: string;
+  isPinned?: boolean;
+}
+
 export interface BrowserSettings {
   theme: 'light' | 'dark' | 'graphite' | 'system';
   sidebarCollapsed: boolean;
@@ -85,6 +137,7 @@ export interface BrowserSettings {
   googleSignInCompatibility?: boolean;
   restoreSession?: boolean;
   thirdPartyCookieExceptions?: string[];
+  readerSettings?: ReaderSettings;
 }
 
 export type NotificationPermissionDecision = 'allow' | 'deny';
@@ -290,6 +343,8 @@ export interface BrowserSnapshot {
     blockedByHost: Record<string, number>;
     exceptions?: string[];
   };
+  notes?: NoteEntry[];
+  readerSettings?: ReaderSettings;
   performance: {
     sampledAt: number;
     availableMemory: number;

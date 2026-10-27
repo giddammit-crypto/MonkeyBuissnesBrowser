@@ -11,11 +11,24 @@ import type {
   NotificationPermissionEntry,
   TabSnapshot,
   WorkspaceEntry,
+  NoteColor,
+  NoteEntry,
+  ReaderFontFamily,
+  ReaderSettings,
+  ReaderTheme,
 } from '../../shared/types';
 import { isSafeWebUrl } from '../../shared/omnibox';
 import { JsonStore } from './JsonStore';
 import { normalizeCookieExceptions, normalizePermissionOrigin, normalizeSiteExceptions } from '../../shared/sitePolicy';
 import { normalizeNewTabBackground } from '../../shared/background';
+
+export const defaultReaderSettings: ReaderSettings = {
+  theme: 'light',
+  fontFamily: 'sans',
+  fontSize: 18,
+  lineHeight: 1.6,
+  maxWidth: 680,
+};
 
 const defaultSettings: BrowserSettings = {
   theme: 'system',
@@ -28,6 +41,7 @@ const defaultSettings: BrowserSettings = {
   blockThirdPartyCookies: true,
   googleSignInCompatibility: true,
   restoreSession: true,
+  readerSettings: defaultReaderSettings,
 };
 
 const defaultWorkspaces: WorkspaceEntry[] = [
@@ -145,6 +159,47 @@ function isSupportedDownloadSource(rawUrl: string): boolean {
   }
 }
 
+function normalizeReaderSettings(value: unknown): ReaderSettings {
+  const raw = object(value);
+  const themes: ReaderTheme[] = ['light', 'sepia', 'dark', 'graphite'];
+  const fonts: ReaderFontFamily[] = ['sans', 'serif', 'mono'];
+  const theme = typeof raw.theme === 'string' && themes.includes(raw.theme as ReaderTheme) ? raw.theme as ReaderTheme : defaultReaderSettings.theme;
+  const fontFamily = typeof raw.fontFamily === 'string' && fonts.includes(raw.fontFamily as ReaderFontFamily) ? raw.fontFamily as ReaderFontFamily : defaultReaderSettings.fontFamily;
+  const fontSize = finite(raw.fontSize) ? Math.max(12, Math.min(36, Math.round(raw.fontSize))) : defaultReaderSettings.fontSize;
+  const lineHeight = finite(raw.lineHeight) ? Math.max(1.0, Math.min(2.5, Number(raw.lineHeight.toFixed(2)))) : defaultReaderSettings.lineHeight;
+  const maxWidth = finite(raw.maxWidth) ? Math.max(400, Math.min(1200, Math.round(raw.maxWidth))) : defaultReaderSettings.maxWidth;
+  return {
+    theme,
+    fontFamily,
+    fontSize,
+    lineHeight,
+    maxWidth,
+  };
+}
+
+export function normalizeNotes(value: unknown): NoteEntry[] {
+  if (!Array.isArray(value)) return [];
+  const validColors: NoteColor[] = ['default', 'yellow', 'pink', 'blue', 'green', 'violet'];
+  return value
+    .filter((entry) => entry && typeof entry === 'object' && typeof (entry as JsonObject).id === 'string' && typeof (entry as JsonObject).content === 'string')
+    .slice(0, 500)
+    .map((entry) => {
+      const obj = entry as JsonObject;
+      const color = typeof obj.color === 'string' && validColors.includes(obj.color as NoteColor) ? obj.color as NoteColor : 'default';
+      return {
+        id: text(obj.id),
+        title: text(obj.title).slice(0, 500),
+        content: text(obj.content).slice(0, 50000),
+        color,
+        url: typeof obj.url === 'string' ? obj.url.slice(0, 8192) : undefined,
+        tabTitle: typeof obj.tabTitle === 'string' ? text(obj.tabTitle).slice(0, 1000) : undefined,
+        isPinned: obj.isPinned === true,
+        createdAt: finite(obj.createdAt) ? obj.createdAt : Date.now(),
+        updatedAt: finite(obj.updatedAt) ? obj.updatedAt : Date.now(),
+      };
+    });
+}
+
 function normalizeSettings(value: unknown): BrowserSettings {
   const raw = object(value);
   return {
@@ -162,6 +217,7 @@ function normalizeSettings(value: unknown): BrowserSettings {
     googleSignInCompatibility: typeof raw.googleSignInCompatibility === 'boolean' ? raw.googleSignInCompatibility : true,
     thirdPartyCookieExceptions: normalizeCookieExceptions(raw.thirdPartyCookieExceptions),
     restoreSession: typeof raw.restoreSession === 'boolean' ? raw.restoreSession : true,
+    readerSettings: normalizeReaderSettings(raw.readerSettings),
   };
 }
 
@@ -226,10 +282,12 @@ export class BrowserStores {
   readonly browsec: JsonStore<BrowsecState>;
   readonly googleAccounts: JsonStore<{ accounts: GoogleAccount[]; activeId?: string }>;
   readonly notificationPermissions: JsonStore<NotificationPermissionEntry[]>;
+  readonly notes: JsonStore<NoteEntry[]>;
 
   constructor(userDataPath: string) {
     const dataPath = path.join(userDataPath, 'browser-data');
     const validPage = (entry: JsonObject) => typeof entry.id === 'string' && typeof entry.title === 'string' && isSafeWebUrl(text(entry.url));
+    this.notes = new JsonStore(path.join(dataPath, 'notes.json'), [], normalizeNotes);
     this.history = new JsonStore(path.join(dataPath, 'history.json'), [], (raw) => normalizeEntries(raw, (entry) => validPage(entry) && finite(entry.visitedAt)));
     this.bookmarks = new JsonStore(path.join(dataPath, 'bookmarks.json'), [], (raw) => normalizeEntries(raw, (entry) => validPage(entry) && finite(entry.createdAt)));
     this.settings = new JsonStore(path.join(dataPath, 'settings.json'), defaultSettings, normalizeSettings);

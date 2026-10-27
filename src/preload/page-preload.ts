@@ -1,4 +1,5 @@
 import { ipcRenderer, webFrame } from 'electron';
+import type { ReaderArticle } from '../shared/types';
 
 // Chromium 134 native Chrome stealth injection for sandboxed preloads
 const STEALTH_SCRIPT = `(function() {
@@ -869,6 +870,230 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       checkGoogleAccount();
       setInterval(checkGoogleAccount, 4000);
     }
+
+    // 6. Native Video & Picture-in-Picture Detection
+    let lastVideoPresence: boolean | undefined;
+    const checkVideo = () => {
+      try {
+        const videos = document.querySelectorAll('video');
+        const hasVideo = videos.length > 0;
+        if (hasVideo !== lastVideoPresence) {
+          lastVideoPresence = hasVideo;
+          ipcRenderer.send('page:video-detected', { hasVideo });
+        }
+      } catch {}
+    };
+    checkVideo();
+    setInterval(checkVideo, 3000);
+
+    const togglePip = async (): Promise<{ success: boolean; isPip: boolean }> => {
+      try {
+        if (document.pictureInPictureElement) {
+          await document.exitPictureInPicture();
+          ipcRenderer.send('page:pip-changed', { isPip: false });
+          return { success: true, isPip: false };
+        }
+        const videos = Array.from(document.querySelectorAll('video'));
+        if (!videos.length) return { success: false, isPip: false };
+        const target = videos.find((v) => !v.paused && v.readyState > 0)
+          || videos.find((v) => v.readyState > 0)
+          || videos[0];
+        if (target && typeof target.requestPictureInPicture === 'function') {
+          await target.requestPictureInPicture();
+          ipcRenderer.send('page:pip-changed', { isPip: true });
+          return { success: true, isPip: true };
+        }
+        return { success: false, isPip: false };
+      } catch {
+        return { success: false, isPip: Boolean(document.pictureInPictureElement) };
+      }
+    };
+
+    if (typeof ipcRenderer?.on === 'function') {
+      ipcRenderer.on('tab:toggle-pip', async () => {
+        await togglePip();
+      });
+    }
+
+    document.addEventListener('enterpictureinpicture', () => {
+      ipcRenderer.send('page:pip-changed', { isPip: true });
+    }, true);
+    document.addEventListener('leavepictureinpicture', () => {
+      ipcRenderer.send('page:pip-changed', { isPip: false });
+    }, true);
+
+    (window as unknown as { __togglePictureInPicture?: () => Promise<{ success: boolean; isPip: boolean }> }).__togglePictureInPicture = togglePip;
+
+    // 7. Reader Mode Availability Detector
+    let lastReaderAvailable: boolean | undefined;
+    const checkReaderStatus = () => {
+      try {
+        const href = window.location.href;
+        if (href.startsWith('browser://') || href.startsWith('about:') || href.startsWith('chrome://')) {
+          if (lastReaderAvailable !== false) {
+            lastReaderAvailable = false;
+            ipcRenderer.send('page:reader-status', { available: false });
+          }
+          return;
+        }
+
+        let available = false;
+        const article = document.querySelector('article');
+        if (article && (article.textContent || '').trim().length > 250) {
+          available = true;
+        } else {
+          const main = document.querySelector('main, [role="main"]');
+          if (main && (main.textContent || '').trim().length > 300) {
+            available = true;
+          } else {
+            const paragraphs = document.querySelectorAll('p');
+            if (paragraphs.length >= 3) {
+              let totalLength = 0;
+              for (let i = 0; i < paragraphs.length; i++) {
+                totalLength += (paragraphs[i].textContent || '').trim().length;
+                if (totalLength > 400) {
+                  available = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        if (available !== lastReaderAvailable) {
+          lastReaderAvailable = available;
+          ipcRenderer.send('page:reader-status', { available });
+        }
+      } catch {}
+    };
+    checkReaderStatus();
+    setInterval(checkReaderStatus, 4000);
+    window.addEventListener('popstate', checkReaderStatus);
+
+    // 8. Reader Article Extractor
+    const extractReaderArticle = (): ReaderArticle | null => {
+      try {
+        const title =
+          document.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim() ||
+          document.querySelector('meta[name="twitter:title"]')?.getAttribute('content')?.trim() ||
+          document.querySelector('h1')?.textContent?.trim() ||
+          document.title ||
+          'Статья';
+
+        const byline =
+          document.querySelector('meta[name="author"]')?.getAttribute('content')?.trim() ||
+          document.querySelector('meta[property="article:author"]')?.getAttribute('content')?.trim() ||
+          document.querySelector('[rel="author"], .byline, .author, .entry-author')?.textContent?.trim() ||
+          undefined;
+
+        const publishedTime =
+          document.querySelector('meta[property="article:published_time"]')?.getAttribute('content')?.trim() ||
+          document.querySelector('time')?.getAttribute('datetime')?.trim() ||
+          document.querySelector('time')?.textContent?.trim() ||
+          undefined;
+
+        const siteName =
+          document.querySelector('meta[property="og:site_name"]')?.getAttribute('content')?.trim() ||
+          window.location.hostname ||
+          undefined;
+
+        const excerpt =
+          document.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim() ||
+          document.querySelector('meta[name="description"]')?.getAttribute('content')?.trim() ||
+          undefined;
+
+        let rootEl: Element | null = document.querySelector('article');
+        if (!rootEl || (rootEl.textContent || '').trim().length < 200) {
+          rootEl = document.querySelector('main, [role="main"], .post-content, .article-body, .entry-content');
+        }
+        if (!rootEl) {
+          const candidates = Array.from(document.querySelectorAll('div, section'));
+          let maxScore = 0;
+          let bestCandidate: Element | null = null;
+          for (const el of candidates) {
+            const ps = el.querySelectorAll('p');
+            if (ps.length >= 2) {
+              let score = 0;
+              for (const p of Array.from(ps)) score += (p.textContent || '').trim().length;
+              if (score > maxScore) {
+                maxScore = score;
+                bestCandidate = el;
+              }
+            }
+          }
+          rootEl = bestCandidate || document.body;
+        }
+
+        if (!rootEl) return null;
+
+        const clone = rootEl.cloneNode(true) as HTMLElement;
+        const removeSelectors = [
+          'script', 'style', 'noscript', 'iframe', 'frame', 'object', 'embed',
+          'form', 'input', 'button', 'select', 'textarea',
+          'nav', 'header', 'footer', 'aside',
+          '.ad', '.ads', '.advertisement', '.banner', '.social-share',
+          '[aria-hidden="true"]', 'svg'
+        ];
+        for (const sel of removeSelectors) {
+          clone.querySelectorAll(sel).forEach((el) => el.remove());
+        }
+
+        const allEls = clone.querySelectorAll('*');
+        for (const el of Array.from(allEls)) {
+          for (const attr of Array.from(el.attributes)) {
+            if (attr.name.startsWith('on') || attr.name === 'style') {
+              el.removeAttribute(attr.name);
+            }
+          }
+          if (el instanceof HTMLImageElement) {
+            const dataSrc = el.getAttribute('data-src') || el.getAttribute('data-original');
+            if (dataSrc) el.src = dataSrc;
+            if (el.src) el.setAttribute('src', el.src);
+            el.removeAttribute('srcset');
+          }
+          if (el instanceof HTMLAnchorElement && el.href) {
+            el.setAttribute('href', el.href);
+          }
+        }
+
+        const cleanedHtml = clone.innerHTML.trim();
+        const textContent = clone.textContent?.trim() || '';
+        const words = textContent ? textContent.split(/\s+/).filter(Boolean).length : 0;
+        const readingTimeMinutes = Math.max(1, Math.round(words / 200));
+        const lang =
+          document.documentElement.lang?.trim() ||
+          document.querySelector('meta[http-equiv="content-language"]')?.getAttribute('content')?.trim() ||
+          'ru';
+
+        return {
+          title,
+          byline,
+          publishedTime,
+          siteName,
+          excerpt,
+          content: cleanedHtml,
+          textContent,
+          length: textContent.length,
+          readingTimeMinutes,
+          lang,
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    if (typeof ipcRenderer?.on === 'function') {
+      ipcRenderer.on('tab:extract-reader-article', (_event, replyChannel?: string) => {
+        const article = extractReaderArticle();
+        if (replyChannel) {
+          ipcRenderer.send(replyChannel, article);
+        } else {
+          ipcRenderer.send('page:reader-article-extracted', article);
+        }
+      });
+    }
+
+    (window as unknown as { __extractReaderArticle?: () => ReaderArticle | null }).__extractReaderArticle = extractReaderArticle;
   };
 
   if (document.readyState === 'loading') {

@@ -7,6 +7,7 @@ import {
   ArrowRight,
   AlertTriangle,
   Bookmark,
+  BookOpen,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -27,10 +28,12 @@ import {
   MoreHorizontal,
   Music2,
   Pause,
+  PictureInPicture2,
   Pin,
   Play,
   Plus,
   Printer,
+  QrCode,
   RefreshCw,
   RotateCcw,
   Search,
@@ -40,6 +43,7 @@ import {
   ShieldOff,
   Square,
   Star,
+  StickyNote,
   Trash2,
   Upload,
   User,
@@ -90,6 +94,9 @@ import SiteFavicon from "./SiteFavicon";
 import SiteErrorPage from "./SiteErrorPage";
 import PrivacyDashboard from "./PrivacyDashboard";
 import TaskManagerModal from "./TaskManagerModal";
+import { QrCodePopover } from "./QrCodePopover";
+import { ReaderView } from "./ReaderView";
+import { QuickNotesDrawer } from "./QuickNotesDrawer";
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
@@ -314,7 +321,8 @@ function App(): React.JSX.Element {
   const [panel, setPanel] = useState<Panel>("home");
   const [address, setAddress] = useState("");
   const [editingAddress, setEditingAddress] = useState(false);
-  const [popover, setPopover] = useState<"menu" | "protection" | "browsec" | "google-account" | "downloads" | null>(null);
+  const [popover, setPopover] = useState<"menu" | "protection" | "browsec" | "google-account" | "downloads" | "qrcode" | null>(null);
+  const [notesDrawerOpen, setNotesDrawerOpen] = useState(false);
   const [browsecCountries, setBrowsecCountries] = useState<BrowsecCountry[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   const [findOpen, setFindOpen] = useState(false);
@@ -742,7 +750,15 @@ function App(): React.JSX.Element {
         setFindOpen(true);
         setPanel("home");
         setPopover(null);
-      } else if ((modifier && key === "r") || key === "f5") {
+      } else if (modifier && event.altKey && key === "r") {
+        event.preventDefault();
+        if (currentTab && !currentTab.isInternal) {
+          void window.browserApi.toggleReaderMode(currentTab.id);
+        }
+      } else if (modifier && event.altKey && key === "n") {
+        event.preventDefault();
+        setNotesDrawerOpen((val) => !val);
+      } else if ((modifier && !event.altKey && key === "r") || key === "f5") {
         event.preventDefault();
         if (currentTab) run(window.browserApi.reload(currentTab.id));
       } else if (modifier && (key === "+" || key === "=")) {
@@ -1062,6 +1078,60 @@ function App(): React.JSX.Element {
                 <Music2 size={13} strokeWidth={2.4} />
                 <span>MP3</span>
               </button>
+            </div>
+          )}
+          {currentTab && !currentTab.isInternal && (
+            <div className="omnibox-page-actions">
+              {(currentTab.isReaderAvailable || currentTab.isReaderActive) && (
+                <button
+                  type="button"
+                  className={`omnibox-action-btn ${currentTab.isReaderActive ? "active" : ""}`}
+                  title={
+                    currentTab.isReaderActive
+                      ? "Выйти из режима чтения · Ctrl+Alt+R"
+                      : "Режим чтения · Ctrl+Alt+R"
+                  }
+                  aria-label="Режим чтения"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    void window.browserApi.toggleReaderMode(currentTab.id);
+                  }}
+                >
+                  <BookOpen size={15} />
+                </button>
+              )}
+              {(currentTab.hasVideoMedia || currentTab.isPictureInPicture) && (
+                <button
+                  type="button"
+                  className={`omnibox-action-btn ${currentTab.isPictureInPicture ? "active pip-active" : ""}`}
+                  title={
+                    currentTab.isPictureInPicture
+                      ? "Вернуть видео в страницу"
+                      : "Смотреть в отдельном окне (PiP)"
+                  }
+                  aria-label="Picture-in-Picture"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    void window.browserApi.togglePictureInPicture(currentTab.id);
+                  }}
+                >
+                  <PictureInPicture2 size={15} />
+                </button>
+              )}
+              {currentTab.url && !currentTab.url.startsWith("about:") && (
+                <button
+                  type="button"
+                  className={`omnibox-action-btn ${popover === "qrcode" ? "active" : ""}`}
+                  title="QR-код страницы · Перенести на смартфон"
+                  aria-label="QR-код страницы"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setPopover((val) => (val === "qrcode" ? null : "qrcode"));
+                  }}
+                >
+                  <QrCode size={15} />
+                </button>
+              )}
             </div>
           )}
           <button
@@ -1562,6 +1632,13 @@ function App(): React.JSX.Element {
             }}
           />
         )}
+        {popover === "qrcode" && currentTab && !currentTab.isInternal && (
+          <QrCodePopover
+            url={currentTab.url}
+            title={currentTab.title}
+            onClose={() => setPopover(null)}
+          />
+        )}
       </header>
       {findOpen && (
         <form
@@ -1667,6 +1744,13 @@ function App(): React.JSX.Element {
              active={panel === "privacy"}
              collapsed={sidebarCollapsed}
              onClick={() => openPanel("privacy")}
+           />
+           <NavItem
+             icon={<StickyNote size={18} />}
+             label="Быстрые заметки"
+             active={notesDrawerOpen}
+             collapsed={sidebarCollapsed}
+             onClick={() => setNotesDrawerOpen((val) => !val)}
            />
         </nav>
         <div className="sidebar-divider" />
@@ -1808,8 +1892,19 @@ function App(): React.JSX.Element {
           )}
         <div
           ref={viewportRef}
-          className={`page-viewport ${panel !== "home" ? "panel-visible" : ""}`}
+          className={`page-viewport ${panel !== "home" || Boolean(currentTab?.isReaderActive) ? "panel-visible" : ""}`}
         >
+          {panel === "home" && currentTab && !currentTab.isInternal && currentTab.isReaderActive && (
+            <ReaderView
+              tabId={currentTab.id}
+              url={currentTab.url}
+              title={currentTab.title}
+              onClose={() => {
+                void window.browserApi.toggleReaderMode(currentTab.id);
+              }}
+              initialSettings={snapshot.readerSettings}
+            />
+          )}
           {panel === "home" && currentTab?.isInternal && (
             <NewTabPage
               snapshot={snapshot}
@@ -1916,6 +2011,15 @@ function App(): React.JSX.Element {
         <TaskManagerModal
           onDismiss={() => setTaskManagerOpen(false)}
           onError={showError}
+        />
+      )}
+      {notesDrawerOpen && (
+        <QuickNotesDrawer
+          currentTab={currentTab}
+          onClose={() => setNotesDrawerOpen(false)}
+          onOpenUrl={(url) => {
+            run(window.browserApi.createTab({ url, isPrivate }));
+          }}
         />
       )}
       {popover && (
@@ -2136,7 +2240,15 @@ function TabStrip({
                     void window.browserApi.tabAction(tab.id, "mute").catch(console.error);
                   }}
                 >
-                  {tab.isMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                  {tab.isMuted ? (
+                    <VolumeX size={13} />
+                  ) : (
+                    <div className="tab-equalizer" aria-hidden="true" title="Воспроизводится звук">
+                      <span className="tab-equalizer-bar" />
+                      <span className="tab-equalizer-bar" />
+                      <span className="tab-equalizer-bar" />
+                    </div>
+                  )}
                 </button>
               )}
               {tab.lifecycle === "hibernated" && (

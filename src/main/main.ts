@@ -187,6 +187,15 @@ function registerIpc(): void {
   ipcMain.on('page:media-detected', (event, data: { hasVideo?: boolean; hasAudio?: boolean }) => {
     if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabHasMedia(event.sender.id, Boolean(data?.hasVideo || data?.hasAudio));
   });
+  ipcMain.on('page:video-detected', (event, data: { hasVideo?: boolean }) => {
+    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabVideoDetected(event.sender.id, Boolean(data?.hasVideo));
+  });
+  ipcMain.on('page:pip-changed', (event, data: { isPip?: boolean }) => {
+    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabPipChanged(event.sender.id, Boolean(data?.isPip));
+  });
+  ipcMain.on('page:reader-status', (event, data: { available?: boolean }) => {
+    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabReaderStatus(event.sender.id, Boolean(data?.available));
+  });
   ipcMain.on('page:audio-stream-captured', (event, data: { url: string; title?: string; artist?: string; filename?: string }) => {
     if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id) && data?.url && typeof data.url === 'string') {
       controller.registerCapturedAudio(
@@ -207,6 +216,15 @@ function registerIpc(): void {
       );
     }
   });
+  ipcMain.handle('browser:toggle-reader-mode', (event, tabId: string) => requireShell(event).toggleReaderMode(tabId));
+  ipcMain.handle('browser:get-reader-article', (event, tabId: string) => requireShell(event).getReaderArticle(tabId));
+  ipcMain.handle('browser:update-reader-settings', (event, patch: Partial<import('../shared/types').ReaderSettings>) => requireShell(event).updateReaderSettings(patch));
+  ipcMain.handle('browser:toggle-pip', (event, tabId: string) => requireShell(event).togglePictureInPicture(tabId));
+  ipcMain.handle('browser:get-notes', (event, query?: string) => requireShell(event).getNotes(query));
+  ipcMain.handle('browser:save-note', (event, input: import('../shared/types').SaveNoteInput) => requireShell(event).saveNote(input));
+  ipcMain.handle('browser:delete-note', (event, id: string) => requireShell(event).deleteNote(id));
+  ipcMain.handle('browser:toggle-pin-note', (event, id: string) => requireShell(event).togglePinNote(id));
+  ipcMain.handle('browser:create-note-from-tab', (event, tabId: string, textSnippet?: string) => requireShell(event).createNoteFromTab(tabId, textSnippet));
   ipcMain.handle('window:minimize', (event) => requireShell(event).minimizeWindow());
   ipcMain.handle('window:toggle-maximize', (event) => requireShell(event).toggleMaximizeWindow());
   ipcMain.handle('window:close', (event) => requireShell(event).closeWindow());

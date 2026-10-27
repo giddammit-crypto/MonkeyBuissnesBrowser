@@ -19,6 +19,10 @@ import type {
   PrivacyDashboardSnapshot,
   VpnHealthStatus,
   TaskManagerSnapshot,
+  ReaderSettings,
+  ReaderArticle,
+  NoteEntry,
+  SaveNoteInput,
 } from './types';
 
 export interface ChromeBounds {
@@ -112,6 +116,15 @@ export interface BrowserApi {
   minimizeWindow(): Promise<void>;
   toggleMaximizeWindow(): Promise<void>;
   closeWindow(): Promise<void>;
+  toggleReaderMode(tabId: string): Promise<boolean>;
+  getReaderArticle(tabId: string): Promise<ReaderArticle | null>;
+  updateReaderSettings(patch: Partial<ReaderSettings>): Promise<ReaderSettings>;
+  togglePictureInPicture(tabId: string): Promise<{ success: boolean; isPip: boolean }>;
+  getNotes(query?: string): Promise<NoteEntry[]>;
+  saveNote(input: SaveNoteInput): Promise<NoteEntry>;
+  deleteNote(id: string): Promise<boolean>;
+  togglePinNote(id: string): Promise<NoteEntry | null>;
+  createNoteFromTab(tabId: string, textSnippet?: string): Promise<NoteEntry>;
   onSnapshotChanged(callback: (snapshot: BrowserSnapshot) => void): () => void;
   onTabEvent(callback: (event: { type: string; tab?: TabSnapshot; message?: string }) => void): () => void;
   onBrowsecSnapshot(callback: (snapshot: BrowsecState) => void): () => void;

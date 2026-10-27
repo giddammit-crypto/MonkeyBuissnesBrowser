@@ -54,8 +54,12 @@ import type {
   TaskManagerProcess,
   TaskManagerProcessType,
   TaskManagerSnapshot,
+  ReaderArticle,
+  ReaderSettings,
+  NoteEntry,
+  SaveNoteInput,
 } from '../../shared/types';
-import { BrowserStores, buildStoredSession, defaultBrowsecCountries } from '../persistence/BrowserStores';
+import { BrowserStores, buildStoredSession, defaultBrowsecCountries, defaultReaderSettings } from '../persistence/BrowserStores';
 import { PasswordStore } from '../persistence/PasswordStore';
 import { fillSavedCredential } from '../passwords/PasswordAutofill';
 import { BrowserDataImporter, type ImportedCookie } from '../import/BrowserDataImporter';
@@ -276,6 +280,8 @@ export class BrowserController {
       downloads: this.downloads,
       workspaces: storedWorkspaces.map((workspace) => ({ ...workspace, tabIds: tabsByWorkspace.get(workspace.id) ?? [] })),
       settings: this.stores.settings.get(),
+      readerSettings: this.stores.settings.get().readerSettings || defaultReaderSettings,
+      notes: this.stores.notes.get(),
       notificationPermissions: this.stores.notificationPermissions.get(),
       vpn: this.vpn.getSnapshot(),
       browsec: this.browsec.getSnapshot(),
@@ -2604,13 +2610,13 @@ export class BrowserController {
     const activeTab = this.tabs.get(this.activeTabId);
     for (const tab of this.tabs.values()) {
       if (!tab.view || tab.view.webContents.isDestroyed()) continue;
-      if (tab === activeTab && !tab.isInternal && tab.lifecycle !== 'crashed') {
+      if (tab === activeTab && !tab.isInternal && tab.lifecycle !== 'crashed' && !tab.isReaderActive) {
         (tab.view as any).setVisible?.(true);
         if (!this.window.contentView.children.includes(tab.view)) {
           this.window.contentView.addChildView(tab.view);
         }
         this.applyBounds(tab);
-      } else if (tab.isInternal || tab.lifecycle === 'crashed') {
+      } else if (tab.isInternal || tab.lifecycle === 'crashed' || tab.isReaderActive) {
         (tab.view as any).setVisible?.(false);
         try { this.window.contentView.removeChildView(tab.view); } catch {}
         tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
@@ -2622,7 +2628,7 @@ export class BrowserController {
   }
 
   private applyBounds(tab: TabRecord): void {
-    if (!tab.view || tab.isInternal || tab.lifecycle === 'crashed') {
+    if (!tab.view || tab.isInternal || tab.lifecycle === 'crashed' || tab.isReaderActive) {
       if (tab.view) {
         try { this.window?.contentView.removeChildView(tab.view); } catch {}
         tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
@@ -3011,6 +3017,10 @@ export class BrowserController {
     return {
       ...snapshot,
       canDownloadMedia,
+      isReaderAvailable: Boolean(tab.isReaderAvailable),
+      isReaderActive: Boolean(tab.isReaderActive),
+      hasVideoMedia: Boolean(tab.hasVideoMedia),
+      isPictureInPicture: Boolean(tab.isPictureInPicture),
     };
   }
 
@@ -3020,6 +3030,195 @@ export class BrowserController {
       tab.hasDownloadableMedia = hasMedia;
       this.emitSnapshot();
     }
+  }
+
+  markTabVideoDetected(webContentsId: number, hasVideo: boolean): void {
+    const tab = [...this.tabs.values()].find((entry) => entry.webContentsId === webContentsId);
+    if (tab && tab.hasVideoMedia !== hasVideo) {
+      tab.hasVideoMedia = hasVideo;
+      this.emitSnapshot();
+    }
+  }
+
+  markTabPipChanged(webContentsId: number, isPip: boolean): void {
+    const tab = [...this.tabs.values()].find((entry) => entry.webContentsId === webContentsId);
+    if (tab && tab.isPictureInPicture !== isPip) {
+      tab.isPictureInPicture = isPip;
+      this.emitSnapshot();
+    }
+  }
+
+  markTabReaderStatus(webContentsId: number, available: boolean): void {
+    const tab = [...this.tabs.values()].find((entry) => entry.webContentsId === webContentsId);
+    if (tab && tab.isReaderAvailable !== available) {
+      tab.isReaderAvailable = available;
+      this.emitSnapshot();
+    }
+  }
+
+  async toggleReaderMode(tabId: string): Promise<boolean> {
+    const tab = this.tabs.get(tabId);
+    if (!tab) return false;
+    tab.isReaderActive = !tab.isReaderActive;
+    this.refreshViewBounds();
+    this.emitSnapshot();
+    return Boolean(tab.isReaderActive);
+  }
+
+  async getReaderArticle(tabId: string): Promise<ReaderArticle | null> {
+    const tab = this.tabs.get(tabId);
+    if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return null;
+    try {
+      const article = await tab.view.webContents.executeJavaScript(
+        `typeof window.__extractReaderArticle === 'function' ? window.__extractReaderArticle() : null`,
+        true
+      );
+      return article as ReaderArticle | null;
+    } catch {
+      return null;
+    }
+  }
+
+  async updateReaderSettings(patch: Partial<ReaderSettings>): Promise<ReaderSettings> {
+    const current = this.stores.settings.get();
+    const currentReader = current.readerSettings || defaultReaderSettings;
+    const nextReader: ReaderSettings = {
+      theme: patch.theme && ['light', 'sepia', 'dark', 'graphite'].includes(patch.theme) ? patch.theme : currentReader.theme,
+      fontFamily: patch.fontFamily && ['sans', 'serif', 'mono'].includes(patch.fontFamily) ? patch.fontFamily : currentReader.fontFamily,
+      fontSize: typeof patch.fontSize === 'number' && Number.isFinite(patch.fontSize) ? Math.max(12, Math.min(36, Math.round(patch.fontSize))) : currentReader.fontSize,
+      lineHeight: typeof patch.lineHeight === 'number' && Number.isFinite(patch.lineHeight) ? Math.max(1.0, Math.min(2.5, Number(patch.lineHeight.toFixed(2)))) : currentReader.lineHeight,
+      maxWidth: typeof patch.maxWidth === 'number' && Number.isFinite(patch.maxWidth) ? Math.max(400, Math.min(1200, Math.round(patch.maxWidth))) : currentReader.maxWidth,
+    };
+    this.stores.settings.set({
+      ...current,
+      readerSettings: nextReader,
+    });
+    this.emitSnapshot();
+    return nextReader;
+  }
+
+  async togglePictureInPicture(tabId: string): Promise<{ success: boolean; isPip: boolean }> {
+    const tab = this.tabs.get(tabId);
+    if (!tab || !tab.view || tab.view.webContents.isDestroyed()) return { success: false, isPip: false };
+    try {
+      const res = await tab.view.webContents.executeJavaScript(
+        `typeof window.__togglePictureInPicture === 'function' ? window.__togglePictureInPicture() : { success: false, isPip: false }`,
+        true
+      );
+      const isPip = Boolean(res?.isPip);
+      tab.isPictureInPicture = isPip;
+      this.emitSnapshot();
+      return { success: Boolean(res?.success), isPip };
+    } catch {
+      return { success: false, isPip: Boolean(tab.isPictureInPicture) };
+    }
+  }
+
+  async getNotes(query?: string): Promise<NoteEntry[]> {
+    let items = this.stores.notes.get();
+    if (query && typeof query === 'string' && query.trim()) {
+      const q = query.trim().toLowerCase();
+      items = items.filter((n) =>
+        n.title.toLowerCase().includes(q) ||
+        n.content.toLowerCase().includes(q) ||
+        (n.tabTitle && n.tabTitle.toLowerCase().includes(q)) ||
+        (n.url && n.url.toLowerCase().includes(q))
+      );
+    }
+    return items.slice().sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      return b.updatedAt - a.updatedAt;
+    });
+  }
+
+  async saveNote(input: SaveNoteInput): Promise<NoteEntry> {
+    if (!input || typeof input.content !== 'string') {
+      throw new Error('Укажите текст заметки.');
+    }
+    const items = this.stores.notes.get();
+    const existingIndex = input.id ? items.findIndex((n) => n.id === input.id) : -1;
+    const now = Date.now();
+    let note: NoteEntry;
+
+    if (existingIndex >= 0) {
+      const existing = items[existingIndex];
+      note = {
+        ...existing,
+        title: input.title !== undefined ? input.title.trim().slice(0, 500) : existing.title,
+        content: input.content.slice(0, 50000),
+        color: input.color || existing.color || 'default',
+        url: input.url !== undefined ? input.url : existing.url,
+        tabTitle: input.tabTitle !== undefined ? input.tabTitle : existing.tabTitle,
+        isPinned: input.isPinned !== undefined ? Boolean(input.isPinned) : existing.isPinned,
+        updatedAt: now,
+      };
+      const updated = [...items];
+      updated[existingIndex] = note;
+      this.stores.notes.set(updated);
+    } else {
+      note = {
+        id: input.id || crypto.randomUUID(),
+        title: (input.title || '').trim().slice(0, 500),
+        content: input.content.slice(0, 50000),
+        color: input.color || 'default',
+        url: input.url,
+        tabTitle: input.tabTitle,
+        isPinned: Boolean(input.isPinned),
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.stores.notes.set([note, ...items].slice(0, 500));
+    }
+    this.emitSnapshot();
+    return note;
+  }
+
+  async deleteNote(id: string): Promise<boolean> {
+    const items = this.stores.notes.get();
+    const next = items.filter((n) => n.id !== id);
+    if (next.length === items.length) return false;
+    this.stores.notes.set(next);
+    this.emitSnapshot();
+    return true;
+  }
+
+  async togglePinNote(id: string): Promise<NoteEntry | null> {
+    const items = this.stores.notes.get();
+    const index = items.findIndex((n) => n.id === id);
+    if (index < 0) return null;
+    const target = items[index];
+    const updated: NoteEntry = {
+      ...target,
+      isPinned: !target.isPinned,
+      updatedAt: Date.now(),
+    };
+    const next = [...items];
+    next[index] = updated;
+    this.stores.notes.set(next);
+    this.emitSnapshot();
+    return updated;
+  }
+
+  async createNoteFromTab(tabId: string, textSnippet?: string): Promise<NoteEntry> {
+    const tab = this.tabs.get(tabId);
+    let snippet = textSnippet;
+    if (snippet === undefined && tab?.view && !tab.view.webContents.isDestroyed()) {
+      try {
+        snippet = await tab.view.webContents.executeJavaScript('window.getSelection() ? window.getSelection().toString() : ""', true);
+      } catch {
+        snippet = '';
+      }
+    }
+    const note = await this.saveNote({
+      title: tab?.title || 'Заметка со страницы',
+      content: (snippet || '').trim(),
+      url: tab?.url,
+      tabTitle: tab?.title,
+      color: 'default',
+      isPinned: false,
+    });
+    return note;
   }
 
   registerCapturedAudio(webContentsId: number, url: string, _title?: string, _artist?: string, filename?: string): void {

@@ -83,6 +83,15 @@ const api: BrowserApi = {
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
+  toggleReaderMode: (tabId) => ipcRenderer.invoke('browser:toggle-reader-mode', tabId),
+  getReaderArticle: (tabId) => ipcRenderer.invoke('browser:get-reader-article', tabId),
+  updateReaderSettings: (patch) => ipcRenderer.invoke('browser:update-reader-settings', patch),
+  togglePictureInPicture: (tabId) => ipcRenderer.invoke('browser:toggle-pip', tabId),
+  getNotes: (query) => ipcRenderer.invoke('browser:get-notes', query),
+  saveNote: (input) => ipcRenderer.invoke('browser:save-note', input),
+  deleteNote: (id) => ipcRenderer.invoke('browser:delete-note', id),
+  togglePinNote: (id) => ipcRenderer.invoke('browser:toggle-pin-note', id),
+  createNoteFromTab: (tabId, textSnippet) => ipcRenderer.invoke('browser:create-note-from-tab', tabId, textSnippet),
   onSnapshotChanged: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof callback>[0]) => callback(snapshot);
     ipcRenderer.on('browser:snapshot', listener);
