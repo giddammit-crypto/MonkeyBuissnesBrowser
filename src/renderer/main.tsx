@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
@@ -2352,7 +2353,7 @@ function NewTabPage({
                       void handleDeleteBookmark(bookmark);
                     }}
                   >
-                    <X size={11} strokeWidth={2.5} />
+                    <X size={10} strokeWidth={2.8} />
                   </button>
                 </div>
                 <button
@@ -2575,12 +2576,13 @@ function NewTabPage({
           </div>
         )}
       </div>
-      {addModalOpen && (
-        <div
-          className="newtab-modal-overlay"
-          role="presentation"
-          onClick={() => !isSubmitting && setAddModalOpen(false)}
-        >
+      {addModalOpen &&
+        createPortal(
+          <div
+            className="newtab-modal-overlay"
+            role="presentation"
+            onClick={() => !isSubmitting && setAddModalOpen(false)}
+          >
           <div
             className="newtab-modal"
             role="dialog"
@@ -2736,7 +2738,8 @@ function NewTabPage({
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       <footer className="newtab-footer">
         <span>

@@ -31,11 +31,11 @@
   background: linear-gradient(90deg, rgb(247 248 250 / 96%) 0%, rgb(247 248 250 / 93%) 31%, rgb(247 248 250 / 69%) 53%, rgb(247 248 250 / 7%) 76%, rgb(247 248 250 / 2%) 100%);
   pointer-events: none !important;
 }
-.new-tab-page:not([data-new-tab-background="plain"]) > :not(.newtab-wallpaper),
-.new-tab-page[data-new-tab-background="portrait"] > :not(.newtab-wallpaper),
-.new-tab-page[data-new-tab-background="cyberpink"] > :not(.newtab-wallpaper),
-.new-tab-page[data-new-tab-background="cyberpink-fuji"] > :not(.newtab-wallpaper),
-.new-tab-page[data-new-tab-background="custom"] > :not(.newtab-wallpaper) {
+.new-tab-page:not([data-new-tab-background="plain"]) > :not(.newtab-wallpaper):not(.newtab-modal-overlay),
+.new-tab-page[data-new-tab-background="portrait"] > :not(.newtab-wallpaper):not(.newtab-modal-overlay),
+.new-tab-page[data-new-tab-background="cyberpink"] > :not(.newtab-wallpaper):not(.newtab-modal-overlay),
+.new-tab-page[data-new-tab-background="cyberpink-fuji"] > :not(.newtab-wallpaper):not(.newtab-modal-overlay),
+.new-tab-page[data-new-tab-background="custom"] > :not(.newtab-wallpaper):not(.newtab-modal-overlay) {
   position: relative;
   z-index: 10;
   pointer-events: auto;
@@ -714,16 +714,32 @@
 }
 
 .new-tab-page:not([data-new-tab-background="plain"]) .quick-link-delete-btn {
-  background: #ef4444;
-  border-color: rgba(255, 255, 255, 0.9);
-  color: #ffffff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  background: #ef4444 !important;
+  border: 1px solid rgba(255, 255, 255, 0.95) !important;
+  color: #ffffff !important;
+  border-radius: 4px !important;
+  width: 17px !important;
+  height: 17px !important;
+  min-width: 17px !important;
+  max-width: 17px !important;
+  min-height: 17px !important;
+  max-height: 17px !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45) !important;
 }
 
 .new-tab-page:not([data-new-tab-background="plain"]) .quick-link-delete-btn:hover {
-  background: #dc2626;
-  border-color: #ffffff;
-  box-shadow: 0 3px 12px rgba(220, 38, 38, 0.6);
+  background: #dc2626 !important;
+  border-color: #ffffff !important;
+  box-shadow: 0 3px 10px rgba(220, 38, 38, 0.6) !important;
+}
+
+.newtab-modal-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 100000 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
 }
 
 .new-tab-page:not([data-new-tab-background="plain"]) .saved-card-delete-btn {
