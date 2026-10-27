@@ -576,6 +576,65 @@ select {
 .bookmark-button.active {
   color: var(--accent);
 }
+.omnibox-media-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+  flex-shrink: 0;
+  animation: fadeInOmnibox 0.2s ease-out;
+}
+
+@keyframes fadeInOmnibox {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.omnibox-media-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 25px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  line-height: 1;
+}
+
+.omnibox-media-btn:hover {
+  transform: translateY(-1px);
+}
+
+.omnibox-media-btn:active {
+  transform: translateY(0);
+}
+
+.omnibox-media-btn.mp4 {
+  background: var(--signal, #3b82f6);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.25);
+}
+
+.omnibox-media-btn.mp4:hover {
+  background: #2563eb;
+  box-shadow: 0 3px 10px rgba(37, 99, 235, 0.4);
+}
+
+.omnibox-media-btn.mp3 {
+  background: var(--canvas);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.omnibox-media-btn.mp3:hover {
+  background: var(--surface-subtle);
+  border-color: var(--text-muted);
+}
 .omnibox-suggestions-dropdown {
   position: absolute;
   top: calc(100% + 6px);
@@ -6461,13 +6520,22 @@ select:focus-visible {
   color: #10b981;
 }
 
+.downloads-media-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .downloads-media-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: var(--accent);
   color: #ffffff;
-  border: none;
+  border: 1px solid transparent;
   border-radius: 8px;
-  padding: 5px 12px;
-  font-size: 12px;
+  padding: 5px 10px;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
@@ -6475,8 +6543,20 @@ select:focus-visible {
 }
 
 .downloads-media-action-btn:hover {
-  opacity: 0.9;
+  opacity: 0.95;
   transform: translateY(-1px);
+}
+
+.downloads-media-action-btn.mp4 {
+  background: var(--signal, #3b82f6);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.3);
+}
+
+.downloads-media-action-btn.mp3 {
+  background: var(--canvas, #1e293b);
+  color: var(--text-primary, #f8fafc);
+  border-color: var(--border, rgba(255, 255, 255, 0.15));
 }
 
 /* Scrollable downloads list */

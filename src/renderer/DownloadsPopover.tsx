@@ -119,19 +119,36 @@ export function DownloadsPopover({
         <div className="downloads-media-banner">
           <div className="downloads-media-info">
             <Film size={15} className="downloads-media-icon" />
-            <span>Медиа обнаружено на странице</span>
+            <span>Медиа на странице</span>
           </div>
-          <button
-            type="button"
-            className="downloads-media-action-btn"
-            onClick={() => {
-              if (activeTab?.url) {
-                void window.browserApi.downloadMediaUrl(activeTab.url, activeTab.title);
-              }
-            }}
-          >
-            Скачать
-          </button>
+          <div className="downloads-media-buttons">
+            <button
+              type="button"
+              className="downloads-media-action-btn mp4"
+              title="Скачать видео (MP4)"
+              onClick={() => {
+                if (activeTab?.url) {
+                  void window.browserApi.downloadMediaUrl(activeTab.url, activeTab.title, false);
+                }
+              }}
+            >
+              <Download size={13} />
+              <span>MP4</span>
+            </button>
+            <button
+              type="button"
+              className="downloads-media-action-btn mp3"
+              title="Скачать аудио (MP3)"
+              onClick={() => {
+                if (activeTab?.url) {
+                  void window.browserApi.downloadMediaUrl(activeTab.url, activeTab.title, true);
+                }
+              }}
+            >
+              <Music2 size={13} />
+              <span>MP3</span>
+            </button>
+          </div>
         </div>
       )}
 

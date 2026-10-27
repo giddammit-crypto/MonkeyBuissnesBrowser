@@ -887,6 +887,38 @@ function App(): React.JSX.Element {
               <span>{Math.round((currentTab?.zoomFactor ?? 1) * 100)}%</span>
             </button>
           )}
+          {canDownloadVideo && currentTab?.url && !currentTab.isInternal && (
+            <div className="omnibox-media-actions">
+              <button
+                type="button"
+                className="omnibox-media-btn mp4"
+                title="Скачать видео (MP4) в высоком качестве"
+                aria-label="Скачать видео (MP4)"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  void window.browserApi.downloadMediaUrl(currentTab.url, currentTab.title, false);
+                  setToast({ tone: "info", message: "Началось скачивание видео (MP4)..." });
+                }}
+              >
+                <Download size={13} strokeWidth={2.4} />
+                <span>MP4</span>
+              </button>
+              <button
+                type="button"
+                className="omnibox-media-btn mp3"
+                title="Скачать аудиодорожку (MP3)"
+                aria-label="Скачать аудио (MP3)"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  void window.browserApi.downloadMediaUrl(currentTab.url, currentTab.title, true);
+                  setToast({ tone: "info", message: "Началось скачивание аудио (MP3)..." });
+                }}
+              >
+                <Music2 size={13} strokeWidth={2.4} />
+                <span>MP3</span>
+              </button>
+            </div>
+          )}
           <button
             type="button"
             className={`icon-button bookmark-button ${bookmarked ? "active" : ""}`}

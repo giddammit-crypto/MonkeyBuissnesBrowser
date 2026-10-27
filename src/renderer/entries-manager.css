@@ -63,33 +63,51 @@
   flex-shrink: 0;
 }
 .bookmark-editor {
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 20px;
-  margin-bottom: 20px;
+  border: 1px solid var(--border-light, rgba(255, 255, 255, 0.12));
+  border-radius: 16px;
+  padding: 22px;
+  margin-bottom: 22px;
   background: var(--surface);
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.16));
+  animation: fadeIn 0.18s ease-out;
 }
 .bookmark-editor h3 {
   margin: 0 0 16px;
   font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .bookmark-editor label {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   font-size: 13px;
-  margin-bottom: 14px;
+  font-weight: 500;
+  color: var(--text-secondary, #94a3b8);
+  margin-bottom: 16px;
 }
 .bookmark-editor input {
-  padding: 12px;
+  padding: 11px 14px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   min-width: 0;
   background: var(--canvas);
   color: var(--text);
   font: inherit;
+  font-size: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.bookmark-editor input:focus {
+  border-color: var(--accent, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  outline: none;
 }
 .manager-form-actions {
   justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
 }
 .manager-message {
   display: flex;
