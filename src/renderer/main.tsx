@@ -2536,7 +2536,7 @@ function NewTabPage({
   const modifier = navigator.platform.toLowerCase().includes("mac")
     ? "⌘"
     : "Ctrl";
-  const recent = privateMode ? [] : snapshot.history.slice(0, 3);
+  const recent = privateMode ? [] : snapshot.history.slice(0, 4);
   const background = normalizeNewTabBackground(snapshot.settings.newTabBackground);
 
   const activeBookmarks = useMemo(() => {
@@ -2659,100 +2659,6 @@ function NewTabPage({
             <ArrowRight size={20} />
           </button>
         </form>
-        {!privateMode && (
-          <div className="quick-links" aria-label="Быстрый доступ">
-            {activeBookmarks.map((bookmark) => (
-              <div className="quick-link-tile" key={bookmark.id}>
-                <div className="quick-link-icon-wrap">
-                  <button
-                    type="button"
-                    className="quick-link-icon-btn"
-                    title={`${bookmark.title}\n${bookmark.url}`}
-                    onClick={() => onOpen(bookmark.url)}
-                  >
-                    <span className="quick-link-symbol">
-                      <SiteFavicon
-                        url={bookmark.url}
-                        favicon={(bookmark as any).favicon}
-                        size={24}
-                      />
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="quick-link-delete-btn"
-                    title={`Удалить «${bookmark.title}»`}
-                    aria-label={`Удалить «${bookmark.title}»`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleDeleteBookmark(bookmark);
-                    }}
-                  >
-                    <X size={10} strokeWidth={2.8} />
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  className="quick-link-label-btn"
-                  title={`${bookmark.title}\n${bookmark.url}`}
-                  onClick={() => onOpen(bookmark.url)}
-                >
-                  <span className="quick-link-label">{bookmark.title}</span>
-                </button>
-              </div>
-            ))}
-            <div className="quick-link-tile quick-link-add-tile">
-              <div className="quick-link-icon-wrap">
-                <button
-                  type="button"
-                  className="quick-link-icon-btn quick-link-add-btn"
-                  title="Добавить сайт в закладки"
-                  onClick={() => {
-                    setAddError("");
-                    setAddModalOpen(true);
-                  }}
-                >
-                  <span className="quick-link-symbol quick-link-add-symbol">
-                    <Plus size={20} />
-                  </span>
-                </button>
-              </div>
-              <button
-                type="button"
-                className="quick-link-label-btn"
-                title="Добавить сайт в закладки"
-                onClick={() => {
-                  setAddError("");
-                  setAddModalOpen(true);
-                }}
-              >
-                <span className="quick-link-label">Добавить</span>
-              </button>
-            </div>
-            <div className="quick-link-tile quick-link-all-tile">
-              <div className="quick-link-icon-wrap">
-                <button
-                  type="button"
-                  className="quick-link-icon-btn"
-                  title="Все закладки"
-                  onClick={onBookmarks}
-                >
-                  <span className="quick-link-symbol">
-                    <Bookmark size={20} />
-                  </span>
-                </button>
-              </div>
-              <button
-                type="button"
-                className="quick-link-label-btn"
-                title="Все закладки"
-                onClick={onBookmarks}
-              >
-                <span className="quick-link-label">Все</span>
-              </button>
-            </div>
-          </div>
-        )}
         {privateMode ? (
           <section className="private-card" aria-label="О приватном режиме">
             <div className="private-card-heading">
@@ -2784,11 +2690,11 @@ function NewTabPage({
           </section>
         ) : (
           <div className="newtab-workspace">
-            <section className="newtab-saved">
+            <section className="newtab-bookmarks-section" aria-label="Закладки">
               <div className="section-heading">
                 <div>
                   <Bookmark size={16} />
-                  <h2>Сохранённое</h2>
+                  <h2>Закладки</h2>
                   <span className="section-count">
                     {snapshot.bookmarks.length}
                   </span>
@@ -2809,27 +2715,27 @@ function NewTabPage({
                   </button>
                 </div>
               </div>
-              {snapshot.bookmarks.length > 0 ? (
-                <div className="saved-grid">
-                  {snapshot.bookmarks.slice(0, 6).map((bookmark) => (
-                    <div key={bookmark.id} className="saved-card-wrap">
+              <div className="quick-links" aria-label="Быстрый доступ">
+                {activeBookmarks.map((bookmark) => (
+                  <div className="quick-link-tile" key={bookmark.id}>
+                    <div className="quick-link-icon-wrap">
                       <button
-                        className="saved-card"
+                        type="button"
+                        className="quick-link-icon-btn"
                         title={`${bookmark.title}\n${bookmark.url}`}
                         onClick={() => onOpen(bookmark.url)}
                       >
-                        <span className="saved-site-icon">
-                          <SiteFavicon url={bookmark.url} favicon={bookmark.favicon} size={18} />
+                        <span className="quick-link-symbol">
+                          <SiteFavicon
+                            url={bookmark.url}
+                            favicon={(bookmark as any).favicon}
+                            size={24}
+                          />
                         </span>
-                        <span className="saved-card-text">
-                          <strong>{bookmark.title}</strong>
-                          <small>{hostname(bookmark.url)}</small>
-                        </span>
-                        <ArrowRight size={15} />
                       </button>
                       <button
                         type="button"
-                        className="saved-card-delete-btn"
+                        className="quick-link-delete-btn"
                         title={`Удалить «${bookmark.title}»`}
                         aria-label={`Удалить «${bookmark.title}»`}
                         onClick={(e) => {
@@ -2837,33 +2743,70 @@ function NewTabPage({
                           void handleDeleteBookmark(bookmark);
                         }}
                       >
-                        <X size={12} strokeWidth={2.6} />
+                        <X size={10} strokeWidth={2.8} />
                       </button>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="newtab-empty-saved">
-                  <Star size={22} />
-                  <strong>Важное всегда рядом</strong>
-                  <p>Сохраняйте страницы звездой в адресной строке или добавьте прямо сейчас.</p>
-                  <div className="empty-saved-actions">
                     <button
                       type="button"
-                      className="plain-button"
+                      className="quick-link-label-btn"
+                      title={`${bookmark.title}\n${bookmark.url}`}
+                      onClick={() => onOpen(bookmark.url)}
+                    >
+                      <span className="quick-link-label">{bookmark.title}</span>
+                    </button>
+                  </div>
+                ))}
+                <div className="quick-link-tile quick-link-add-tile">
+                  <div className="quick-link-icon-wrap">
+                    <button
+                      type="button"
+                      className="quick-link-icon-btn quick-link-add-btn"
+                      title="Добавить сайт в закладки"
                       onClick={() => {
                         setAddError("");
                         setAddModalOpen(true);
                       }}
                     >
-                      <Plus size={14} /> Добавить закладку
-                    </button>
-                    <button className="text-button" onClick={onBookmarks}>
-                      Открыть закладки <ChevronRight size={15} />
+                      <span className="quick-link-symbol quick-link-add-symbol">
+                        <Plus size={20} />
+                      </span>
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    className="quick-link-label-btn"
+                    title="Добавить сайт в закладки"
+                    onClick={() => {
+                      setAddError("");
+                      setAddModalOpen(true);
+                    }}
+                  >
+                    <span className="quick-link-label">Добавить</span>
+                  </button>
                 </div>
-              )}
+                <div className="quick-link-tile quick-link-all-tile">
+                  <div className="quick-link-icon-wrap">
+                    <button
+                      type="button"
+                      className="quick-link-icon-btn"
+                      title="Все закладки"
+                      onClick={onBookmarks}
+                    >
+                      <span className="quick-link-symbol">
+                        <Bookmark size={20} />
+                      </span>
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="quick-link-label-btn"
+                    title="Все закладки"
+                    onClick={onBookmarks}
+                  >
+                    <span className="quick-link-label">Все</span>
+                  </button>
+                </div>
+              </div>
             </section>
             <section className="newtab-recent">
               <div className="section-heading">

@@ -4169,15 +4169,38 @@ select:focus-visible {
 }
 .newtab-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 1fr);
   gap: 28px;
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
-  margin-top: 28px;
-  padding-top: 24px;
+  margin-top: 24px;
+  padding-top: 20px;
   border-top: 1px solid var(--border);
   overflow: hidden;
+}
+.newtab-bookmarks-section {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.newtab-bookmarks-section .quick-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: clamp(10px, 1.4vw, 16px);
+  margin-top: 14px;
+  padding: 0;
+  width: 100%;
+  max-width: 100%;
+  margin-left: 0;
+  margin-right: 0;
 }
 .newtab-saved {
   margin: 0;
@@ -4858,6 +4881,9 @@ select:focus-visible {
   }
   .quick-links {
     gap: 8px;
+  }
+  .newtab-bookmarks-section .quick-links {
+    justify-content: center;
   }
   .privacy-facts {
     grid-template-columns: 1fr;
