@@ -1,3 +1,4 @@
+import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '../shared/voodooContext';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Send,
@@ -159,7 +160,7 @@ export default function VoodooChatBubble({
   const [isOpenState, setIsOpenState] = useState(false);
   const isOpen = standalone ? isOpenState : (propsIsOpen ?? isOpenState);
 
-  const historyBudgetRef = useRef(600000);
+  const historyBudgetRef = useRef(DEFAULT_CONTEXT_WINDOW_TOKENS);
   const [messages, setStoredMessages] = useState<VoodooChatMessage[]>(() => {
     try {
       const restored = restoreVoodooHistory(sessionStorage.getItem('voodoo_chat_history'));
@@ -263,12 +264,12 @@ export default function VoodooChatBubble({
     void window.browserApi.getSnapshot().then((snapshot) => {
       if (active) {
         setModelLabel(snapshot.settings.voodooModel || 'ИИ агент');
-        historyBudgetRef.current = snapshot.settings.voodooContextWindowTokens ?? 600000;
+        historyBudgetRef.current = snapshot.settings.voodooContextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
       }
     }).catch(() => {});
     const unsubscribe = window.browserApi.onSnapshotChanged((snapshot) => {
       setModelLabel(snapshot.settings.voodooModel || 'ИИ агент');
-      historyBudgetRef.current = snapshot.settings.voodooContextWindowTokens ?? 600000;
+      historyBudgetRef.current = snapshot.settings.voodooContextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
       setMessages((previous) => previous);
     });
     return () => { active = false; unsubscribe(); };

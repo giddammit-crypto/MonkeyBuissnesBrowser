@@ -1,3 +1,6 @@
+import { exportBookmarksHtml } from '../services/BookmarkExportService';
+import { createMediaCookieFile } from '../services/MediaCookieFile';
+import { permissionRequestGuard } from '../services/PermissionRequestGuard';
 import { requestedContextWindow } from '../../shared/voodooContext';
 import { VoodooModelCatalog } from '../services/VoodooModelCatalog';
 import path from 'node:path';
@@ -22,6 +25,7 @@ import {
   WebContentsView,
 } from 'electron';
 import { getNextZoomFactor } from '../../shared/zoom';
+import { getSplitViewBounds, normalizeSplitRatio } from '../../shared/splitView';
 import { computePopupWindowBounds, isPopupWindowRequest, parseWindowFeatures, type ParsedWindowFeatures } from './popupUtils';
 import type { ChromeBounds, TabAction, DownloadAction } from '../../shared/ipc';
 import { FilterEngine, SessionAdBlock } from '../../services/adblock/FilterEngine';
@@ -154,6 +158,7 @@ export class BrowserController {
   private voodooPosition: { x?: number; y?: number } = {};
   private voodooBubblePosition: { x?: number; y?: number } = {};
   private activeTabId = '';
+  private splitView?: { primaryTabId: string; secondaryTabId: string; firstTabId: string; ratio: number };
   private activeWorkspaceId = 'personal';
   private chromeBounds: ChromeBounds = { x: 176, y: 112, width: 1200, height: 700 };
   private lastValidBounds: ChromeBounds = { x: 200, y: 144, width: 1240, height: 756 };
@@ -180,6 +185,7 @@ export class BrowserController {
   private readonly sessionDownloadHandlers = new Map<Electron.Session, (event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents) => void>();
   private readonly liveDownloads = new Map<string, { item: Electron.DownloadItem; tabId?: string }>();
   private readonly ytDlpProcesses = new Map<string, { child: ChildProcess; isPaused: boolean }>();
+  private readonly mediaCookieCleanup = new Map<string, () => void>();
   private closedTabs: Array<Pick<TabSnapshot, 'url' | 'workspaceId' | 'isPinned' | 'isMuted'>> = [];
   private readonly popupOpeners = new Map<string, string>();
   private readonly popupWindows = new Set<Electron.BrowserWindow>();
@@ -440,6 +446,7 @@ export class BrowserController {
     return {
       tabs: Array.from(this.tabs.values()).map((tab) => this.toSnapshot(tab)),
       activeTabId: this.activeTabId,
+      splitView: this.splitView ? { secondaryTabId: this.splitView.secondaryTabId, ratio: this.splitView.ratio } : undefined,
       isFullScreen: Boolean(this.window && !this.window.isDestroyed() && this.window.isFullScreen()),
       privacy: { privateTabCount: [...this.tabs.values()].filter((tab) => tab.isPrivate).length, proxy: this.privateProxy },
       history: this.stores.history.get(),
@@ -755,9 +762,69 @@ export class BrowserController {
     }
   }
 
+  setSplitView(tabId?: string): void {
+    if (!tabId) {
+      this.clearSplitView();
+      this.refreshViewBounds();
+      this.emitSnapshot();
+      return;
+    }
+    const primary = this.tabs.get(this.activeTabId);
+    const secondary = this.tabs.get(tabId);
+    if (!primary || !secondary || primary === secondary || !this.canSplitTab(primary) || !this.canSplitTab(secondary)
+      || primary.workspaceId !== secondary.workspaceId || this.window?.isFullScreen()) {
+      throw new Error('Разделение доступно для двух обычных веб-вкладок одного пространства. Закройте режим чтения, PiP или полный экран.');
+    }
+    this.clearSplitView();
+    this.splitView = { primaryTabId: primary.id, secondaryTabId: secondary.id, firstTabId: primary.id, ratio: 0.5 };
+    if (secondary.lifecycle === 'hibernated') {
+      secondary.lifecycle = 'background';
+      this.attachWebContents(secondary, secondary.url);
+    }
+    // Both panes are being viewed, even though only one owns keyboard focus.
+    this.memoryManager.updateTab(secondary.id, { active: true, lifecycle: secondary.lifecycle, lastInteractionAt: Date.now() });
+    this.refreshViewBounds();
+    this.emitSnapshot();
+  }
+
+  setSplitViewRatio(ratio: number): void {
+    if (!this.splitView) return;
+    this.splitView.ratio = normalizeSplitRatio(ratio);
+    this.refreshViewBounds();
+    this.emitSnapshot();
+  }
+
+  private canSplitTab(tab: TabRecord): boolean {
+    return !tab.isPrivate && !tab.isInternal && !tab.isReaderActive && !tab.isPictureInPicture
+      && tab.lifecycle !== 'crashed' && isSafeWebUrl(tab.url);
+  }
+
+  private clearSplitView(): void {
+    const previous = this.splitView;
+    this.splitView = undefined;
+    if (!previous) return;
+    const secondary = this.tabs.get(previous.secondaryTabId);
+    if (secondary) this.memoryManager.updateTab(secondary.id, { active: secondary.id === this.activeTabId, lifecycle: secondary.lifecycle });
+  }
+
+  private validateSplitView(): void {
+    if (!this.splitView) return;
+    const primary = this.tabs.get(this.splitView.primaryTabId);
+    const secondary = this.tabs.get(this.splitView.secondaryTabId);
+    if (!primary || !secondary || primary.id !== this.activeTabId || !this.canSplitTab(primary) || !this.canSplitTab(secondary)
+      || primary.workspaceId !== secondary.workspaceId || this.window?.isFullScreen()) this.clearSplitView();
+  }
+
   activateTab(tabId: string): void {
     const next = this.tabs.get(tabId);
     if (!next) return;
+    if (this.splitView && tabId !== this.splitView.primaryTabId) {
+      if (tabId === this.splitView.secondaryTabId) {
+        const previousPrimary = this.splitView.primaryTabId;
+        this.splitView.primaryTabId = tabId;
+        this.splitView.secondaryTabId = previousPrimary;
+      } else this.clearSplitView();
+    }
     if (this.htmlFullscreenTabId && this.htmlFullscreenTabId !== tabId) this.exitPageFullscreen();
     this.activeTabId = tabId;
     this.activeWorkspaceId = next.workspaceId;
@@ -768,9 +835,9 @@ export class BrowserController {
     for (const tab of this.tabs.values()) {
       const active = tab.id === tabId;
       if (tab.lifecycle !== 'crashed' && tab.lifecycle !== 'hibernated') tab.lifecycle = active ? 'active' : 'background';
-      this.memoryManager.updateTab(tab.id, { active, lifecycle: tab.lifecycle, ...(active ? { lastInteractionAt: Date.now() } : {}) });
+      this.memoryManager.updateTab(tab.id, { active: active || tab.id === this.splitView?.secondaryTabId, lifecycle: tab.lifecycle, ...(active ? { lastInteractionAt: Date.now() } : {}) });
       if (!tab.view || tab.view.webContents.isDestroyed()) continue;
-      if (active && !tab.isInternal && tab.lifecycle !== 'crashed') {
+      if ((active || tab.id === this.splitView?.secondaryTabId) && !tab.isInternal && tab.lifecycle !== 'crashed' && !tab.isReaderActive) {
         (tab.view as any).setVisible?.(true);
         tab.view.webContents.setBackgroundThrottling(false);
         tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
@@ -786,7 +853,7 @@ export class BrowserController {
           }
         }
         this.applyBounds(tab);
-        tab.view.webContents.focus();
+        if (active) tab.view.webContents.focus();
       } else {
         if (tab.isPictureInPicture && !tab.isInternal && tab.lifecycle !== 'crashed') {
           // Floating in-browser PiP mini-player over other tabs
@@ -947,6 +1014,11 @@ export class BrowserController {
     for (const tab of closing) await this.closeTab(tab.id);
   }
 
+  async exportBookmarks(): Promise<{ saved: boolean; count: number; path?: string }> {
+    if (!this.window || this.window.isDestroyed()) return { saved: false, count: 0 };
+    return exportBookmarksHtml(this.window, this.stores.bookmarks.get(), path.join(app.getPath('documents'), 'bookmarks.html'));
+  }
+
   showTabMenu(tabId: string): void {
     const tab = this.tabs.get(tabId);
     if (!tab || !this.window || this.window.isDestroyed() || this.disposed) return;
@@ -1021,6 +1093,7 @@ export class BrowserController {
       } else if (action === 'cancel') {
         try { ytProc.child.kill('SIGTERM'); } catch {}
         this.ytDlpProcesses.delete(downloadId);
+      this.mediaCookieCleanup?.get(downloadId)?.();
         entry.state = 'cancelled';
         entry.isLive = false;
         entry.isPaused = false;
@@ -1060,6 +1133,7 @@ export class BrowserController {
     if (ytProc) {
       try { ytProc.child.kill('SIGKILL'); } catch {}
       this.ytDlpProcesses.delete(downloadId);
+      this.mediaCookieCleanup?.get(downloadId)?.();
     }
     const live = this.liveDownloads.get(downloadId);
     if (live) {
@@ -1310,21 +1384,26 @@ export class BrowserController {
   }
 
   killProcess(pid: number): boolean {
-    if (pid === process.pid) return false;
-    for (const tab of this.tabs.values()) {
-      try {
-        if (tab.view?.webContents && !tab.view.webContents.isDestroyed() && tab.view.webContents.getOSProcessId() === pid) {
-          tab.view.webContents.forcefullyCrashRenderer();
+    if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) return false;
+    try {
+      for (const view of [this.shellView, this.voodooView]) {
+        if (view && !view.webContents.isDestroyed() && view.webContents.getOSProcessId() === pid) return false;
+      }
+      const metric = app.getAppMetrics().find(entry => entry.pid === pid);
+      if (!metric) return false;
+      for (const tab of this.tabs.values()) {
+        const contents = tab.view?.webContents;
+        if (contents && !contents.isDestroyed() && contents.getOSProcessId() === pid) {
+          contents.forcefullyCrashRenderer();
           return true;
         }
-      } catch {}
-    }
-    try {
+      }
+      // Only explicitly enumerated browser-owned service processes are killable.
+      // Never let an arbitrary shell-provided PID reach the OS signal API.
+      if (!['gpu', 'utility'].includes(metric.type.toLowerCase())) return false;
       process.kill(pid);
       return true;
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   }
 
   async toggleDevTools(): Promise<void> {
@@ -1371,17 +1450,18 @@ export class BrowserController {
 
   retryDownload(downloadId: string): void {
     const download = this.downloads.find((entry) => entry.id === downloadId);
-    if (!download?.url) return;
+    if (!download?.url || !isSafeWebUrl(download.url)) return;
+    const isPrivate = Boolean(download.isPrivate);
+    const sourceSession = isPrivate ? this.privateSession : this.browserSession;
+    if (!sourceSession) throw new Error('Приватная сессия завершена. Повторите загрузку из новой приватной вкладки.');
     if (download.kind === 'video' || download.kind === 'audio') {
-      this.downloadMediaUrl(download.url, download.filename, download.kind === 'audio');
-    } else {
-      const activeTab = this.tabs.get(this.activeTabId);
-      if (activeTab?.view?.webContents && !activeTab.view.webContents.isDestroyed()) {
-        this.downloadMedia(activeTab.view.webContents, download.url);
-      } else {
-        this.browserSession.downloadURL(download.url);
-      }
-    }
+      void this.downloadWithYtDlp(download.url, download.filename, download.kind === 'audio', isPrivate);
+    } else if (isPrivate) {
+      void this.privateProxyReady.then(() => {
+        if (this.privateSession !== sourceSession || this.disposed) return;
+        sourceSession.downloadURL(download.url);
+      }).catch(() => this.eventListener?.({ type: 'navigation-error', message: 'Не удалось повторить приватную загрузку.' }));
+    } else sourceSession.downloadURL(download.url);
   }
 
   startDownloadDrag(downloadId: string, sender: Electron.WebContents): void {
@@ -1505,6 +1585,7 @@ export class BrowserController {
 
   async switchWorkspace(workspaceId: string): Promise<void> {
     if (!this.stores.workspaces.get().some((workspace) => workspace.id === workspaceId)) return;
+    this.clearSplitView();
     const isPrivate = this.tabs.get(this.activeTabId)?.isPrivate ?? false;
     this.activeWorkspaceId = workspaceId;
     const firstTab = Array.from(this.tabs.values()).find((tab) => tab.workspaceId === workspaceId && tab.isPrivate === isPrivate);
@@ -1983,21 +2064,10 @@ export class BrowserController {
   private raiseShellOverlay(): void {
     if (!this.popoverOpen || !this.window || this.window.isDestroyed() || !this.shellView || this.shellView.webContents.isDestroyed()) return;
     const children = this.window.contentView.children;
-    const activeTab = this.tabs.get(this.activeTabId);
     const shellIdx = children.indexOf(this.shellView);
-    if (activeTab?.view && !activeTab.view.webContents.isDestroyed() && !activeTab.isInternal && activeTab.lifecycle !== 'crashed') {
-      const tabIdx = children.indexOf(activeTab.view);
-      if (shellIdx !== -1 && tabIdx !== -1 && shellIdx < tabIdx) {
-        try {
-          this.window.contentView.removeChildView(this.shellView);
-          this.window.contentView.addChildView(this.shellView);
-        } catch {}
-      }
-    } else if (shellIdx !== -1 && shellIdx !== children.length - 1 && (!this.voodooView || children[children.length - 1] !== this.voodooView)) {
-      try {
-        this.window.contentView.removeChildView(this.shellView);
-        this.window.contentView.addChildView(this.shellView);
-      } catch {}
+    if (shellIdx !== -1 && children.some((view, index) => index > shellIdx && view !== this.voodooView)) {
+      try { this.window.contentView.removeChildView(this.shellView); } catch {}
+      this.window.contentView.addChildView(this.shellView);
     }
     // If voodooView was present and should be top-most, ensure it stays above shellView
     if (this.voodooView && !this.voodooView.webContents.isDestroyed() && children.includes(this.voodooView)) {
@@ -2063,30 +2133,7 @@ export class BrowserController {
       if (!cookies || cookies.length === 0) {
         return { args: [], cleanup: () => {} };
       }
-      const lines = [
-        '# Netscape HTTP Cookie File',
-        '# Generated by Soulm8te Browser',
-      ];
-      const seen = new Set<string>();
-      for (const c of cookies) {
-        const domain = c.domain?.startsWith('.') ? c.domain : `.${c.domain || host}`;
-        const cookiePath = c.path || '/';
-        const key = `${domain}:${cookiePath}:${c.name}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const flag = domain.startsWith('.') ? 'TRUE' : 'FALSE';
-        const secure = c.secure ? 'TRUE' : 'FALSE';
-        const expiration = c.expirationDate ? Math.round(c.expirationDate) : Math.round(Date.now() / 1000 + 86400 * 30);
-        lines.push(`${domain}\t${flag}\t${cookiePath}\t${secure}\t${expiration}\t${c.name}\t${c.value}`);
-      }
-      const tmpPath = path.join(os.tmpdir(), `soulm8te_cookies_${crypto.randomUUID()}.txt`);
-      fs.writeFileSync(tmpPath, lines.join('\n'), 'utf8');
-      return {
-        args: ['--cookies', tmpPath],
-        cleanup: () => {
-          try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch {}
-        },
-      };
+      return createMediaCookieFile(cookies, host);
     } catch {
       return { args: [], cleanup: () => {} };
     }
@@ -2221,6 +2268,8 @@ export class BrowserController {
   }
 
   private async downloadWithYtDlp(rawUrl: string, customFilename?: string, isAudio = false, isPrivate = false): Promise<void> {
+    const sourceSession = isPrivate ? this.privateSession : this.browserSession;
+    if (!sourceSession || this.disposed) return;
     const url = normalizeVideoUrl(rawUrl);
     const localBin = path.join(os.homedir(), '.local/bin/yt-dlp');
     const ytDlpPath = fs.existsSync(localBin) ? localBin : 'yt-dlp';
@@ -2230,7 +2279,6 @@ export class BrowserController {
     try {
       fs.mkdirSync(downloadDir, { recursive: true });
     } catch {}
-    const sourceSession = isPrivate && this.privateSession ? this.privateSession : this.browserSession;
     const outputFilename = this.mediaOutputFilename(customFilename, isAudio);
     const isGenericName = !customFilename || /^(?:youtube[-_]?(?:video|shorts|audio)|youtube|shorts|video|audio|untitled|stream)(?:\.(?:mp[34]|mkv|webm|m4a))?$/i.test(customFilename.trim());
     const effectiveOutputName = isGenericName ? undefined : outputFilename;
@@ -2277,6 +2325,18 @@ export class BrowserController {
     }
 
     const cookieInfo = await this.getCookieArgsForUrl(url, sourceSession);
+    if (this.disposed || (isPrivate && this.privateSession !== sourceSession)) {
+      cookieInfo.cleanup();
+      entry.isLive = false;
+      entry.state = 'interrupted';
+      entry.error = 'Сессия загрузки завершена.';
+      return;
+    }
+    const releaseCookies = () => {
+      cookieInfo.cleanup();
+      this.mediaCookieCleanup?.delete(id);
+    };
+    this.mediaCookieCleanup?.set(id, releaseCookies);
     if (cookieInfo.args.length > 0) {
       args.push(...cookieInfo.args);
     }
@@ -2297,7 +2357,7 @@ export class BrowserController {
       const finalizeFailure = (message: string) => {
         if (finalized) return;
         finalized = true;
-        cookieInfo.cleanup();
+        releaseCookies();
         this.ytDlpProcesses.delete(id);
         entry.isLive = false;
         entry.state = 'interrupted';
@@ -2307,7 +2367,7 @@ export class BrowserController {
       };
 
       child.stderr?.on('data', (chunk: Buffer) => {
-        stderrText += chunk.toString();
+        stderrText = (stderrText + chunk.toString()).slice(-65536);
       });
 
       child.stdout.on('data', (chunk: Buffer) => {
@@ -2351,7 +2411,7 @@ export class BrowserController {
       child.on('close', (code) => {
         if (finalized) return;
         finalized = true;
-        cookieInfo.cleanup();
+        releaseCookies();
         this.ytDlpProcesses.delete(id);
         entry.isLive = false;
         entry.canResume = false;
@@ -2381,7 +2441,7 @@ export class BrowserController {
         finalizeFailure(err.message || 'Ошибка загрузчика');
       });
     } catch (cause) {
-      cookieInfo.cleanup();
+      releaseCookies();
       this.ytDlpProcesses.delete(id);
       entry.isLive = false;
       entry.state = 'interrupted';
@@ -2603,6 +2663,7 @@ export class BrowserController {
       if (!this.downloads.find((entry) => entry.id === id)?.isPrivate) continue;
       try { if (process.isPaused) process.child.kill('SIGCONT'); process.child.kill('SIGTERM'); } catch {}
       this.ytDlpProcesses.delete(id);
+      this.mediaCookieCleanup?.get(id)?.();
     }
     this.downloads.splice(0, this.downloads.length, ...this.downloads.filter((entry) => !entry.isPrivate));
     if (target) {
@@ -2663,12 +2724,23 @@ export class BrowserController {
           return;
         }
       }
+      if (!contents || contents.isDestroyed()) { callback(false); return; }
+      const permissionContext = permissionRequestGuard(contents, reqOrigin, details.isMainFrame !== false);
+      const answer = callback;
+      let answered = false;
+      callback = (granted) => {
+        if (answered) return;
+        answered = true;
+        const current = permissionContext.current();
+        permissionContext.dispose();
+        answer(granted && current);
+      };
       if (permission === 'storage-access') {
         if (!this.window || !storageEligible(details.requestingUrl, contents)) { callback(false); return; }
         const topOrigin = new URL(contents.getURL()).origin;
         const origin = new URL(details.requestingUrl).origin;
         void dialog.showMessageBox(this.window, { type: 'question', title: 'Cookies для входа', message: `${origin} запрашивает доступ к своим cookies внутри ${topOrigin}.`, detail: 'Разрешение действует для этой пары сайтов до закрытия приложения. Оно может помочь завершить вход.', buttons: ['Запретить', 'Разрешить на эту сессию'], defaultId: 0, cancelId: 0, noLink: true }).then(({ response }) => {
-          const allowed = response === 1 && storageEligible(details.requestingUrl, contents) && new URL(contents.getURL()).origin === topOrigin;
+          const allowed = response === 1 && permissionContext.current() && storageEligible(details.requestingUrl, contents) && new URL(contents.getURL()).origin === topOrigin;
           if (allowed) allowedPermissions.add(storageKey(topOrigin, origin));
           callback(allowed);
         }).catch(() => callback(false));
@@ -2696,6 +2768,7 @@ export class BrowserController {
           cancelId: 0,
           noLink: true,
         }).then(({ response }): NotificationPermissionDecision => {
+          if (!permissionContext.current()) return 'deny';
           const decision: NotificationPermissionDecision = response === 1 ? 'allow' : 'deny';
           notificationPermissions.set(origin, decision);
           if (!isPrivate) {
@@ -2714,7 +2787,7 @@ export class BrowserController {
       }
       const label = permission === 'media' ? 'камере или микрофону' : permission === 'geolocation' ? 'местоположению' : 'уведомлениям';
       void dialog.showMessageBox(this.window, { type: 'question', title: 'Разрешение сайта', message: `${origin} запрашивает доступ к ${label}.`, buttons: ['Запретить', 'Разрешить на эту сессию'], defaultId: 0, cancelId: 0, noLink: true }).then(({ response }) => {
-        const allowed = response === 1 && !contents.isDestroyed();
+        const allowed = response === 1 && permissionContext.current();
         if (allowed) {
           allowedPermissions.add(permissionKey(origin, permission));
           if (permission === 'media') {
@@ -2811,7 +2884,7 @@ export class BrowserController {
       }
       callback({ responseHeaders: headers });
     });
-    const onDownload = (_event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents) => this.handleDownload(item, contents);
+    const onDownload = (_event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents) => this.handleDownload(item, contents, targetSession);
     this.sessionDownloadHandlers.set(targetSession, onDownload);
     targetSession.on('will-download', onDownload);
 
@@ -3027,6 +3100,8 @@ export class BrowserController {
   }
 
   private detachView(tab: TabRecord): void {
+    const wasSplit = tab.id === this.splitView?.primaryTabId || tab.id === this.splitView?.secondaryTabId;
+    if (wasSplit) this.clearSplitView();
     const view = tab.view;
     const contents = view?.webContents;
     if (this.htmlFullscreenTabId === tab.id) this.leaveHtmlFullscreen();
@@ -3051,6 +3126,7 @@ export class BrowserController {
       try { this.window.contentView.removeChildView(view); } catch {}
     }
     if (contents && !contents.isDestroyed()) contents.close();
+    if (wasSplit && !this.disposed) this.refreshViewBounds();
   }
 
   private installTabHandlers(tab: TabRecord): void {
@@ -3122,6 +3198,9 @@ export class BrowserController {
         },
         createWindow: (options) => this.createPopupTab(tab, popupUrl, disposition !== 'background-tab', options),
       };
+    });
+    contents.on('focus', () => {
+      if (this.splitView?.secondaryTabId === tab.id && this.activeTabId !== tab.id) this.activateTab(tab.id);
     });
     contents.on('context-menu', (_event, params) => this.showContextMenu(contents, params));
     contents.on('zoom-changed', (_event, zoomDirection) => {
@@ -3314,13 +3393,14 @@ export class BrowserController {
 
   private refreshViewBounds(): void {
     if (!this.window || this.window.isDestroyed() || this.disposed) return;
+    this.validateSplitView();
     const windowBounds = this.window.getContentBounds();
     this.shellView?.setBounds({ x: 0, y: 0, width: windowBounds.width, height: windowBounds.height });
 
     const activeTab = this.tabs.get(this.activeTabId);
     for (const tab of this.tabs.values()) {
       if (!tab.view || tab.view.webContents.isDestroyed()) continue;
-      if (tab === activeTab && !tab.isInternal && tab.lifecycle !== 'crashed' && !tab.isReaderActive) {
+      if ((tab === activeTab || tab.id === this.splitView?.secondaryTabId) && !tab.isInternal && tab.lifecycle !== 'crashed' && !tab.isReaderActive) {
         (tab.view as any).setVisible?.(true);
         tab.view.webContents.setBackgroundThrottling(false);
         tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
@@ -3342,6 +3422,15 @@ export class BrowserController {
       } else {
         (tab.view as any).setVisible?.(false);
         tab.view.webContents.setBackgroundThrottling(true);
+      }
+    }
+
+    const secondary = this.splitView ? this.tabs.get(this.splitView.secondaryTabId) : undefined;
+    if (secondary?.view && !this.popoverOpen && this.shellView) {
+      const children = this.window.contentView.children;
+      if (children.indexOf(secondary.view) < children.indexOf(this.shellView)) {
+        try { this.window.contentView.removeChildView(secondary.view); } catch {}
+        this.window.contentView.addChildView(secondary.view);
       }
     }
 
@@ -3428,7 +3517,12 @@ export class BrowserController {
       return;
     }
     (tab.view as any).setVisible?.(true);
-    tab.view.setBounds({ x, y, width, height });
+    const split = this.splitView;
+    if (split && (tab.id === split.primaryTabId || tab.id === split.secondaryTabId)) {
+      const panes = getSplitViewBounds({ x, y, width, height }, split.ratio);
+      // Focus changes the address bar/active identity, never the physical pane order.
+      tab.view.setBounds(tab.id === split.firstTabId ? panes.primary : panes.secondary);
+    } else tab.view.setBounds({ x, y, width, height });
   }
 
   private exitPageFullscreen(): void {
@@ -3444,7 +3538,7 @@ export class BrowserController {
     this.refreshViewBounds();
   }
 
-  private handleDownload(item: Electron.DownloadItem, webContents: Electron.WebContents): void {
+  private handleDownload(item: Electron.DownloadItem, webContents: Electron.WebContents, sourceSession?: Electron.Session): void {
     if (!this.window || this.disposed) { item.cancel(); return; }
     const id = crypto.randomUUID();
     const filename = item.getFilename().replace(/[\\/:*?"<>|]/g, '_') || 'download';
@@ -3455,7 +3549,7 @@ export class BrowserController {
     const sourceTab = [...this.tabs.values()].find((tab) => tab.webContentsId === webContents?.id);
     const entry: DownloadEntry = {
       id, url, filename, kind, mimeType: mimeType || undefined,
-      isPrivate: sourceTab?.isPrivate ?? Boolean(this.privateSession && this.privateSession === webContents?.session),
+      isPrivate: sourceTab?.isPrivate ?? Boolean(this.privateSession && this.privateSession === (sourceSession || webContents?.session)),
       isLive: true, canResume: false, state: 'queued', receivedBytes: 0, totalBytes: item.getTotalBytes(), startedAt: Date.now(),
     };
     // This API must run synchronously inside will-download. Electron owns the
@@ -3871,6 +3965,7 @@ export class BrowserController {
     const tab = [...this.tabs.values()].find((entry) => entry.webContentsId === webContentsId);
     if (tab && !isPip && source === 'native' && tab.pipMode === 'mini') return;
     if (tab && tab.isPictureInPicture !== isPip) {
+      if (isPip && (tab.id === this.splitView?.primaryTabId || tab.id === this.splitView?.secondaryTabId)) this.setSplitView();
       if (isPip) this.stopOtherPictureInPictureTabs(tab.id);
       tab.pipMode = isPip ? (source ?? 'mini') : undefined;
       tab.isPictureInPicture = isPip;
@@ -3906,6 +4001,7 @@ export class BrowserController {
   async toggleReaderMode(tabId: string): Promise<boolean> {
     const tab = this.tabs.get(tabId);
     if (!tab) return false;
+    if (tab.id === this.splitView?.primaryTabId || tab.id === this.splitView?.secondaryTabId) this.clearSplitView();
     tab.isReaderActive = !tab.isReaderActive;
     this.refreshViewBounds();
     this.emitSnapshot();
@@ -6024,6 +6120,8 @@ export class BrowserController {
       if (entry) { entry.state = 'interrupted'; entry.isLive = false; entry.canResume = false; }
     }
     this.ytDlpProcesses.clear();
+    for (const cleanup of this.mediaCookieCleanup?.values() || []) cleanup();
+    this.mediaCookieCleanup?.clear();
     this.persistDownloads(true);
     for (const tab of this.tabs.values()) this.detachView(tab);
     this.tabs.clear();

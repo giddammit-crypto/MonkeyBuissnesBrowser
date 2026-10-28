@@ -66,6 +66,9 @@ export interface BrowserApi {
   closePrivateTabs(): Promise<void>;
   closeTab(tabId: string): Promise<void>;
   showTabMenu(tabId: string): Promise<void>;
+  setSplitView(tabId?: string): Promise<void>;
+  setSplitViewRatio(ratio: number): Promise<void>;
+  exportBookmarks(): Promise<{ saved: boolean; count: number; path?: string }>;
   closeRelatedTabs(tabId: string, scope: 'others' | 'right' | 'left'): Promise<void>;
   navigate(tabId: string, input: string): Promise<void>;
   goBack(tabId: string): Promise<void>;

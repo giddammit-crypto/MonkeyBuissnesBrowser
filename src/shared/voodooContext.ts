@@ -1,8 +1,8 @@
-export const DEFAULT_CONTEXT_WINDOW_TOKENS = 600_000;
+export const DEFAULT_CONTEXT_WINDOW_TOKENS = 250_000;
 export const COMPLETION_OUTPUT_TOKENS = 4096;
 
 /** Model-independent estimate, not the provider's tokenizer or a capability claim. */
-export function estimateTokens(value: unknown): number {
+export function estimateTokenUnits(value: unknown): number {
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
   if (!serialized) return 0;
   let ascii = 0;
@@ -11,7 +11,11 @@ export function estimateTokens(value: unknown): number {
     if (serialized.charCodeAt(index) < 128) ascii++;
     else other++;
   }
-  return Math.ceil(ascii / 3 + other);
+  return ascii + other * 3;
+}
+
+export function estimateTokens(value: unknown): number {
+  return Math.ceil(estimateTokenUnits(value) / 3);
 }
 
 export function requestedContextWindow(value?: number): number {

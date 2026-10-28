@@ -109,8 +109,8 @@ try {
   workflow = true;
   const complex = await invoke('sendVoodooMessage', [{ role: 'user', content: 'Прочитай два источника, сравни числа и сохрани отчёт. Проверь файл.' }]);
   assert.equal(complex.error, undefined);
-  assert.equal(complex.contextUsage.requestedWindowTokens, 600000);
-  assert.equal(complex.contextUsage.effectiveWindowTokens, 600000);
+  assert.equal(complex.contextUsage.requestedWindowTokens, 250000);
+  assert.equal(complex.contextUsage.effectiveWindowTokens, 250000);
   assert.equal(complex.contextUsage.providerLimitKnown, true);
   assert.equal(workflowRound, 14);
   assert.ok(complex.executedActions.some(action => action.tool === 'update_plan'));
@@ -121,7 +121,7 @@ try {
   await shell.locator('.sidebar').getByRole('button', { name: 'Настройки', exact: true }).click();
   const contextSelector = shell.locator('#voodoo-context-window');
   await contextSelector.scrollIntoViewIfNeeded();
-  await expect(contextSelector).toHaveValue('600000');
+  await expect(contextSelector).toHaveValue('250000');
   await contextSelector.selectOption('128000');
   await expect.poll(async () => (await invoke('getSnapshot')).settings.voodooContextWindowTokens).toBe(128000);
   console.log('PASS context settings UI → persisted budget → provider metadata integration');

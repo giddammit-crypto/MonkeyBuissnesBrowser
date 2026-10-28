@@ -1,3 +1,4 @@
+import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '../shared/voodooContext';
 import { normalizeVoodooKeys } from '../shared/voodooKeys';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -107,6 +108,7 @@ import { QrCodePopover } from "./QrCodePopover";
 import { ReaderView } from "./ReaderView";
 import { QuickNotesDrawer } from "./QuickNotesDrawer";
 import VoodooChatBubble from "./VoodooChatBubble";
+import SplitViewControls, { SplitViewStatus } from "./SplitViewControls";
 import voodooAvatar from "./assets/voodoo-256.png";
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
@@ -333,6 +335,7 @@ function App(): React.JSX.Element {
   const [panel, setPanel] = useState<Panel>("home");
   const [address, setAddress] = useState("");
   const [editingAddress, setEditingAddress] = useState(false);
+  const [splitControlsOpen, setSplitControlsOpen] = useState(false);
   const [popover, setPopover] = useState<"menu" | "protection" | "browsec" | "google-account" | "downloads" | "qrcode" | null>(null);
   const [notesDrawerOpen, setNotesDrawerOpen] = useState(false);
   const [browsecCountries, setBrowsecCountries] = useState<BrowsecCountry[]>([]);
@@ -373,6 +376,7 @@ function App(): React.JSX.Element {
   const currentTab = (optimisticTabId ? snapshot?.tabs.find((t) => t.id === optimisticTabId) : null) ?? snapshot?.tabs.find(
     (tab) => tab.id === snapshot.activeTabId,
   );
+  useEffect(() => setSplitControlsOpen(false), [currentTab?.id, panel]);
   const canDownloadVideo = Boolean(currentTab?.canDownloadMedia);
   const hasActiveDownloads = Boolean(
     snapshot?.downloads?.some(
@@ -697,7 +701,7 @@ function App(): React.JSX.Element {
     currentTab?.lifecycle,
     snapshot?.activeTabId,
   ]);
-  const isPopoverOpen = Boolean(popover)
+  const isPopoverOpen = splitControlsOpen || Boolean(popover)
     || tabSearchOpen
     || editingAddress
     || taskManagerOpen
@@ -1336,7 +1340,7 @@ function App(): React.JSX.Element {
           <button
             type="button"
             className={`icon-button bookmark-button ${bookmarked ? "active" : ""}`}
-            disabled={currentTab?.isInternal}
+            disabled={!currentTab || currentTab.isInternal}
             title={
               bookmarked
                 ? "Удалить закладку · Ctrl+D"
@@ -1390,6 +1394,8 @@ function App(): React.JSX.Element {
           )}
         </form>
         <div className="toolbar-actions">
+          <SplitViewControls snapshot={snapshot} currentTab={currentTab} open={splitControlsOpen}
+            disabled={panel !== "home"} onOpenChange={setSplitControlsOpen} onError={showError} />
           <button
             className={`icon-button download-header-btn ${popover === "downloads" ? "selected" : ""} ${hasActiveDownloads ? "is-downloading" : ""}`}
             title={
@@ -2117,6 +2123,7 @@ function App(): React.JSX.Element {
         </div>
       </aside>
       <main className="content-area">
+        {panel === "home" && <SplitViewStatus snapshot={snapshot} onError={showError} />}
         {wallpaperBackground !== "plain" && (currentTab?.isInternal || panel !== "home") && (
           <div className="workspace-wallpaper newtab-wallpaper" data-newtab-wallpaper data-workspace-wallpaper aria-hidden="true">
             <img
@@ -4844,15 +4851,14 @@ function SettingsPanel({
             <label htmlFor="voodoo-context-window" style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>
               Бюджет контекста Вуду
             </label>
-            <select id="voodoo-context-window" value={settings.voodooContextWindowTokens ?? 600000}
+            <select id="voodoo-context-window" value={settings.voodooContextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS}
               aria-describedby="voodoo-context-help"
               onChange={(event) => update({ voodooContextWindowTokens: Number(event.target.value) })}
               style={{ padding: "7px 10px", borderRadius: 8, background: "var(--surface, #17202c)", color: "var(--text-main)", border: "1px solid var(--border)" }}>
               <option value={32000}>32 000 токенов</option>
               <option value={128000}>128 000 токенов</option>
-              <option value={256000}>256 000 токенов</option>
-              <option value={600000}>600 000 токенов (по умолчанию)</option>
-              {![32000, 128000, 256000, 600000].includes(settings.voodooContextWindowTokens ?? 600000) && (
+              <option value={250000}>250 000 токенов (по умолчанию)</option>
+              {![32000, 128000, 250000].includes(settings.voodooContextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS) && (
                 <option value={settings.voodooContextWindowTokens}>{settings.voodooContextWindowTokens?.toLocaleString()} токенов</option>
               )}
             </select>

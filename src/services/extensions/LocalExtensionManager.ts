@@ -51,7 +51,7 @@ export class LocalExtensionManager {
     const record = data as Record<string, unknown>;
     if (record.manifest_version !== 2 && record.manifest_version !== 3)
       throw new Error('Неподдерживаемая версия манифеста.');
-    if (typeof record.name !== 'string' || !record.name.trim() || typeof record.version !== 'string')
+    if (typeof record.name !== 'string' || !record.name.trim() || typeof record.version !== 'string' || !record.version.trim())
       throw new Error('У расширения отсутствуют имя или версия.');
     return { name: record.name.slice(0, 120), version: record.version.slice(0, 40) };
   }
@@ -100,15 +100,21 @@ export class LocalExtensionManager {
       buttons: ['Отмена', 'Установить'], defaultId: 0, cancelId: 0, noLink: true,
     });
     if (warning.response !== 1) return null;
+    const wasAlreadyActive = [...this.active.values()].some(item => item.directory === directory);
+    if (!wasAlreadyActive && this.active.size >= 30) throw new Error('Можно установить не более 30 локальных расширений.');
     const item = await this.load(directory);
     try {
       const existing = this.saved.get();
       const directories = Array.isArray(existing) ? existing.filter((entry): entry is SavedDirectory => Boolean(entry && typeof entry.directory === 'string' && entry.directory !== directory)) : [];
       this.saved.set([...directories, { directory }].slice(-30));
     } catch (error) {
-      // Do not leave an extension active when its durable registration failed.
-      try { this.browserSession.extensions.removeExtension(item.id); } catch {}
-      this.active.delete(item.id);
+      // Failed re-registration must not unload a previously working extension.
+      if (!wasAlreadyActive) {
+        try {
+          this.browserSession.extensions.removeExtension(item.id);
+          this.active.delete(item.id);
+        } catch { /* Keep the runtime entry if Electron could not unload it. */ }
+      }
       throw error;
     }
     return item;
@@ -117,10 +123,10 @@ export class LocalExtensionManager {
   remove(id: string): void {
     const item = this.active.get(id);
     if (!item) return;
-    try { this.browserSession.extensions.removeExtension(id); } finally {
-      this.active.delete(id);
-      const current = this.saved.get();
-      if (Array.isArray(current)) this.saved.set(current.filter(entry => entry.directory !== item.directory));
-    }
+    // Do not erase our registry while extension code is still running after an unload failure.
+    this.browserSession.extensions.removeExtension(id);
+    this.active.delete(id);
+    const current = this.saved.get();
+    if (Array.isArray(current)) this.saved.set(current.filter(entry => entry && entry.directory !== item.directory));
   }
 }

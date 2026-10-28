@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { estimateTokens, DEFAULT_CONTEXT_WINDOW_TOKENS, COMPLETION_OUTPUT_TOKENS } from '../../shared/voodooContext';
+import { estimateTokens, estimateTokenUnits, DEFAULT_CONTEXT_WINDOW_TOKENS, COMPLETION_OUTPUT_TOKENS } from '../../shared/voodooContext';
 export { estimateTokens, requestedContextWindow, DEFAULT_CONTEXT_WINDOW_TOKENS, COMPLETION_OUTPUT_TOKENS } from '../../shared/voodooContext';
-import type { VoodooActionExecution } from '../../shared/types';
+import type { VoodooActionExecution, VoodooToolDefinition } from '../../shared/types';
 
 export type AgentMessage = Record<string, unknown>;
 export interface CompletionProtocol { textOnly: boolean }
@@ -22,9 +22,20 @@ export function actionEvidence(action: VoodooActionExecution): string {
   // Keep a bounded, valid JSON ledger. Never slice serialized JSON midway through
   // a path/escape sequence, which would lose the whole evidence object on read.
   let remaining = 3000;
+  let identifierBudget = 24000;
+  const identifiers = new Set(['filename', 'filePath', 'path', 'url', 'href', 'tabId', 'tab_id', 'id']);
   const seen = new WeakSet<object>();
-  const compact = (value: unknown, depth: number): unknown => {
+  const compact = (value: unknown, depth: number, key = ''): unknown => {
     if (typeof value === 'string') {
+      if (identifiers.has(key)) {
+        // A shortened URL/path is a different source. Retain it verbatim or
+        // explicitly omit it instead of inventing a broken identifier.
+        if (value.length <= 8192 && value.length <= identifierBudget) {
+          identifierBudget -= value.length;
+          return value;
+        }
+        return '[идентификатор опущен: превышен бюджет журнала]';
+      }
       const text = value.slice(0, Math.max(0, Math.min(remaining, depth < 2 ? 600 : 200)));
       remaining -= text.length;
       return text.length < value.length ? `${text}…` : text;
@@ -36,12 +47,15 @@ export function actionEvidence(action: VoodooActionExecution): string {
     if (depth > 3) return '[свернуто]';
     if (Array.isArray(value)) return value.slice(0, 8).map(item => compact(item, depth + 1));
     const entries = Object.entries(value);
-    const important = ['filename', 'filePath', 'url', 'title', 'tabId', 'start', 'next_start', 'totalLength', 'sizeBytes'];
+    const important = ['filename', 'filePath', 'path', 'url', 'href', 'tabId', 'tab_id', 'id', 'title', 'start', 'next_start', 'totalLength', 'sizeBytes'];
     entries.sort(([a], [b]) => Number(important.includes(b)) - Number(important.includes(a)));
-    return Object.fromEntries(entries.slice(0, 16).map(([key, item]) => [key, compact(item, depth + 1)]));
+    return Object.fromEntries(entries.slice(0, 16).map(([key, item]) => [key, compact(item, depth + 1, key)]));
   };
-  return JSON.stringify({ tool: action.tool, summary: action.summary, error: action.error,
-    args: compact(action.args, 1), result: compact(action.result, 0) });
+  // Preserve returned source identifiers before spending the text budget on
+  // large creation arguments or preview bodies.
+  const result = compact(action.result, 0);
+  const args = compact(action.args, 1);
+  return JSON.stringify({ tool: action.tool, summary: action.summary.slice(0, 1000), error: action.error?.slice(0, 1000), args, result });
 }
 
 export function canonicalCall(name: string, args: Record<string, unknown>): string {
@@ -83,9 +97,29 @@ export class AgentPlan {
   }
 }
 
+export interface PreparedToolSchema {
+  readonly tools: unknown[];
+  readonly serialized: string;
+  readonly suffixUnits: number;
+}
+
+/** Snapshot once per chat: request execution and budget checks share one schema. */
+export function prepareToolSchema(definitions: VoodooToolDefinition[]): PreparedToolSchema {
+  const tools = structuredClone(definitions).map(definition => ({ type: 'function', function: definition }));
+  const freeze = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || Object.isFrozen(value)) return;
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  };
+  freeze(tools);
+  const serialized = JSON.stringify(tools);
+  return Object.freeze({ tools, serialized, suffixUnits: estimateTokenUnits(`,"tools":${serialized}`) });
+}
+
 export interface ContextBudget {
   windowTokens?: number;
   tools?: unknown[];
+  preparedTools?: PreparedToolSchema;
   outputTokens?: number;
   extraMessages?: AgentMessage[];
   textOnly?: boolean;
@@ -94,8 +128,11 @@ export interface ContextBudget {
 export function estimateRequestTokens(messages: AgentMessage[], budget: ContextBudget = {}): number {
   const serializedMessages = budget.textOnly ? textToolHistory(messages) : messages;
   // Include JSON framing, role/call metadata, tool schema and message framing.
-  return estimateTokens({ messages: serializedMessages, tools: budget.textOnly ? undefined : budget.tools })
-    + messages.length * 8 + 32 + (budget.outputTokens ?? COMPLETION_OUTPUT_TOKENS);
+  const prepared = !budget.textOnly && budget.preparedTools?.tools === budget.tools ? budget.preparedTools : undefined;
+  const payloadEstimate = prepared
+    ? Math.ceil((estimateTokenUnits({ messages: serializedMessages }) + prepared.suffixUnits) / 3)
+    : estimateTokens({ messages: serializedMessages, tools: budget.textOnly ? undefined : budget.tools });
+  return payloadEstimate + messages.length * 8 + 32 + (budget.outputTokens ?? COMPLETION_OUTPUT_TOKENS);
 }
 
 /** Evict entire old turns and completed tool rounds, never a partial tool pair. */

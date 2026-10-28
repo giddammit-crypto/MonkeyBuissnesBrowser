@@ -1,4 +1,4 @@
-import { AgentPlan, actionEvidence, canonicalCall, textToolHistory, workflowContext, estimateTokens, estimateRequestTokens, requestedContextWindow, COMPLETION_OUTPUT_TOKENS, type CompletionProtocol } from './AgentWorkflow';
+import { AgentPlan, actionEvidence, canonicalCall, textToolHistory, workflowContext, estimateTokens, estimateRequestTokens, prepareToolSchema, requestedContextWindow, COMPLETION_OUTPUT_TOKENS, type CompletionProtocol, type PreparedToolSchema } from './AgentWorkflow';
 import { normalizeVoodooKeys } from '../../shared/voodooKeys';
 import type {
   VoodooActionExecution,
@@ -883,7 +883,8 @@ export class VoodooAiService {
     baseUrl: string,
     model: string,
     signal?: AbortSignal,
-    protocol: CompletionProtocol = { textOnly: false }
+    protocol: CompletionProtocol = { textOnly: false },
+    preparedTools?: PreparedToolSchema
   ): Promise<{
     success: boolean;
     finishReason?: string;
@@ -945,11 +946,19 @@ export class VoodooAiService {
     };
 
     if (tools && tools.length > 0 && !protocol.textOnly) {
-      requestBody.tools = tools.map((tool) => ({ type: 'function', function: tool }));
+      requestBody.tools = preparedTools?.tools ?? tools.map((tool) => ({ type: 'function', function: tool }));
       requestBody.tool_choice = 'auto';
     }
 
-    let serializedBody = JSON.stringify(requestBody);
+    // Tool JSON is immutable during the chat; avoid serializing it with every
+    // large request or key failover. The ordinary path remains for callers
+    // without a prepared schema and for the text-only fallback.
+    const serializeRequest = () => {
+      if (!preparedTools || requestBody.tools !== preparedTools.tools) return JSON.stringify(requestBody);
+      const { tools: _tools, ...rest } = requestBody;
+      return `${JSON.stringify(rest).slice(0, -1)},"tools":${preparedTools.serialized}}`;
+    };
+    let serializedBody = serializeRequest();
     for (const keyIndex of sortedIndices) {
       if (signal?.aborted) return { success: false, error: 'cancelled' };
       const currentKey = configuredKeys[keyIndex];
@@ -980,7 +989,7 @@ export class VoodooAiService {
             delete requestBody.tools;
             delete requestBody.tool_choice;
             errorBodyText = null;
-            serializedBody = JSON.stringify(requestBody);
+            serializedBody = serializeRequest();
             response = await fetch(endpoint, {
               method: 'POST',
               redirect: 'error',
@@ -996,11 +1005,15 @@ export class VoodooAiService {
 
 
         if (response.ok) {
-          const data = await response.json();
-          const choice = data.choices?.[0];
+          let data: Record<string, any>;
+          try { data = await response.json(); }
+          catch { return { success: false, error: 'invalid_completion' }; }
+          const choice = data?.choices?.[0];
           const choiceMsg = choice?.message;
-          if (!choiceMsg || (typeof choiceMsg.content !== 'string' && !Array.isArray(choiceMsg.tool_calls))) {
-            throw new Error('API вернул некорректный ответ вместо chat completion');
+          const hasReasoning = typeof choiceMsg?.reasoning_content === 'string' || typeof choiceMsg?.reasoning === 'string';
+          if (!choiceMsg || (typeof choiceMsg.content !== 'string' && !Array.isArray(choiceMsg.tool_calls)
+            && !(choiceMsg.content === null && (choiceMsg.role === 'assistant' || hasReasoning)))) {
+            return { success: false, error: 'invalid_completion' };
           }
 
           this.activeKeyIndex = keyIndex;
@@ -1118,6 +1131,8 @@ export class VoodooAiService {
     let lastActiveKeyMasked: string | undefined;
     let finalReply = '';
     let terminalError: string | undefined;
+    const preparedTools = options.toolExecutor ? prepareToolSchema(VOODOO_BROWSER_TOOLS) : undefined;
+    const toolDefinitions = preparedTools ? (preparedTools.tools as Array<{ function: VoodooToolDefinition }>).map(tool => tool.function) : undefined;
     const plan = new AgentPlan();
     const protocol: CompletionProtocol = { textOnly: (this.toolProtocolCache.get(capabilityKey) || 0) > Date.now() };
     const failedCalls = new Map<string, number>();
@@ -1223,7 +1238,7 @@ export class VoodooAiService {
         const args = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
           ? rawArgs as Record<string, unknown> : {};
         let validationError = parseError;
-        const definition = VOODOO_BROWSER_TOOLS.find((tool) => tool.name === name);
+        const definition = toolDefinitions?.find((tool) => tool.name === name);
         if (!definition) validationError = `Неизвестный инструмент: ${name}`;
         else if (!rawArgs || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) validationError = 'Аргументы должны быть JSON-объектом';
         else {
@@ -1265,9 +1280,10 @@ export class VoodooAiService {
           failedCalls.delete(signature);
           if (name !== 'update_plan') {
             observation = observe(result);
-            if (!readOnly || readObservations.get(signature) !== canonicalCall('observation', { observation })) progressVersion++;
+            const observationHash = readOnly ? canonicalCall('observation', { observation }) : undefined;
+            if (!readOnly || readObservations.get(signature) !== observationHash) progressVersion++;
             if (readOnly) {
-              readObservations.set(signature, canonicalCall('observation', { observation }));
+              readObservations.set(signature, observationHash!);
               if (readObservations.size > 64) readObservations.delete(readObservations.keys().next().value!);
               unobservedMutations.clear();
             } else {
@@ -1299,9 +1315,9 @@ export class VoodooAiService {
         let context: Array<Record<string, unknown>>;
         let completion: Awaited<ReturnType<VoodooAiService['executeChatCompletion']>> = { success: false, error: 'context_limit' };
         while (true) {
-          const tools = options.toolExecutor ? VOODOO_BROWSER_TOOLS.map(tool => ({ type: 'function', function: tool })) : undefined;
+          const tools = preparedTools?.tools;
           const extraMessages = plan.steps.length ? [{ role: 'user', content: plan.checkpoint() }] : [];
-          const budget = { windowTokens: effectiveWindowTokens, tools, outputTokens: COMPLETION_OUTPUT_TOKENS, extraMessages, textOnly: protocol.textOnly };
+          const budget = { windowTokens: effectiveWindowTokens, tools, preparedTools, outputTokens: COMPLETION_OUTPUT_TOKENS, extraMessages, textOnly: protocol.textOnly };
           try {
             const retained = workflowContext(apiMessages, runStart, executedActions, budget);
             if (retained !== apiMessages) {
@@ -1314,13 +1330,15 @@ export class VoodooAiService {
           }
           catch { terminalError = 'context_limit'; break; }
           estimatedInputTokens = Math.max(0, estimateRequestTokens(context, { ...budget, extraMessages: undefined }) - COMPLETION_OUTPUT_TOKENS);
-          completion = await this.executeChatCompletion(context, options.toolExecutor ? VOODOO_BROWSER_TOOLS : undefined, configuredKeys, baseUrl, model, signal, protocol);
-          if (completion.error !== 'context_length_exceeded') break;
+          completion = await this.executeChatCompletion(context, toolDefinitions, configuredKeys, baseUrl, model, signal, protocol, preparedTools);
+          if (completion.error !== 'context_length_exceeded') {
+            if (contextRecoveryUsed && completion.success) this.learnedContextLimits.set(capabilityKey, { tokens: effectiveWindowTokens, expires: Date.now() + 10 * 60_000 });
+            break;
+          }
           if (contextRecoveryUsed) { terminalError = 'context_limit'; break; }
           contextRecoveryUsed = true;
           // This is an adaptive retry ceiling, never a claim about model support.
           effectiveWindowTokens = Math.max(8192, Math.min(Math.floor(effectiveWindowTokens * 0.5), Math.floor((estimatedInputTokens + COMPLETION_OUTPUT_TOKENS) * 0.75)));
-          this.learnedContextLimits.set(capabilityKey, { tokens: effectiveWindowTokens, expires: Date.now() + 10 * 60_000 });
           progress('Провайдер отклонил размер контекста. Один раз уменьшаю историю, сохраняя исходный запрос и целые шаги…');
         }
         if (terminalError) break;
@@ -1344,6 +1362,7 @@ export class VoodooAiService {
         const rawContent = typeof msg.content === 'string' ? msg.content : '';
         const nativeCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
         const textCalls = nativeCalls.length === 0 && options.toolExecutor ? VoodooAiService.parseTextActionCalls(rawContent) : [];
+        if (!nativeCalls.length && !textCalls.length && !rawContent.trim()) { terminalError = 'empty_response'; break; }
         if (!options.toolExecutor || (!nativeCalls.length && !textCalls.length)) {
           if (options.toolExecutor && plan.pending && !plan.blockedReason) {
             if (++prematureReplies > 2) { terminalError = 'incomplete_plan'; break; }
@@ -1404,7 +1423,7 @@ export class VoodooAiService {
       if (terminalError === 'agent_limit') return finish(`Достигнут лимит шагов агента; задача может быть выполнена частично.\n${summary()}`, terminalError);
       if (terminalError === 'agent_blocked') return finish(`Задача выполнена частично. Причина остановки: ${plan.blockedReason}\nОсталось: ${plan.steps.slice(plan.completed).join('; ')}\n${summary()}`, terminalError);
       if (terminalError === 'incomplete_plan' || terminalError === 'agent_stalled') return finish(`Задача не завершена: модель не смогла продолжить выполнение. ${plan.pending ? `Осталось: ${plan.steps.slice(plan.completed).join('; ')}.` : 'Повторяющиеся действия не дали новых результатов.'}\n${summary()}`, terminalError);
-      const failureReason: Record<string, string> = { truncated_response: 'модель несколько раз вернула обрезанный ответ; попробуйте уменьшить объем одного отчета', context_limit: 'контекст не помещается в доступный бюджет или отклонён провайдером. Настройка 600000 — запрошенный бюджет, а не гарантия поддержки модели; сохраните промежуточные результаты и сократите исходный запрос', content_filter: 'провайдер остановил генерацию ответа' };
+      const failureReason: Record<string, string> = { empty_response: 'модель не вернула ответ или инструмент; выполнение не подтверждено', invalid_completion: 'провайдер вернул некорректный ответ; выполнение не подтверждено', truncated_response: 'модель несколько раз вернула обрезанный ответ; попробуйте уменьшить объем одного отчета', context_limit: 'контекст не помещается в доступный бюджет или отклонён провайдером. Настройка 250000 — запрошенный бюджет, а не гарантия поддержки модели; сохраните промежуточные результаты и сократите исходный запрос', content_filter: 'провайдер остановил генерацию ответа' };
       if (terminalError) return finish(`Не удалось продолжить работу Вуду: ${failureReason[terminalError] || terminalError}.${executedActions.length ? `\nРезультаты выполненных попыток:\n${summary()}` : ''}`, terminalError);
       const reply = VoodooAiService.cleanActionBlocks(finalReply) || (executedActions.length ? `Результаты действий агента:\n${summary()}` : 'Модель вернула пустой ответ. Попробуйте повторить запрос.');
       return finish(reply);

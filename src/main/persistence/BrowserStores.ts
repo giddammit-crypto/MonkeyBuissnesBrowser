@@ -48,7 +48,7 @@ const defaultSettings: BrowserSettings = {
   voodooBubbleVisible: true,
   voodooKeys: [],
   voodooModel: 'qwen/qwen3.8-max:free',
-  voodooContextWindowTokens: 600000,
+  voodooContextWindowTokens: requestedContextWindow(),
   voodooBaseUrl: 'https://api.xkiro.com/v1',
 };
 

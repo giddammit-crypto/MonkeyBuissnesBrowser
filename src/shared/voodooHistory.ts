@@ -1,5 +1,5 @@
 import type { VoodooActionExecution, VoodooChatMessage } from './types';
-import { estimateTokens } from './voodooContext';
+import { estimateTokens, DEFAULT_CONTEXT_WINDOW_TOKENS } from './voodooContext';
 
 export const VOODOO_SESSION_HISTORY_LIMIT = 1_000_000;
 const BODY_KEYS = /^(content|html|outerHTML|innerHTML|code|script|text|body|data|base64|screenshot)$/i;
@@ -110,6 +110,6 @@ export function restoreVoodooHistory(serialized: string | null): VoodooChatMessa
       analyzedContext: typeof message.analyzedContext === 'string' ? message.analyzedContext : undefined,
       suggestedReplies: Array.isArray(message.suggestedReplies) ? message.suggestedReplies.filter((reply): reply is string => typeof reply === 'string').slice(0, 8) : undefined,
       executedActions: Array.isArray(message.executedActions) ? message.executedActions.filter((action) => action && typeof action.tool === 'string' && typeof action.summary === 'string' && action.args && typeof action.args === 'object') : undefined,
-    })), 600000);
+    })), DEFAULT_CONTEXT_WINDOW_TOKENS);
   } catch { return []; }
 }

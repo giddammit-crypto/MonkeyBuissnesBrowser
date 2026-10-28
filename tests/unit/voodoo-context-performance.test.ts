@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { BrowserStores } from '../../src/main/persistence/BrowserStores';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VoodooAiService, VOODOO_BROWSER_TOOLS } from '../../src/main/services/VoodooAiService';
 import { estimateRequestTokens, estimateTokens, requestedContextWindow, workflowContext } from '../../src/main/services/AgentWorkflow';
@@ -9,10 +13,11 @@ const rejected = (status: number, message: string) => ({ ok: false, status, text
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('Voodoo context capacity and request efficiency', () => {
-  it('defaults to a 600000 token local budget and bounds invalid configuration', () => {
-    expect(requestedContextWindow()).toBe(600000);
-    expect(requestedContextWindow(Number.NaN)).toBe(600000);
-    expect(requestedContextWindow(900000)).toBe(600000);
+  it('defaults to a 250000 token local budget and bounds invalid configuration', () => {
+    expect(requestedContextWindow()).toBe(250000);
+    expect(requestedContextWindow(Number.NaN)).toBe(250000);
+    expect(requestedContextWindow(900000)).toBe(250000);
+    expect(requestedContextWindow(600000)).toBe(250000);
     expect(requestedContextWindow(100)).toBeGreaterThanOrEqual(8192);
   });
 
@@ -23,8 +28,8 @@ describe('Voodoo context capacity and request efficiency', () => {
       { role: 'assistant', content: 'Acknowledged.' },
       { role: 'user', content: 'Continue from the original data.' },
     ];
-    expect(estimateRequestTokens(history, { tools: VOODOO_BROWSER_TOOLS })).toBeLessThan(600000);
-    const actual = workflowContext(history, history.length, [], { windowTokens: 600000, tools: VOODOO_BROWSER_TOOLS });
+    expect(estimateRequestTokens(history, { tools: VOODOO_BROWSER_TOOLS })).toBeLessThan(250000);
+    const actual = workflowContext(history, history.length, [], { windowTokens: 250000, tools: VOODOO_BROWSER_TOOLS });
     expect(actual).toEqual(history);
   });
 
@@ -66,14 +71,14 @@ describe('Voodoo context capacity and request efficiency', () => {
     expect(estimateTokens('Ж'.repeat(10000))).toBeGreaterThan(estimateTokens('A'.repeat(10000)));
   });
 
-  it('sends large initial user content intact within the configured 600000 context', async () => {
+  it('sends large initial user content intact within the configured 250000 context', async () => {
     const input = 'BEGIN_LONG_REQUEST' + 'W'.repeat(150000) + 'END_LONG_REQUEST';
     const requests: any[] = [];
     vi.stubGlobal('fetch', vi.fn(async (_url: string, options: any) => {
       requests.push(JSON.parse(options.body));
       return ok();
     }));
-    const result = await new VoodooAiService().chat([{ ...messages[0], content: input }], { keys, contextWindowTokens: 600000, toolExecutor: vi.fn() });
+    const result = await new VoodooAiService().chat([{ ...messages[0], content: input }], { keys, contextWindowTokens: 250000, toolExecutor: vi.fn() });
     expect(result.error).toBeUndefined();
     expect(requests).toHaveLength(1);
     expect(requests[0].messages.some((message: any) => message.content === input)).toBe(true);
@@ -136,7 +141,7 @@ describe('Voodoo context capacity and request efficiency', () => {
       { ...messages[0], id: 'old_reply', role: 'assistant' as const, content: 'Old answer' },
       { ...messages[0], id: 'latest', content: 'CURRENT_REQUEST_MUST_REMAIN' },
     ];
-    const result = await new VoodooAiService().chat(history, { keys, contextWindowTokens: 600000, toolExecutor: vi.fn() });
+    const result = await new VoodooAiService().chat(history, { keys, contextWindowTokens: 250000, toolExecutor: vi.fn() });
     expect(result.error).toBeUndefined();
     expect(requests).toHaveLength(2);
     expect(JSON.stringify(requests[1].messages).length).toBeLessThan(JSON.stringify(requests[0].messages).length);
@@ -182,6 +187,19 @@ describe('Voodoo context capacity and request efficiency', () => {
     expect(executor).toHaveBeenCalledTimes(120);
     expect(fetchMock).toHaveBeenCalledTimes(121);
     expect(result.executedActionCount).toBe(120);
+  });
+
+  it('migrates a persisted legacy 600000-token setting to the 250000-token cap', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'voodoo-context-migration-'));
+    try {
+      const original = new BrowserStores(directory);
+      fs.writeFileSync(path.join(directory, 'settings.json'), JSON.stringify({ ...original.settings.get(), voodooContextWindowTokens: 600000 }));
+      const migrated = new BrowserStores(directory);
+      expect(migrated.settings.get().voodooContextWindowTokens).toBe(250000);
+      migrated.settings.set({ ...migrated.settings.get(), voodooContextWindowTokens: 600000 });
+      expect(migrated.settings.get().voodooContextWindowTokens).toBe(250000);
+      expect(new BrowserStores(directory).settings.get().voodooContextWindowTokens).toBe(250000);
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
   });
 
 });

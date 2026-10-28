@@ -2,6 +2,8 @@ import React, { useRef, useState } from "react";
 import {
   ArrowRight,
   Bookmark,
+  Download,
+  Upload,
   Globe2,
   History,
   Pencil,
@@ -71,7 +73,7 @@ export default function EntriesManager({
     setMessage("");
     try {
       await action();
-      setMessage(success);
+      if (success) setMessage(success);
       if (success !== "Закладка удалена.") setRemoved(null);
     } catch (cause) {
       setError(userFacingError(cause, "Не удалось выполнить действие."));
@@ -98,6 +100,21 @@ export default function EntriesManager({
             </p>
           </div>
         </div>
+        <div className="manager-heading-actions">
+          {bookmarks && <>
+            <button type="button" className="plain-button" disabled={busy}
+              onClick={() => void perform(async () => {
+                const report = await window.browserApi.importBrowserFile('bookmarks');
+                if (!report) { setMessage('Выбор файла отменён.'); return; }
+                setMessage(`Импортировано: ${report.imported}. Пропущено: ${report.skipped}.`);
+                if (report.errors.length || report.warnings.length) setError([...report.errors, ...report.warnings].join(' '));
+              })}><Upload size={16} /> Импорт HTML</button>
+            <button type="button" className="plain-button" disabled={busy || !entries.length}
+              onClick={() => void perform(async () => {
+                const result = await window.browserApi.exportBookmarks();
+                setMessage(result.saved ? `Экспортировано закладок: ${result.count}. Файл HTML сохранён.` : 'Экспорт отменён.');
+              })}><Download size={16} /> Экспорт HTML</button>
+          </>}
         <button
           ref={bookmarks ? addButtonRef : undefined}
           className="plain-button"
@@ -111,6 +128,7 @@ export default function EntriesManager({
           {bookmarks ? <Plus size={17} /> : <Trash2 size={17} />}{" "}
           {bookmarks ? "Добавить закладку" : "Очистить историю"}
         </button>
+        </div>
       </div>
       <div className="manager-filters">
         <label className="panel-search">

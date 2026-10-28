@@ -1,0 +1,17 @@
+.split-controls { position: relative; }
+.split-picker { position: fixed; overflow-y: auto; width: min(350px, calc(100vw - 24px)); padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface, #17202c); color: var(--text); box-shadow: 0 16px 50px #0006; z-index: 1500; }
+.split-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.split-picker p { font-size: 12px; line-height: 1.5; color: var(--text-muted); margin: 8px 0 12px; }
+.split-picker label { display: block; font-size: 12px; margin-bottom: 6px; }
+.split-picker select { width: 100%; margin-bottom: 6px; }
+.split-picker select, .split-view-status select { border: 1px solid var(--border); border-radius: 7px; padding: 6px; color: var(--text); background: var(--surface-subtle); font: inherit; }
+.split-picker .primary-button { width: 100%; }
+.split-view-status { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; min-height: 38px; padding: 5px 12px; border-bottom: 1px solid var(--border); color: var(--text); background: var(--surface, #17202c); font-size: 11px; }
+.split-view-status > svg { flex-shrink: 0; color: var(--accent); }
+.split-page-title, .split-page-switch { min-width: 0; flex: 1 1 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.split-page-switch, .split-close { border: 1px solid var(--border); border-radius: 7px; color: inherit; padding: 5px 8px; background: var(--surface-subtle); font: inherit; cursor: pointer; }
+.split-page-switch { text-align: left; }
+.split-ratio-label, .split-close { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.split-view-status button:focus-visible, .split-controls button:focus-visible, .split-view-status select:focus-visible, .split-picker select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.split-view-status button:disabled { opacity: .55; cursor: wait; }
+@media (max-width: 720px) { .split-view-status { flex-wrap: wrap; gap: 6px; } .split-page-title, .split-page-switch { flex-basis: calc(50% - 28px); } .split-ratio-label { margin-left: auto; } }

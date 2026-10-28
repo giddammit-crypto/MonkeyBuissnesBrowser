@@ -114,6 +114,9 @@ function registerIpc(): void {
     if (event.senderFrame === event.sender.mainFrame && typeof dirty === 'boolean') controller?.markFormState(event.sender.id, dirty);
   });
   ipcMain.handle('browser:close-tab', (event, tabId: string) => requireShell(event).closeTab(tabId));
+  ipcMain.handle('browser:set-split-view', (event, tabId?: string) => requireShell(event).setSplitView(tabId));
+  ipcMain.handle('browser:set-split-view-ratio', (event, ratio: number) => requireShell(event).setSplitViewRatio(ratio));
+  ipcMain.handle('browser:export-bookmarks', (event) => requireShell(event).exportBookmarks());
   ipcMain.handle('browser:show-tab-menu', (event, tabId: string) => requireShell(event).showTabMenu(tabId));
   ipcMain.handle('browser:close-related-tabs', (event, tabId: string, scope: 'others' | 'right' | 'left') => requireShell(event).closeRelatedTabs(tabId, scope));
   ipcMain.handle('browser:navigate', (event, tabId: string, input: string) => requireShell(event).navigate(tabId, input));

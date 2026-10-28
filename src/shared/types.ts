@@ -348,6 +348,7 @@ export interface GoogleAccount {
 }
 
 export interface BrowserSnapshot {
+  splitView?: { secondaryTabId: string; ratio: number };
   tabs: TabSnapshot[];
   activeTabId: string;
   isFullScreen?: boolean;
