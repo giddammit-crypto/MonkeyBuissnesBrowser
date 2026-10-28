@@ -2824,6 +2824,7 @@ export class BrowserController {
         this.window.contentView.addChildView(view);
       }
       this.applyBounds(tab);
+      this.ensureVoodooOnTop();
     } else {
       (view as any).setVisible?.(false);
       view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
@@ -4240,10 +4241,36 @@ export class BrowserController {
     this.setVoodooOpen(!this.voodooOpen);
   }
 
+  ensureVoodooOnTop(): void {
+    if (!this.voodooView || this.voodooView.webContents.isDestroyed() || !this.window || this.window.isDestroyed()) return;
+    const settings = this.stores.settings.get();
+    if (settings.voodooEnabled === false) return;
+    const children = this.window.contentView.children;
+    if (children.length > 0 && children[children.length - 1] !== this.voodooView) {
+      try {
+        this.window.contentView.removeChildView(this.voodooView);
+        this.window.contentView.addChildView(this.voodooView);
+      } catch {}
+    }
+  }
+
   setVoodooOpen(open: boolean): void {
     this.voodooOpen = Boolean(open);
+    if (!this.voodooOpen) {
+      // When minimizing/folding Voodoo, ensure the floating circle avatar is visible
+      const settings = this.stores.settings.get();
+      if (settings.voodooBubbleVisible === false) {
+        this.stores.settings.set({ ...settings, voodooBubbleVisible: true });
+        this.emitSnapshot();
+      }
+    }
     this.refreshVoodooBounds();
+    this.ensureVoodooOnTop();
     this.voodooView?.webContents.send('browser:event', {
+      type: 'voodoo-set-open',
+      message: String(this.voodooOpen),
+    });
+    this.shellView?.webContents.send('browser:event', {
       type: 'voodoo-set-open',
       message: String(this.voodooOpen),
     });
@@ -4263,8 +4290,8 @@ export class BrowserController {
         y: Math.max(0, Math.min(curY + deltaY, winBounds.height - 100)),
       };
     } else {
-      const curX = this.voodooBubblePosition.x ?? (winBounds.width - 68 - 24);
-      const curY = this.voodooBubblePosition.y ?? (winBounds.height - 68 - 24);
+      const curX = this.voodooBubblePosition.x ?? (winBounds.width - 76 - 24);
+      const curY = this.voodooBubblePosition.y ?? (winBounds.height - 76 - 24);
       this.voodooBubblePosition = {
         x: Math.max(0, Math.min(curX + deltaX, winBounds.width - 60)),
         y: Math.max(0, Math.min(curY + deltaY, winBounds.height - 60)),
@@ -4307,9 +4334,12 @@ export class BrowserController {
     const settings = this.stores.settings.get();
 
     if (settings.voodooEnabled === false) {
+      (this.voodooView as any).setVisible?.(false);
       this.voodooView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
       return;
     }
+
+    this.ensureVoodooOnTop();
 
     if (this.voodooOpen) {
       const w = Math.min(Math.max(320, this.voodooDimensions.width), winBounds.width - 10);
@@ -4324,9 +4354,10 @@ export class BrowserController {
       targetY = Math.max(0, Math.min(targetY, winBounds.height - h));
 
       this.voodooPosition = { x: targetX, y: targetY };
+      (this.voodooView as any).setVisible?.(true);
       this.voodooView.setBounds({ x: targetX, y: targetY, width: w, height: h });
     } else if (settings.voodooBubbleVisible !== false) {
-      const size = 68;
+      const size = 76;
       const defaultX = Math.max(10, winBounds.width - size - 24);
       const defaultY = Math.max(10, winBounds.height - size - 24);
 
@@ -4337,8 +4368,10 @@ export class BrowserController {
       targetY = Math.max(0, Math.min(targetY, winBounds.height - size));
 
       this.voodooBubblePosition = { x: targetX, y: targetY };
+      (this.voodooView as any).setVisible?.(true);
       this.voodooView.setBounds({ x: targetX, y: targetY, width: size, height: size });
     } else {
+      (this.voodooView as any).setVisible?.(false);
       this.voodooView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     }
   }

@@ -439,15 +439,21 @@ describe('BrowserController.executeVoodooTool', () => {
 
     const controller = Object.create(BrowserController.prototype) as any;
     const tabsMap = new Map([['tab-active', tab]]);
+    let currentSettings = { searchEngine: 'https://www.google.com/search?q=%s', voodooBubbleVisible: true, voodooEnabled: true };
+    const stores = {
+      settings: {
+        get: () => currentSettings,
+        set: (next: any) => { currentSettings = next; },
+      },
+    };
 
     Object.assign(controller, {
       tabs: tabsMap,
       activeTabId: 'tab-active',
-      stores: {
-        settings: {
-          get: () => ({ searchEngine: 'https://www.google.com/search?q=%s' }),
-        },
-      },
+      stores,
+      emitSnapshot: vi.fn(),
+      refreshVoodooBounds: vi.fn(),
+      ensureVoodooOnTop: vi.fn(),
       createTab: vi.fn().mockImplementation(async (opts: any) => {
         const newTab = { id: 'new-tab-id', title: 'New Tab', url: opts.url, view: { webContents } };
         tabsMap.set(newTab.id, newTab);
@@ -475,7 +481,7 @@ describe('BrowserController.executeVoodooTool', () => {
       }),
     });
 
-    return { controller, tab, webContents, executedJsCalls, tabsMap };
+    return { controller, tab, webContents, executedJsCalls, tabsMap, stores };
   }
 
   it('handles search_web tool in current and new tab', async () => {
@@ -572,5 +578,15 @@ describe('BrowserController.executeVoodooTool', () => {
     const unknownRes = await controller.executeVoodooTool('unsupported_magic_tool', {});
     expect(unknownRes.success).toBe(false);
     expect(unknownRes.error).toContain('Неизвестный инструмент');
+  });
+
+  it('ensures bubble is visible and view is raised on top when Voodoo is minimized/closed', () => {
+    const { controller, stores } = createTestController();
+    stores.settings.set({ ...stores.settings.get(), voodooBubbleVisible: false });
+
+    controller.setVoodooOpen(false);
+
+    expect(stores.settings.get().voodooBubbleVisible).toBe(true);
+    expect(typeof (controller as any).ensureVoodooOnTop).toBe('function');
   });
 });

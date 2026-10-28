@@ -43,6 +43,18 @@ body.voodoo-standalone #root {
   transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease;
   outline: none;
   user-select: none;
+  animation: voodoo-bubble-appear 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes voodoo-bubble-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.65);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .voodoo-floating-bubble:active {

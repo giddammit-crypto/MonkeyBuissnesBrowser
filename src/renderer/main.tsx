@@ -4296,7 +4296,7 @@ function SettingsPanel({
               <strong>Установленная версия</strong>
               <small>Если здесь нет новых настроек, запущена старая сборка. После обновления GitHub приложение нужно пересобрать и переустановить.</small>
             </span>
-            <strong>soulm8te 0.7.1</strong>
+            <strong>soulm8te 0.8.1</strong>
           </div>
           <label className="setting-row">
             <span><strong>Стиль оформления</strong><small>Отдельный стиль Detroit · Хлоя или Cyberpunk. Исходные темы не изменяются.</small></span>
@@ -4893,7 +4893,7 @@ function SettingsPanel({
           <div>
             <strong>soulm8te Browser</strong>
             <p>Ваш цифровой союзник · Detroit: Become Human</p>
-            <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.7.1</small>
+            <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.8.1</small>
           </div>
         </div>
       </div>

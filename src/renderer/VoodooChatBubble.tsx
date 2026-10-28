@@ -504,9 +504,13 @@ export default function VoodooChatBubble({
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Escape' && isListening) {
+    if (e.key === 'Escape') {
       e.preventDefault();
-      cancelListening();
+      if (isListening) {
+        cancelListening();
+      } else {
+        void closeWindow();
+      }
       return;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -722,28 +726,21 @@ export default function VoodooChatBubble({
             <div className="voodoo-header-actions">
               <button
                 className="voodoo-header-btn"
-                title="Сбросить позицию окна в угол"
+                title="Сбросить позицию в правый нижний угол"
                 onClick={() => void window.browserApi.resetVoodooPosition()}
               >
                 <Move size={14} />
               </button>
               <button
                 className="voodoo-header-btn"
-                title="Скрыть плавающий бабл"
-                onClick={() => void hideBubble()}
-              >
-                <EyeOff size={14} />
-              </button>
-              <button
-                className="voodoo-header-btn"
-                title="Свернуть окно"
+                title="Свернуть в кружок"
                 onClick={() => void closeWindow()}
               >
                 <Minus size={14} />
               </button>
               <button
                 className="voodoo-header-btn"
-                title="Закрыть"
+                title="Закрыть (свернуть в кружок)"
                 onClick={() => void closeWindow()}
               >
                 <X size={14} />
