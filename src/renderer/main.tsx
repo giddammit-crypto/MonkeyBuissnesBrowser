@@ -695,7 +695,15 @@ function App(): React.JSX.Element {
     currentTab?.lifecycle,
     snapshot?.activeTabId,
   ]);
-  const isPopoverOpen = Boolean(popover) || tabSearchOpen || editingAddress || taskManagerOpen || notesDrawerOpen;
+  const isPopoverOpen = Boolean(popover)
+    || tabSearchOpen
+    || editingAddress
+    || taskManagerOpen
+    || notesDrawerOpen
+    || clickCleanOpen
+    || Boolean(pendingPasswordOffer)
+    || workspaceOpen
+    || findOpen;
   const hasActiveWebPage = panel === "home" && Boolean(currentTab && !currentTab.isInternal && currentTab.lifecycle !== "crashed");
   useEffect(() => {
     void window.browserApi.setPopoverOpen(isPopoverOpen || panel !== "home");

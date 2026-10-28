@@ -758,9 +758,14 @@ export class BrowserController {
         tab.view.webContents.send('tab:set-pip-mini-mode', { enabled: false, tabId: tab.id });
         if (this.window && !this.window.contentView.children.includes(tab.view)) {
           this.window.contentView.addChildView(tab.view);
-        } else {
-          try { this.window?.contentView.removeChildView(tab.view); } catch {}
-          this.window?.contentView.addChildView(tab.view);
+        } else if (this.window && !this.popoverOpen && this.shellView && !this.shellView.webContents.isDestroyed()) {
+          const children = this.window.contentView.children;
+          const tabIdx = children.indexOf(tab.view);
+          const shellIdx = children.indexOf(this.shellView);
+          if (tabIdx !== -1 && shellIdx !== -1 && tabIdx < shellIdx) {
+            try { this.window.contentView.removeChildView(tab.view); } catch {}
+            this.window.contentView.addChildView(tab.view);
+          }
         }
         this.applyBounds(tab);
         tab.view.webContents.focus();
@@ -784,28 +789,39 @@ export class BrowserController {
       }
     }
     if (next.isInternal || next.lifecycle === 'crashed' || next.isReaderActive) {
-      if (this.shellView && !this.shellView.webContents.isDestroyed()) {
-        try { this.window?.contentView.removeChildView(this.shellView); } catch {}
-        this.window?.contentView.addChildView(this.shellView);
+      if (this.shellView && !this.shellView.webContents.isDestroyed() && this.window) {
+        const children = this.window.contentView.children;
+        const shellIdx = children.indexOf(this.shellView);
+        if (shellIdx !== -1 && shellIdx !== children.length - 1 && (!this.voodooView || children[children.length - 1] !== this.voodooView)) {
+          try {
+            this.window.contentView.removeChildView(this.shellView);
+            this.window.contentView.addChildView(this.shellView);
+          } catch {}
+        }
         this.shellView.webContents.focus();
-      }
-    } else if (next.view && !next.view.webContents.isDestroyed()) {
-      if (this.window && this.window.contentView.children.includes(next.view)) {
-        try {
-          this.window.contentView.removeChildView(next.view);
-          this.window.contentView.addChildView(next.view);
-          next.view.webContents.focus();
-        } catch {}
       }
     }
     // Float background PiP tabs on top of the active view/shell
     for (const tab of this.tabs.values()) {
-      if (tab.id !== tabId && tab.isPictureInPicture && !tab.isInternal && tab.view && !tab.view.webContents.isDestroyed() && tab.lifecycle !== 'crashed') {
-        try { this.window?.contentView.removeChildView(tab.view); } catch {}
-        this.window?.contentView.addChildView(tab.view);
+      if (tab.id !== tabId && tab.isPictureInPicture && !tab.isInternal && tab.view && !tab.view.webContents.isDestroyed() && tab.lifecycle !== 'crashed' && this.window) {
+        const children = this.window.contentView.children;
+        const pipIdx = children.indexOf(tab.view);
+        if (pipIdx !== -1 && pipIdx < children.length - 1 && (!this.voodooView || children[children.length - 1] !== this.voodooView)) {
+          try { this.window.contentView.removeChildView(tab.view); } catch {}
+          this.window.contentView.addChildView(tab.view);
+        }
       }
     }
     this.raiseShellOverlay();
+    // Ensure Voodoo floating assistant stays on top of all views
+    if (this.voodooView && !this.voodooView.webContents.isDestroyed() && this.window && !this.window.isDestroyed()) {
+      const children = this.window.contentView.children;
+      if (children[children.length - 1] !== this.voodooView) {
+        try { this.window.contentView.removeChildView(this.voodooView); } catch {}
+        this.window.contentView.addChildView(this.voodooView);
+      }
+      this.refreshVoodooBounds();
+    }
     this.emitSnapshot();
   }
 
@@ -1928,9 +1944,31 @@ export class BrowserController {
   private raiseShellOverlay(): void {
     if (!this.popoverOpen || !this.window || this.window.isDestroyed() || !this.shellView || this.shellView.webContents.isDestroyed()) return;
     const children = this.window.contentView.children;
-    if (children[children.length - 1] !== this.shellView) {
-      try { this.window.contentView.removeChildView(this.shellView); } catch {}
-      this.window.contentView.addChildView(this.shellView);
+    const activeTab = this.tabs.get(this.activeTabId);
+    const shellIdx = children.indexOf(this.shellView);
+    if (activeTab?.view && !activeTab.view.webContents.isDestroyed() && !activeTab.isInternal && activeTab.lifecycle !== 'crashed') {
+      const tabIdx = children.indexOf(activeTab.view);
+      if (shellIdx !== -1 && tabIdx !== -1 && shellIdx < tabIdx) {
+        try {
+          this.window.contentView.removeChildView(this.shellView);
+          this.window.contentView.addChildView(this.shellView);
+        } catch {}
+      }
+    } else if (shellIdx !== -1 && shellIdx !== children.length - 1 && (!this.voodooView || children[children.length - 1] !== this.voodooView)) {
+      try {
+        this.window.contentView.removeChildView(this.shellView);
+        this.window.contentView.addChildView(this.shellView);
+      } catch {}
+    }
+    // If voodooView was present and should be top-most, ensure it stays above shellView
+    if (this.voodooView && !this.voodooView.webContents.isDestroyed() && children.includes(this.voodooView)) {
+      const curChildren = this.window.contentView.children;
+      if (curChildren[curChildren.length - 1] !== this.voodooView) {
+        try {
+          this.window.contentView.removeChildView(this.voodooView);
+          this.window.contentView.addChildView(this.voodooView);
+        } catch {}
+      }
     }
   }
 
@@ -2735,6 +2773,21 @@ export class BrowserController {
     const onDownload = (_event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents) => this.handleDownload(item, contents);
     this.sessionDownloadHandlers.set(targetSession, onDownload);
     targetSession.on('will-download', onDownload);
+
+    // Support Russian Trusted Root CA (Минцифры / Госуслуги / VK / Сбер) securely without spurious SSL cert errors
+    targetSession.setCertificateVerifyProc((request, callback) => {
+      const { errorCode, certificate } = request;
+      if (errorCode === 0) {
+        callback(0);
+        return;
+      }
+      const issuer = `${certificate?.issuerName || ''} ${certificate?.subjectName || ''}`;
+      if (issuer.includes('Russian Trusted') || issuer.includes('Минцифры') || issuer.includes('Ministry of Digital Development')) {
+        callback(0);
+        return;
+      }
+      callback(errorCode);
+    });
   }
 
   private attachWebContents(tab: TabRecord, initialUrl: string, popupOptions?: Electron.BrowserWindowConstructorOptions): Electron.WebContents | undefined {
@@ -2766,10 +2819,13 @@ export class BrowserController {
     }
     this.installTabHandlers(tab);
     if (tab.id === this.activeTabId && !tab.isInternal && tab.lifecycle !== 'crashed') {
-      try { this.window.contentView.removeChildView(view); } catch {}
-      this.window.contentView.addChildView(view);
+      (view as any).setVisible?.(true);
+      if (this.window && !this.window.contentView.children.includes(view)) {
+        this.window.contentView.addChildView(view);
+      }
       this.applyBounds(tab);
     } else {
+      (view as any).setVisible?.(false);
       view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     }
     // Electron loads the requested popup URL after createWindow returns this
@@ -3224,31 +3280,43 @@ export class BrowserController {
       } else {
         (tab.view as any).setVisible?.(false);
         tab.view.webContents.setBackgroundThrottling(true);
-        this.applyBounds(tab);
       }
     }
 
     if (activeTab && (activeTab.isInternal || activeTab.isReaderActive || activeTab.lifecycle === 'crashed')) {
-      if (this.shellView && !this.shellView.webContents.isDestroyed()) {
-        try {
-          this.window.contentView.removeChildView(this.shellView);
-          this.window.contentView.addChildView(this.shellView);
-        } catch {}
+      if (this.shellView && !this.shellView.webContents.isDestroyed() && this.window) {
+        const children = this.window.contentView.children;
+        const shellIdx = children.indexOf(this.shellView);
+        if (shellIdx !== -1 && shellIdx !== children.length - 1 && (!this.voodooView || children[children.length - 1] !== this.voodooView)) {
+          try {
+            this.window.contentView.removeChildView(this.shellView);
+            this.window.contentView.addChildView(this.shellView);
+          } catch {}
+        }
       }
-    } else if (activeTab?.view && !activeTab.view.webContents.isDestroyed()) {
-      if (this.window && this.window.contentView.children.includes(activeTab.view)) {
-        try {
-          this.window.contentView.removeChildView(activeTab.view);
-          this.window.contentView.addChildView(activeTab.view);
-        } catch {}
+    } else if (activeTab?.view && !activeTab.view.webContents.isDestroyed() && this.window) {
+      if (!this.popoverOpen && this.shellView && !this.shellView.webContents.isDestroyed()) {
+        const children = this.window.contentView.children;
+        const tabIdx = children.indexOf(activeTab.view);
+        const shellIdx = children.indexOf(this.shellView);
+        if (tabIdx !== -1 && shellIdx !== -1 && tabIdx < shellIdx) {
+          try {
+            this.window.contentView.removeChildView(activeTab.view);
+            this.window.contentView.addChildView(activeTab.view);
+          } catch {}
+        }
       }
     }
 
     // Ensure floating PiP tabs stay on top of the active tab / shell
     for (const tab of this.tabs.values()) {
-      if (tab !== activeTab && tab.isPictureInPicture && !tab.isInternal && tab.view && !tab.view.webContents.isDestroyed() && tab.lifecycle !== 'crashed') {
-        try { this.window.contentView.removeChildView(tab.view); } catch {}
-        this.window.contentView.addChildView(tab.view);
+      if (tab !== activeTab && tab.isPictureInPicture && !tab.isInternal && tab.view && !tab.view.webContents.isDestroyed() && tab.lifecycle !== 'crashed' && this.window) {
+        const children = this.window.contentView.children;
+        const pipIdx = children.indexOf(tab.view);
+        if (pipIdx !== -1 && pipIdx < children.length - 1 && (!this.voodooView || children[children.length - 1] !== this.voodooView)) {
+          try { this.window.contentView.removeChildView(tab.view); } catch {}
+          this.window.contentView.addChildView(tab.view);
+        }
       }
     }
     // Bounds updates arrive after React layout and must never cover a dialog.
@@ -3256,8 +3324,11 @@ export class BrowserController {
 
     // Ensure Voodoo floating assistant stays on top of all views
     if (this.voodooView && !this.voodooView.webContents.isDestroyed() && this.window && !this.window.isDestroyed()) {
-      try { this.window.contentView.removeChildView(this.voodooView); } catch {}
-      this.window.contentView.addChildView(this.voodooView);
+      const children = this.window.contentView.children;
+      if (children[children.length - 1] !== this.voodooView) {
+        try { this.window.contentView.removeChildView(this.voodooView); } catch {}
+        this.window.contentView.addChildView(this.voodooView);
+      }
       this.refreshVoodooBounds();
     }
   }
@@ -3265,6 +3336,7 @@ export class BrowserController {
   private applyBounds(tab: TabRecord): void {
     if (!tab.view || tab.isInternal || tab.lifecycle === 'crashed' || tab.isReaderActive) {
       if (tab.view) {
+        (tab.view as any).setVisible?.(false);
         try { this.window?.contentView.removeChildView(tab.view); } catch {}
         tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
       }
@@ -3274,6 +3346,7 @@ export class BrowserController {
     if (!bounds) return;
     const isFullScreen = Boolean(this.window && !this.window.isDestroyed() && this.window.isFullScreen());
     if (this.htmlFullscreenTabId === tab.id || (isFullScreen && tab.id === this.activeTabId)) {
+      (tab.view as any).setVisible?.(true);
       tab.view.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height });
       return;
     }
@@ -3287,6 +3360,12 @@ export class BrowserController {
     // Tab WebContentsView must stretch all the way to the bottom edge of the window
     const height = Math.max(0, bounds.height - y);
     const width = Math.min(chrome.width, bounds.width - x);
+    if (width <= 0 || height <= 0) {
+      (tab.view as any).setVisible?.(false);
+      tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      return;
+    }
+    (tab.view as any).setVisible?.(true);
     tab.view.setBounds({ x, y, width, height });
   }
 

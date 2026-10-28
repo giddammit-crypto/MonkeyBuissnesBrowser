@@ -1292,7 +1292,7 @@ select {
   min-height: 0;
   width: 100%;
   overflow: auto;
-  background: transparent;
+  background: var(--canvas, #171b20);
 }
 :root[data-wallpaper="plain"] .page-viewport {
   background: var(--canvas, #171b20);

@@ -22,7 +22,8 @@ app.setName('soulm8te');
 app.setAppUserModelId('soulm8te');
 app.userAgentFallback = getChromeUserAgent();
 if (process.platform === 'linux') {
-  app.commandLine.appendSwitch('disable-features', 'Vulkan');
+  app.commandLine.appendSwitch('disable-features', 'Vulkan,WaylandVulkan');
+  app.commandLine.appendSwitch('disable-vulkan-fallback');
   app.commandLine.appendSwitch('use-webgpu-adapter', 'opengles');
   app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
 }
