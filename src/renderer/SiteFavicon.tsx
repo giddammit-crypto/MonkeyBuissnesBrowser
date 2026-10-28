@@ -34,17 +34,10 @@ export function getFaviconSources(
   url: string,
   favicon?: string | null
 ): { primarySrc: string | null; fallbackSrc: string | null } {
-  let hostname = "";
-  try {
-    const raw = url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
-    hostname = new URL(raw).hostname.replace(/^www\./, "");
-  } catch {}
-
+  // Never disclose visited hostnames to a third-party favicon lookup service.
+  // This component is also rendered for private tabs in the normal shell session.
   const primarySrc = favicon && favicon.trim() ? favicon.trim() : null;
-  const fallbackSrc =
-    hostname && !isPrivateHost(hostname)
-      ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`
-      : null;
+  const fallbackSrc = null;
 
   return { primarySrc, fallbackSrc };
 }

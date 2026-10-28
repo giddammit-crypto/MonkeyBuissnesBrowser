@@ -135,7 +135,7 @@ export class FilterEngine {
     }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
     const host = url.hostname.toLowerCase();
-    const pathAndQuery = `${url.pathname}${url.search}`.toLowerCase();
+    const pathname = url.pathname.toLowerCase();
     let matchedHost = host;
     let hostBlocked = false;
     while (matchedHost) {
@@ -144,8 +144,20 @@ export class FilterEngine {
       if (dot < 0) break;
       matchedHost = matchedHost.slice(dot + 1);
     }
-    const rawLower = hostBlocked ? '' : rawUrl.toLowerCase();
-    const blocked = hostBlocked || this.pathRules.some(token => pathAndQuery.includes(token) || rawLower.includes(token));
+    // A nested URL, video title or tracking parameter is data, not the
+    // requested resource path. Matching the entire URL blocked legitimate
+    // icon/stylesheet/bootstrap requests with e.g. ?next=/ads/ in their query.
+    const blocked = hostBlocked || this.pathRules.some(token => {
+      const queryStart = token.indexOf('?');
+      if (queryStart < 0) return pathname.includes(token);
+      const path = token.slice(0, queryStart);
+      if (!pathname.includes(path)) return false;
+      const expected = new URLSearchParams(token.slice(queryStart + 1));
+      return [...expected].every(([key, value]) => {
+        const actual = url.searchParams.get(key);
+        return actual !== null && (value === '' || actual.toLowerCase().includes(value));
+      });
+    });
     if (blocked) {
       this.blockedTotal += 1;
       if (!this.blockedByHost.has(host) && this.blockedByHost.size >= 1024) {

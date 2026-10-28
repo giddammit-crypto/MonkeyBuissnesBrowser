@@ -43,6 +43,11 @@ try {
   }, base);
   const setSize = async (width, height) => {
     await app.evaluate(({ BaseWindow }, { width, height }) => BaseWindow.getAllWindows()[0].setContentSize(width, height), { width, height });
+    // Native resize and shell ResizeObserver/layout IPC are asynchronous. Do
+    // not mistake a transient old pane arrangement for the resized geometry.
+    await expect.poll(() => shell.evaluate(() => window.innerWidth)).toBe(width);
+    await shell.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
   };
   const expectTwoPanels = async (leftUrl, rightUrl, stacked = false) => {
     await expect.poll(async () => {

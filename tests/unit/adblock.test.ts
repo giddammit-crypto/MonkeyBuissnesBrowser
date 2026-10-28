@@ -47,5 +47,25 @@ describe('FilterEngine', () => {
     // Regular video playback request should NOT be blocked
     expect(engine.shouldBlock('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'mainFrame')).toBe(false);
   });
+  it('does not treat query values or fragments as requested advertising paths', () => {
+    const engine = new FilterEngine();
+    for (const type of ['image', 'script', 'stylesheet', 'font']) {
+      expect(engine.shouldBlock('https://www.youtube.com/s/desktop/icons.svg?next=/ads/', type)).toBe(false);
+      expect(engine.shouldBlock('https://www.youtube.com/s/player/base.js?next=https://ads.test/pagead/file', type)).toBe(false);
+      expect(engine.shouldBlock('https://www.youtube.com/s/desktop/icons.svg#pixel.gif', type)).toBe(false);
+    }
+    expect(engine.stats().blockedTotal).toBe(0);
+    expect(engine.shouldBlock('https://doubleclick.net/icons.svg?next=/safe/', 'image')).toBe(true);
+    expect(engine.shouldBlock('https://example.test/ads/banner.svg?safe=1', 'image')).toBe(true);
+  });
+
+  it('matches explicit query rules only on their requested endpoint and parameter', () => {
+    const engine = new FilterEngine();
+    expect(engine.shouldBlock('https://www.youtube.com/api/stats/qoe?event=1&adformat=video', 'xhr')).toBe(true);
+    expect(engine.shouldBlock('https://www.youtube.com/api/stats/qoe?event=1&next=adformat=video', 'xhr')).toBe(false);
+    expect(engine.shouldBlock('https://www.youtube.com/api/stats/qoe?event=1', 'xhr')).toBe(false);
+    expect(engine.shouldBlock('https://www.youtube.com/s/icon.svg?next=/api/stats/qoe?adformat=video', 'image')).toBe(false);
+  });
+
 });
 

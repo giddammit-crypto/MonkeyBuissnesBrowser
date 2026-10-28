@@ -49,6 +49,22 @@ try {
   assert.equal((await invoke('getNotes')).some(n => n.id === a.id), false);
   assert((await invoke('getNotes')).some(n => n.id === b.id));
   console.log('PASS deleted note is not recreated by pending autosave');
+  await drawer.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await shell.evaluate(async () => {
+    const notes = await window.browserApi.getNotes();
+    for (let index = notes.length; index < 500; index++) {
+      await window.browserApi.saveNote({ title: `Capacity note ${index}`, content: `Preserved ${index}`, color: 'default' });
+    }
+  });
+  const atCapacity = await invoke('getNotes');
+  assert.equal(atCapacity.length, 500);
+  await shell.getByRole('button', { name: 'Быстрые заметки', exact: true }).first().click();
+  await expect(drawer.locator('.notes-count-badge')).toHaveText('500');
+  await drawer.getByRole('button', { name: 'Заметка', exact: true }).click();
+  await expect(drawer.getByRole('alert')).toContainText('Достигнут лимит 500 заметок');
+  assert.deepEqual(await invoke('getNotes'), atCapacity, 'failed creation must preserve every existing note');
+  console.log('PASS full notes store shows a visible quota error and preserves all 500 records');
+
 } finally {
   if (app) await app.close();
   fs.rmSync(profile, { recursive: true, force: true });

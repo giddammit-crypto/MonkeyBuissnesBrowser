@@ -28,7 +28,8 @@
     "check": "npm run typecheck && npm test && npm run check:release-assets",
     "check:release-assets": "node scripts/check-release-assets.mjs",
     "test:e2e:voodoo": "node scripts/voodoo-agent-smoke.mjs",
-    "test:e2e:features": "node scripts/split-view-smoke.mjs && node scripts/bookmark-export-smoke.mjs"
+    "test:e2e:features": "node scripts/split-view-smoke.mjs && node scripts/bookmark-export-smoke.mjs && node scripts/youtube-icons-smoke.mjs",
+    "test:e2e:youtube-icons": "node scripts/youtube-icons-smoke.mjs"
   },
   "dependencies": {
     "lucide-react": "1.61.0",

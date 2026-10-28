@@ -24,21 +24,15 @@ describe('SiteFavicon source resolver & privacy filter', () => {
   it('uses provided primary favicon when present', () => {
     const { primarySrc, fallbackSrc } = getFaviconSources('https://vk.ru/', 'https://vk.ru/favicon.ico');
     expect(primarySrc).toBe('https://vk.ru/favicon.ico');
-    expect(fallbackSrc).toContain('google.com/s2/favicons?domain=vk.ru');
+    expect(fallbackSrc).toBeNull();
   });
 
-  it('provides Google Favicon Service fallback for public websites when favicon is missing', () => {
-    const vk = getFaviconSources('https://vk.ru/');
-    expect(vk.primarySrc).toBeNull();
-    expect(vk.fallbackSrc).toBe('https://www.google.com/s2/favicons?domain=vk.ru&sz=64');
-
-    const ym = getFaviconSources('https://music.yandex.ru/');
-    expect(ym.primarySrc).toBeNull();
-    expect(ym.fallbackSrc).toBe('https://www.google.com/s2/favicons?domain=music.yandex.ru&sz=64');
-
-    const yt = getFaviconSources('https://www.youtube.com/watch?v=123');
-    expect(yt.primarySrc).toBeNull();
-    expect(yt.fallbackSrc).toBe('https://www.google.com/s2/favicons?domain=youtube.com&sz=64');
+  it('never sends a visited destination to an external favicon lookup', () => {
+    for (const url of ['https://vk.ru/', 'https://music.yandex.ru/',
+      'https://www.youtube.com/watch?v=123', 'https://private.example.test/secret',
+      'http://[::1]/admin', 'http://intranet/']) {
+      expect(getFaviconSources(url)).toEqual({ primarySrc: null, fallbackSrc: null });
+    }
   });
 
   it('suppresses external fallback service for local and private addresses', () => {

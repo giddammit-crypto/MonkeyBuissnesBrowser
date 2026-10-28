@@ -55,6 +55,7 @@ export function QuickNotesDrawer({
   onOpenUrl,
 }: QuickNotesDrawerProps): React.JSX.Element {
   const [notes, setNotes] = useState<NoteEntry[]>([]);
+  const [createError, setCreateError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "site">("all");
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
@@ -224,6 +225,7 @@ export function QuickNotesDrawer({
 
   // Create new blank note or from current tab
   const handleCreateNew = async (fromTab = false) => {
+    setCreateError("");
     void flush();
     const version = selectionVersion.current;
     try {
@@ -234,7 +236,12 @@ export function QuickNotesDrawer({
             tabTitle: currentTab && !currentTab.isInternal ? currentTab.title : undefined }));
       updateNotes([note, ...notesRef.current]);
       if (mounted.current && selectionVersion.current === version) selectNote(note);
-    } catch (err) { console.error("Failed to create note:", err); }
+    } catch (err) {
+      console.error("Failed to create note:", err);
+      if (mounted.current) setCreateError(notesRef.current.length >= 500
+        ? "Достигнут лимит 500 заметок. Удалите ненужную заметку, чтобы создать новую. Ваши записи сохранены."
+        : "Не удалось создать заметку. Ваши записи сохранены. Повторите попытку.");
+    }
   };
 
   const handleTogglePin = async (noteId: string, e?: React.MouseEvent) => {
@@ -323,6 +330,8 @@ export function QuickNotesDrawer({
           </button>
         </div>
       </div>
+
+      {createError && <p className="notes-create-error" role="alert">{createError}</p>}
 
       {/* Search and Filters */}
       <div className="notes-search-section">

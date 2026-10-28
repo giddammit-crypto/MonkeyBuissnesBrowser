@@ -82,6 +82,7 @@ import { PasswordStore } from '../persistence/PasswordStore';
 import { fillSavedCredential } from '../passwords/PasswordAutofill';
 import { BrowserDataImporter, type ImportedCookie } from '../import/BrowserDataImporter';
 import { VoodooAiService } from '../services/VoodooAiService';
+import { DownloadThumbnailQueue, renderDownloadThumbnail } from '../services/DownloadThumbnailQueue';
 
 const shellPreloadPath = path.resolve(__dirname, '../../preload/shell-preload.js');
 const pagePreloadPath = path.resolve(__dirname, '../../preload/page-preload.js');
@@ -169,6 +170,7 @@ export class BrowserController {
   private memorySweepRunning = false;
   private readonly tabHandlerCleanup = new Map<number, () => void>();
   private readonly pageIpcCleanup: Array<() => void> = [];
+  private thumbnailQueue?: DownloadThumbnailQueue;
   private snapshotTimer?: NodeJS.Timeout;
   private downloadPersistTimer?: NodeJS.Timeout;
   private sessionPersistTimer?: NodeJS.Timeout;
@@ -431,6 +433,25 @@ export class BrowserController {
   isTrustedPage(senderId: number): boolean {
     if ([...this.tabs.values()].some((tab) => tab.webContentsId === senderId && Boolean(tab.view) && !tab.view!.webContents.isDestroyed())) return true;
     return [...this.popupWindows].some((popup) => !popup.isDestroyed() && popup.webContents.id === senderId && !popup.webContents.isDestroyed());
+  }
+
+  getPageAdBlockPolicy(senderId: number): boolean {
+    if (this.disposed || !this.isTrustedPage(senderId)) return false;
+    const tab = [...this.tabs.values()].find(entry => entry.webContentsId === senderId);
+    const contents = tab?.view?.webContents || [...this.popupWindows].find(popup => !popup.isDestroyed() && popup.webContents.id === senderId)?.webContents;
+    if (!contents || contents.isDestroyed()) return false;
+    const engine = (tab?.isPrivate || contents.session === this.privateSession) ? this.privateAdBlock.engine : this.adBlock.engine;
+    return this.stores.settings.get().adBlockEnabled !== false && !engine.isException(contents.getURL());
+  }
+
+  private broadcastPageAdBlockPolicy(): void {
+    for (const tab of this.tabs.values()) {
+      const contents = tab.view?.webContents;
+      if (contents && !contents.isDestroyed()) contents.send('page:adblock-policy', this.getPageAdBlockPolicy(contents.id));
+    }
+    for (const popup of this.popupWindows) {
+      if (!popup.isDestroyed() && !popup.webContents.isDestroyed()) popup.webContents.send('page:adblock-policy', this.getPageAdBlockPolicy(popup.webContents.id));
+    }
   }
 
   getSnapshot(): BrowserSnapshot {
@@ -1562,6 +1583,7 @@ export class BrowserController {
     this.privateAdBlock.engine.setEnabled(next.adBlockEnabled !== false);
     this.adBlock.engine.setExceptions(next.adBlockExceptions ?? []);
     this.privateAdBlock.engine.setExceptions(next.adBlockExceptions ?? []);
+    this.broadcastPageAdBlockPolicy();
     this.refreshVoodooBounds();
     this.emitSnapshot();
     return next;
@@ -3640,36 +3662,17 @@ export class BrowserController {
   }
 
   private async createDownloadThumbnail(entry: DownloadEntry): Promise<void> {
-    if (!entry.path || !fs.existsSync(entry.path)) return;
-    try {
-      const isImage = entry.kind === 'image' || /\.(png|jpe?g|webp|gif|bmp|ico|svg|avif)$/i.test(entry.filename);
-      if (!isImage) return;
-
-      const img = nativeImage.createFromPath(entry.path);
-      if (img.isEmpty()) return;
-      const size = img.getSize();
-      if (size.width <= 0 || size.height <= 0) return;
-
-      // High quality adaptive thumbnail for high-DPI displays (120px)
-      const targetDim = 120;
-      let width = targetDim;
-      let height = targetDim;
-      if (size.width >= size.height) {
-        width = targetDim;
-        height = Math.max(1, Math.round((size.height / size.width) * targetDim));
-      } else {
-        height = targetDim;
-        width = Math.max(1, Math.round((size.width / size.height) * targetDim));
-      }
-
-      const resized = img.resize({ width, height, quality: 'better' });
-      if (resized.isEmpty()) return;
-      entry.thumbnail = resized.toDataURL();
-      this.persistDownloads();
-      this.emitSnapshot();
-    } catch {
-      // The download remains available with a media icon when thumbnail creation fails.
-    }
+    if (this.disposed) return;
+    this.thumbnailQueue ??= new DownloadThumbnailQueue({
+      isCurrent: candidate => !this.disposed && this.downloads.includes(candidate),
+      render: filename => renderDownloadThumbnail(filename, nativeImage),
+      onReady: (candidate, dataUrl) => {
+        candidate.thumbnail = dataUrl;
+        this.persistDownloads();
+        this.emitSnapshot();
+      },
+    });
+    this.thumbnailQueue.enqueue(entry);
   }
 
   private async setImportedCookies(cookies: ImportedCookie[]): Promise<number> {
@@ -4133,6 +4136,9 @@ export class BrowserController {
       updated[existingIndex] = note;
       this.stores.notes.set(updated);
     } else {
+      if (items.length >= 500) {
+        throw new Error('Достигнут лимит 500 заметок. Удалите ненужную заметку перед созданием новой; существующие заметки сохранены.');
+      }
       note = {
         id: input.id || crypto.randomUUID(),
         title: (input.title || '').trim().slice(0, 500),
@@ -4144,7 +4150,7 @@ export class BrowserController {
         createdAt: now,
         updatedAt: now,
       };
-      this.stores.notes.set([note, ...items].slice(0, 500));
+      this.stores.notes.set([note, ...items]);
     }
     this.emitSnapshot();
     return note;
@@ -6099,6 +6105,8 @@ export class BrowserController {
     if (this.disposed) return;
     this.persistSession();
     this.disposed = true;
+    this.thumbnailQueue?.dispose();
+    this.thumbnailQueue = undefined;
     this.cancelVoodooRequest();
     for (const cleanup of this.pageIpcCleanup) cleanup();
     this.pageIpcCleanup.length = 0;

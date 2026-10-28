@@ -1,6 +1,23 @@
 import { ipcRenderer, webFrame } from 'electron';
 import type { ReaderArticle } from '../shared/types';
 
+/** A disabled/unavailable main-process policy must leave the site's DOM alone. */
+export function createYouTubeAdBlockPolicyGate(start: () => (() => void) | undefined) {
+  let enabled = false;
+  let cleanup: (() => void) | undefined;
+  return (policy: unknown) => {
+    const next = policy === true;
+    if (next === enabled) return;
+    enabled = next;
+    if (next) cleanup = start();
+    else {
+      const stop = cleanup;
+      cleanup = undefined;
+      stop?.();
+    }
+  };
+}
+
 // Chromium 134 native Chrome stealth injection for sandboxed preloads
 const STEALTH_SCRIPT = `(function() {
   try {
@@ -630,7 +647,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     // YouTube native stream downloader & AdBlocker
     if (isHostOrSubdomain('youtube.com')) {
-      const initYouTubeAdBlocker = () => {
+      const initYouTubeAdBlocker = (): (() => void) | undefined => {
         try {
           // 1. Inject cosmetic ad blocking styles
           if (typeof document !== 'undefined' && !document.getElementById('soul-yt-adblock-styles')) {
@@ -757,9 +774,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             lastAdCheckAt = now;
             handlePlayerAds();
           };
-          setInterval(checkAdsThrottled, 150);
+          const timer = setInterval(checkAdsThrottled, 150);
+          let observer: MutationObserver | undefined;
           if (typeof MutationObserver !== 'undefined' && (document.documentElement || document.body)) {
-            const observer = new MutationObserver(checkAdsThrottled);
+            observer = new MutationObserver(checkAdsThrottled);
             observer.observe(document.documentElement || document.body, {
               childList: true,
               subtree: true,
@@ -767,12 +785,46 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               attributeFilter: ['class', 'style'],
             });
           }
+          return () => {
+            clearInterval(timer);
+            observer?.disconnect();
+            document.getElementById('soul-yt-adblock-styles')?.remove();
+            // Disabling the blocker during an ad must not leave the player's
+            // audio muted or accelerated after the user opted out.
+            if (isSkippingAd) {
+              const video = document.querySelector('video') as HTMLVideoElement | null;
+              if (video) {
+                try { video.playbackRate = originalPlaybackRate; video.muted = wasMuted; } catch {}
+              }
+            }
+          };
         } catch {
           // Gracefully ignore
         }
       };
 
-      initYouTubeAdBlocker();
+      const applyAdBlockPolicy = createYouTubeAdBlockPolicyGate(initYouTubeAdBlocker);
+      let policyVersion = 0;
+      const refreshAdBlockPolicy = () => {
+        const version = policyVersion;
+        if (typeof ipcRenderer.invoke !== 'function') return;
+        void ipcRenderer.invoke('page:get-adblock-policy').then((enabled: unknown) => {
+          if (version === policyVersion) applyAdBlockPolicy(enabled);
+        }).catch(() => {
+          if (version === policyVersion) applyAdBlockPolicy(false);
+        });
+      };
+      if (typeof ipcRenderer.on === 'function') {
+        ipcRenderer.on('page:adblock-policy', (_event, enabled: unknown) => {
+          policyVersion++;
+          applyAdBlockPolicy(enabled);
+        });
+      }
+      // Ask only for a boolean policy; website scripts receive no IPC bridge,
+      // settings, exception list or credentials from the privileged process.
+      refreshAdBlockPolicy();
+      window.addEventListener('pagehide', () => { policyVersion++; applyAdBlockPolicy(false); });
+      window.addEventListener('pageshow', refreshAdBlockPolicy);
 
       const injectYtButton = () => {
         // Inject native adaptive stylesheet once

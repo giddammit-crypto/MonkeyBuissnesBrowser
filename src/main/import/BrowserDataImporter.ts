@@ -272,9 +272,13 @@ export class BrowserDataImporter {
     if (!bookmarkFiles.length) throw new Error('Файл закладок повреждён или недоступен.');
     const source: BookmarkEntry[] = [];
     let total = 0;
+    const unreadableFiles: string[] = [];
     for (const file of bookmarkFiles) {
       const document = safeReadJson(path.join(profile.path, file)) as { roots?: Record<string, unknown> } | undefined;
-      if (!document?.roots || typeof document.roots !== 'object') continue;
+      if (!document?.roots || typeof document.roots !== 'object' || Array.isArray(document.roots)) {
+        unreadableFiles.push(file);
+        continue;
+      }
       let visited = 0;
       const pending: unknown[] = Object.values(document.roots);
       while (pending.length) {
@@ -290,7 +294,12 @@ export class BrowserDataImporter {
         if (url) source.push({ id: crypto.randomUUID(), url: url.href, title: text(item.name) || url.href, createdAt: chromiumTime(item.date_added) });
       }
     }
-    return this.mergeBookmarks(source, total);
+    if (unreadableFiles.length === bookmarkFiles.length) {
+      throw new Error('Файлы закладок повреждены или недоступны. Импорт закладок не выполнен; исходные и существующие закладки не изменены.');
+    }
+    const result = this.mergeBookmarks(source, total);
+    if (unreadableFiles.length) result.warnings.push(`Не прочитаны файлы закладок: ${unreadableFiles.join(', ')}. Импорт выполнен только из доступных файлов; исходные файлы не изменены.`);
+    return result;
   }
   private mergeBookmarks(source: BookmarkEntry[], total: number): ImportResult {
     const existing = this.stores.bookmarks.get();

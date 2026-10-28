@@ -110,6 +110,10 @@ function registerIpc(): void {
   ipcMain.handle('browser:control-download', (event, id: string, action: import('../shared/ipc').DownloadAction) => requireShell(event).controlDownload(id, action));
   ipcMain.handle('browser:private-proxy', (event, proxy: string) => requireShell(event).setPrivateProxy(proxy));
   ipcMain.handle('browser:close-private-tabs', (event) => requireShell(event).closePrivateTabs());
+  ipcMain.handle('page:get-adblock-policy', (event) => {
+    if (event.senderFrame !== event.sender.mainFrame || !controller?.isTrustedPage(event.sender.id)) return false;
+    return controller.getPageAdBlockPolicy(event.sender.id);
+  });
   ipcMain.on('page:form-state', (event, dirty: unknown) => {
     if (event.senderFrame === event.sender.mainFrame && typeof dirty === 'boolean') controller?.markFormState(event.sender.id, dirty);
   });
