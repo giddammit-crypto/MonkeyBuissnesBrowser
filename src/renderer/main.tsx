@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Clock,
   Database,
   Download,
   ExternalLink,
@@ -4050,40 +4051,44 @@ function SettingsPanel({
   const [installedExtensions, setInstalledExtensions] = useState<Array<{ id: string; name: string; version: string; directory: string }>>([]);
 
   useEffect(() => {
+    let isMounted = true;
     window.browserApi.getVoodooKeysStatus?.().then((statuses) => {
-      if (Array.isArray(statuses)) {
-        const map: Record<string, any> = {};
-        for (const s of statuses) {
-          if (s.status !== 'unknown' || s.lastChecked) {
-            map[s.key] = {
-              status: s.status,
-              latencyMs: s.latencyMs,
-              error: s.lastError,
-            };
-          }
+      if (!isMounted || !Array.isArray(statuses)) return;
+      const map: Record<string, any> = {};
+      for (const s of statuses) {
+        if (s.status !== 'unknown' || s.lastChecked) {
+          map[s.key] = {
+            status: s.status,
+            latencyMs: s.latencyMs,
+            error: s.lastError,
+          };
         }
-        setKeyStatuses(map);
       }
+      setKeyStatuses(map);
     }).catch(() => undefined);
 
     const unsub = window.browserApi.onTabEvent?.((event) => {
       if (event?.type === 'voodoo-keys-checked') {
         window.browserApi.getVoodooKeysStatus?.().then((statuses) => {
-          if (Array.isArray(statuses)) {
-            const map: Record<string, any> = {};
-            for (const s of statuses) {
+          if (!isMounted || !Array.isArray(statuses)) return;
+          const map: Record<string, any> = {};
+          for (const s of statuses) {
+            if (s.status !== 'unknown' || s.lastChecked) {
               map[s.key] = {
                 status: s.status,
                 latencyMs: s.latencyMs,
                 error: s.lastError,
               };
             }
-            setKeyStatuses(map);
           }
+          setKeyStatuses(map);
         }).catch(() => undefined);
       }
     });
-    return () => unsub?.();
+    return () => {
+      isMounted = false;
+      unsub?.();
+    };
   }, []);
   const [extensionError, setExtensionError] = useState("");
   const refreshExtensions = useCallback(async () => {
@@ -4209,7 +4214,7 @@ function SettingsPanel({
     setKeyTestFeedback({ text: "Проверяем все ключи xkiro на доступность...", isError: false });
     try {
       const res = await window.browserApi.checkAllVoodooKeys?.();
-      if (res) {
+      if (res && Array.isArray(res.results)) {
         const nextStatus: Record<string, any> = {};
         for (const item of res.results) {
           nextStatus[item.key] = {
@@ -4219,9 +4224,23 @@ function SettingsPanel({
           };
         }
         setKeyStatuses(nextStatus);
+        if (res.results.length === 0) {
+          setKeyTestFeedback({
+            text: "Список ключей xkiro пуст. Добавьте ключ для проверки.",
+            isError: true,
+          });
+        } else {
+          setKeyTestFeedback({
+            text: res.healthyCount > 0
+              ? `Готово: ${res.healthyCount} из ${res.results.length} ключей проверены и готовы к работе. Рабочие ключи автоматически активированы.`
+              : `Проверено ${res.results.length} ключей, но ни один не ответил успешно. Проверьте подключение к интернету или баланс xkiro.`,
+            isError: res.healthyCount === 0,
+          });
+        }
+      } else {
         setKeyTestFeedback({
-          text: `Готово: ${res.healthyCount} из ${res.results.length} ключей проверены и готовы к работе. Рабочие ключи автоматически активированы.`,
-          isError: res.healthyCount === 0,
+          text: "Не удалось получить результат проверки ключей.",
+          isError: true,
         });
       }
     } catch (e) {
@@ -4857,7 +4876,7 @@ function SettingsPanel({
               <button
                 className="plain-button"
                 onClick={handleCheckAllVoodooKeys}
-                disabled={isCheckingAllKeys}
+                disabled={isCheckingAllKeys || !!testingKey || (settings.voodooKeys?.length ?? 0) === 0}
                 title="Автоматически протестировать все ключи xkiro и выбрать только рабочие"
                 style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
               >
@@ -4920,9 +4939,13 @@ function SettingsPanel({
                           <span style={{ fontSize: 11, color: "#f59e0b", display: "inline-flex", alignItems: "center", gap: 3 }} title={statusInfo.error}>
                             <AlertTriangle size={12} /> Исчерпан
                           </span>
+                        ) : statusInfo.status === 'unknown' ? (
+                          <span style={{ fontSize: 11, color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: 3 }} title={statusInfo.error || "Ключ ещё не проверялся или ожидает повторной проверки"}>
+                            <Clock size={12} /> Ожидает проверки
+                          </span>
                         ) : (
                           <span style={{ fontSize: 11, color: "#ef4444", display: "inline-flex", alignItems: "center", gap: 3 }} title={statusInfo.error}>
-                            <AlertTriangle size={12} /> {statusInfo.error?.slice(0, 25) || "Ошибка"}
+                            <AlertTriangle size={12} /> {statusInfo.error?.slice(0, 25) || "Невалиден"}
                           </span>
                         )
                       )}
@@ -4933,6 +4956,7 @@ function SettingsPanel({
                           className="plain-button"
                           style={{ fontSize: 11, padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 3 }}
                           title="Сделать основным (приоритетным)"
+                          disabled={isCheckingAllKeys || !!testingKey}
                           onClick={() => handleMakePrimaryKey(idx)}
                         >
                           <ArrowUp size={12} /> Вверх
@@ -4942,7 +4966,7 @@ function SettingsPanel({
                         className="plain-button"
                         style={{ fontSize: 11, padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 3 }}
                         onClick={() => handleTestVoodooKey(key)}
-                        disabled={testingKey === key}
+                        disabled={isCheckingAllKeys || testingKey === key}
                         title="Проверить работоспособность ключа (⚡)"
                       >
                         <Zap size={12} /> {testingKey === key ? "Проверка…" : "Проверить"}
@@ -4950,6 +4974,7 @@ function SettingsPanel({
                       <button
                         className="plain-button"
                         style={{ fontSize: 11, padding: "3px 8px", color: "#ef4444" }}
+                        disabled={isCheckingAllKeys || !!testingKey}
                         onClick={() => handleRemoveVoodooKey(idx)}
                         title="Удалить ключ"
                       >

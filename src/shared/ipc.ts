@@ -27,6 +27,7 @@ import type {
   VoodooChatMessage,
   VoodooChatResponse,
   VoodooKeyStatusItem,
+  VoodooCheckAllKeysResult,
   TranscribeAudioResult,
   CleanTargetOptions,
   StorageMetrics,
@@ -142,7 +143,7 @@ export interface BrowserApi {
   createNoteFromTab(tabId: string, textSnippet?: string): Promise<NoteEntry>;
   sendVoodooMessage(messages: VoodooChatMessage[], tabContext?: { url?: string; title?: string; chatText?: string }): Promise<VoodooChatResponse>;
   testVoodooKey(key: string): Promise<{ success: boolean; latencyMs?: number; error?: string }>;
-  checkAllVoodooKeys?(): Promise<{ results: VoodooKeyStatusItem[]; healthyCount: number; reorderedKeys: string[] }>;
+  checkAllVoodooKeys(): Promise<VoodooCheckAllKeysResult>;
   getVoodooKeysStatus(): Promise<VoodooKeyStatusItem[]>;
   transcribeAudio(audioBase64: string, mimeType?: string): Promise<TranscribeAudioResult>;
   openPath(targetPath: string): Promise<string>;

@@ -457,6 +457,12 @@ export interface VoodooKeyStatusItem {
   cooldownRemainingMs?: number;
 }
 
+export interface VoodooCheckAllKeysResult {
+  results: VoodooKeyStatusItem[];
+  healthyCount: number;
+  reorderedKeys: string[];
+}
+
 export type CleanPresetId = 'quick' | 'post-payment' | 'kiosk' | 'custom';
 
 export interface CleanTargetOptions {

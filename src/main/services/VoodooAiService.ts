@@ -2,6 +2,7 @@ import type {
   VoodooActionExecution,
   VoodooChatMessage,
   VoodooChatResponse,
+  VoodooKeyStatusItem,
   VoodooToolDefinition,
 } from '../../shared/types';
 
@@ -356,70 +357,96 @@ export interface VoodooKeyHealth {
   cooldownUntil?: number;
 }
 
-export interface VoodooKeyStatusItem {
-  key: string;
-  maskedKey: string;
-  isPrimary: boolean;
-  status: 'healthy' | 'exhausted' | 'invalid' | 'unknown';
-  lastError?: string;
-  lastChecked?: number;
-  latencyMs?: number;
-  cooldownRemainingMs?: number;
-}
+export type { VoodooKeyStatusItem };
 
 export type VoodooToolExecutor = (
   toolName: string,
   args: Record<string, unknown>
 ) => Promise<{ success: boolean; result?: unknown; error?: string; summary?: string }>;
 
+export function safeJsonStringify(val: unknown): string {
+  try {
+    return JSON.stringify(val);
+  } catch {
+    try {
+      return JSON.stringify(String(val));
+    } catch {
+      return '{"error":"Failed to serialize result"}';
+    }
+  }
+}
+
 export function formatDefaultActionSummary(tool: string, args: Record<string, unknown>, success = true): string {
-  const icon = success ? '✅' : '❌';
+  const prefix = success ? '' : '❌ [Сбой] ';
+  let desc = '';
   switch (tool) {
     case 'search_web':
-      return `🔍 Поиск: «${String(args.query || '')}»`;
+      desc = `🔍 Поиск: «${String(args.query || '')}»`;
+      break;
     case 'open_url':
-      return `🌐 Переход: ${String(args.url || '')}`;
+      desc = `🌐 Переход: ${String(args.url || '')}`;
+      break;
     case 'list_tabs':
-      return `📑 Список вкладок браузера`;
+      desc = `📑 Список вкладок браузера`;
+      break;
     case 'switch_tab':
-      return `📑 Переключение вкладки: ${String(args.tab_id || '')}`;
+      desc = `📑 Переключение вкладки: ${String(args.tab_id || '')}`;
+      break;
     case 'close_tab':
-      return `❌ Закрытие вкладки ${String(args.tab_id || '')}`;
+      desc = `📑 Закрытие вкладки ${String(args.tab_id || '')}`;
+      break;
     case 'read_page':
-      return `📄 Чтение страницы`;
+      desc = `📄 Чтение страницы`;
+      break;
     case 'get_page_elements':
-      return `🔍 Поиск элементов страницы (${String(args.type || 'all')})`;
+      desc = `🔍 Поиск элементов страницы (${String(args.type || 'all')})`;
+      break;
     case 'click_element':
-      return `🖱️ Клик по «${String(args.text || args.selector || 'элементу')}»`;
+      desc = `🖱️ Клик по «${String(args.text || args.selector || 'элементу')}»`;
+      break;
     case 'fill_input':
-      return `✏️ Ввод текста в поле`;
+      desc = `✏️ Ввод текста в поле`;
+      break;
     case 'scroll_page':
-      return `📜 Прокрутка (${String(args.direction || 'down')})`;
+      desc = `📜 Прокрутка (${String(args.direction || 'down')})`;
+      break;
     case 'execute_script':
-      return `⚡ Выполнение скрипта на странице`;
+      desc = `⚡ Выполнение скрипта на странице`;
+      break;
     case 'get_active_dialog':
-      return `💬 Извлечение активного диалога`;
+      desc = `💬 Извлечение активного диалога`;
+      break;
     case 'clean_browser':
-      return `🧹 Экспресс-очистка (${String(args.preset || 'quick')})`;
+      desc = `🧹 Экспресс-очистка (${String(args.preset || 'quick')})`;
+      break;
     case 'create_file':
-      return args.open_in_new_tab
+      desc = args.open_in_new_tab
         ? `💾 Создан и открыт в новой вкладке: «${String(args.filename || '')}»`
         : `💾 Создание файла: «${String(args.filename || '')}»`;
+      break;
     case 'create_note_or_list':
-      return `📝 Список/Заметка: «${String(args.title || '')}»`;
+      desc = `📝 Список/Заметка: «${String(args.title || '')}»`;
+      break;
     case 'analyze_page_data':
-      return `📊 Анализ данных страницы (${String(args.focus || 'all')})`;
+      desc = `📊 Анализ данных страницы (${String(args.focus || 'all')})`;
+      break;
     case 'geo_lookup':
-      return `📍 Определение геопозиции`;
+      desc = `📍 Определение геопозиции`;
+      break;
     case 'search_places':
-      return `🗺️ Поиск мест: «${String(args.query || '')}»${args.city ? ` (${String(args.city)})` : ''}`;
+      desc = `🗺️ Поиск мест: «${String(args.query || '')}»${args.city ? ` (${String(args.city)})` : ''}`;
+      break;
     case 'get_weather_and_time':
-      return `🌤️ Погода и время: ${String(args.city || '')}`;
+      desc = `🌤️ Погода и время: ${String(args.city || '')}`;
+      break;
     case 'get_route_info':
-      return `🧭 Маршрут: «${String(args.from || '')}» ➔ «${String(args.to || '')}»`;
+      desc = `🧭 Маршрут: «${String(args.from || '')}» ➔ «${String(args.to || '')}»`;
+      break;
     default:
-      return `${icon} Действие: ${tool}`;
+      desc = `Действие: ${tool}`;
+      break;
   }
+  return prefix ? `${prefix}${desc}` : desc;
 }
 
 export class VoodooAiService {
@@ -433,6 +460,9 @@ export class VoodooAiService {
    */
   static maskKey(key: string): string {
     if (!key || key.length < 12) return '••••••••';
+    if (key.length <= 16) {
+      return `${key.slice(0, 4)}••••${key.slice(-4)}`;
+    }
     const prefix = key.slice(0, 10);
     const suffix = key.slice(-4);
     return `${prefix}${'•'.repeat(Math.max(4, key.length - 14))}${suffix}`;
@@ -508,6 +538,7 @@ export class VoodooAiService {
     if (!text) return '';
     return text
       .replace(/```(?:action|json)?\s*\{[\s\S]*?"tool"\s*:[\s\S]*?\}\s*```/gi, '')
+      .replace(/\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"args"\s*:\s*\{[\s\S]*?\}\s*\}/gi, '')
       .trim();
   }
 
@@ -574,8 +605,9 @@ export class VoodooAiService {
         signal: AbortSignal.timeout(12000),
       });
 
-      // If server returns 500 on primary model, test fallback model before concluding failure
-      if (!response.ok && response.status >= 500 && model !== 'qwen/qwen3.7-plus:free') {
+      // If server returns 500-599 on primary model, test fallback model before concluding failure
+      if (!response.ok && response.status >= 500 && response.status < 600 && model !== 'qwen/qwen3.7-plus:free') {
+        try { await response.body?.cancel(); } catch {}
         response = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -627,7 +659,7 @@ export class VoodooAiService {
         : 30 * 1000;
 
       this.keyHealthMap.set(cleanKey, {
-        status: isQuotaOrLimit ? 'exhausted' : isInvalid ? 'invalid' : 'exhausted',
+        status: isQuotaOrLimit ? 'exhausted' : isInvalid ? 'invalid' : isServerError ? 'unknown' : 'exhausted',
         lastError: errorDetail,
         lastChecked: Date.now(),
         latencyMs,
@@ -646,11 +678,11 @@ export class VoodooAiService {
         : (err instanceof Error ? err.message : 'Ошибка соединения с xkiro');
 
       this.keyHealthMap.set(cleanKey, {
-        status: isTimeout ? 'unknown' : 'exhausted',
+        status: 'unknown',
         lastError: errorMsg,
         lastChecked: Date.now(),
         latencyMs,
-        cooldownUntil: isTimeout ? Date.now() + 5000 : Date.now() + 30 * 1000,
+        cooldownUntil: isTimeout ? Date.now() + 5000 : Date.now() + 15 * 1000,
       });
 
       return {
@@ -725,10 +757,7 @@ export class VoodooAiService {
 
     // Priority ordering: healthy -> unknown -> exhausted -> invalid
     const reorderedKeys = [...healthyKeys, ...unknownKeys, ...exhaustedKeys, ...invalidKeys];
-
-    if (healthyKeys.length > 0) {
-      this.activeKeyIndex = 0;
-    }
+    this.activeKeyIndex = 0;
 
     const results = this.getKeysStatus(reorderedKeys);
 
@@ -803,7 +832,7 @@ export class VoodooAiService {
           tier2Unknown.push(i);
         }
       } else {
-        if (h?.status === 'healthy' || !h?.status) {
+        if (h?.status === 'healthy' || h?.status === 'unknown' || !h?.status) {
           tier4TransientCooldown.push(i);
         } else {
           tier5ExhaustedCooldown.push(i);
@@ -865,12 +894,15 @@ export class VoodooAiService {
           signal: AbortSignal.timeout(keyTimeoutMs),
         });
 
+        let errorBodyText: string | null = null;
+
         // If endpoint rejects tools parameter (some models or proxies return 400 for tools)
         if (!response.ok && response.status === 400 && requestBody.tools) {
-          const bodyText = await response.text();
-          if (/tool|function/i.test(bodyText)) {
+          errorBodyText = await response.text().catch(() => '');
+          if (/tool|function/i.test(errorBodyText)) {
             delete requestBody.tools;
             delete requestBody.tool_choice;
+            errorBodyText = null;
             response = await fetch(endpoint, {
               method: 'POST',
               headers: {
@@ -886,6 +918,8 @@ export class VoodooAiService {
         // If server returns 500-599 internal error on current model, try with fallback model
         if (!response.ok && response.status >= 500 && response.status < 600 && model !== 'qwen/qwen3.7-plus:free') {
           console.warn(`[Voodoo AI] Model ${model} returned HTTP ${response.status}. Retrying key #${keyIndex + 1} with fallback model qwen/qwen3.7-plus:free...`);
+          try { await response.body?.cancel(); } catch {}
+          errorBodyText = null;
           const fallbackBody = { ...requestBody, model: 'qwen/qwen3.7-plus:free' };
           response = await fetch(endpoint, {
             method: 'POST',
@@ -919,7 +953,7 @@ export class VoodooAiService {
           };
         }
 
-        const bodyText = await response.text();
+        const bodyText = errorBodyText ?? await response.text().catch(() => '');
         let errorMsg = `HTTP ${response.status}`;
         try {
           const parsed = JSON.parse(bodyText);
@@ -967,13 +1001,13 @@ export class VoodooAiService {
         const rawMsg = networkErr instanceof Error ? networkErr.message : 'Сетевая ошибка';
         lastError = isTimeout ? `Тайм-аут ожидания ответа (${Math.round(keyTimeoutMs / 1000)}с)` : rawMsg;
 
-        // Do NOT mark key as exhausted on timeout! Timeout is a transient network/load issue.
+        // Do NOT mark key as exhausted on timeout or transient network issue!
         const prev = this.keyHealthMap.get(currentKey);
         this.keyHealthMap.set(currentKey, {
-          status: isTimeout ? (prev?.status === 'healthy' ? 'healthy' : 'unknown') : 'exhausted',
+          status: prev?.status === 'healthy' ? 'healthy' : 'unknown',
           lastError,
           lastChecked: Date.now(),
-          cooldownUntil: Date.now() + (isTimeout ? 5000 : 30 * 1000),
+          cooldownUntil: Date.now() + (isTimeout ? 5000 : 15 * 1000),
         });
 
         if (totalKeys > 1) {
@@ -1136,7 +1170,7 @@ export class VoodooAiService {
             role: 'tool',
             tool_call_id: tc.id,
             name: tc.function.name,
-            content: JSON.stringify(
+            content: safeJsonStringify(
               execRes.result !== undefined
                 ? execRes.result
                 : (execRes.error ? { error: execRes.error } : { success: execRes.success })
@@ -1169,7 +1203,7 @@ export class VoodooAiService {
           };
           executedActions.push(actionExec);
 
-          const resultStr = JSON.stringify(
+          const resultStr = safeJsonStringify(
             execRes.result !== undefined
               ? execRes.result
               : (execRes.error ? { error: execRes.error } : { success: execRes.success })

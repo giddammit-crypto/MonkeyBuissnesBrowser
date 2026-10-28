@@ -64,6 +64,7 @@ import type {
   VoodooChatMessage,
   VoodooChatResponse,
   VoodooKeyStatusItem,
+  VoodooCheckAllKeysResult,
   TranscribeAudioResult,
   CleanTargetOptions,
   StorageMetrics,
@@ -5383,13 +5384,13 @@ export class BrowserController {
   }
 
   async performStartupVoodooKeysCheck(): Promise<void> {
-    const settings = this.stores.settings.get();
-    const rawKeys = settings.voodooKeys || [];
-    const keys = rawKeys.map((k) => String(k).trim()).filter(Boolean);
-
-    if (keys.length === 0) return;
-
     try {
+      const settings = this.stores.settings.get();
+      const rawKeys = Array.isArray(settings?.voodooKeys) ? settings.voodooKeys : [];
+      const keys = rawKeys.map((k) => String(k).trim()).filter(Boolean);
+
+      if (keys.length === 0) return;
+
       console.log(`[Voodoo AI] Auto-checking ${keys.length} xkiro key(s) on browser launch...`);
       const checkResult = await this.voodooService.checkAllKeys(
         keys,
@@ -5398,17 +5399,19 @@ export class BrowserController {
       );
 
       const { healthyKeys, reorderedKeys } = checkResult;
+      const primaryWorkingKey = healthyKeys.length > 0 && reorderedKeys[0] ? VoodooAiService.maskKey(reorderedKeys[0]) : null;
       console.log(
         `[Voodoo AI] Startup key check finished: ${healthyKeys.length}/${keys.length} healthy. Active working key:`,
-        reorderedKeys[0] ? VoodooAiService.maskKey(reorderedKeys[0]) : 'none'
+        primaryWorkingKey || 'none'
       );
 
       if (healthyKeys.length > 0) {
-        const orderChanged = reorderedKeys.some((k, i) => k !== keys[i]);
+        const orderChanged = reorderedKeys.length !== keys.length || reorderedKeys.some((k, i) => k !== keys[i]);
         if (orderChanged) {
           console.log('[Voodoo AI] Reordering keys to ensure healthy working keys are used first.');
+          const freshSettings = this.stores.settings.get();
           this.stores.settings.set({
-            ...settings,
+            ...freshSettings,
             voodooKeys: reorderedKeys,
           });
         }
@@ -5420,55 +5423,78 @@ export class BrowserController {
         data: {
           healthyCount: healthyKeys.length,
           totalCount: keys.length,
-          primaryKey: reorderedKeys[0] ? VoodooAiService.maskKey(reorderedKeys[0]) : null,
+          primaryKey: primaryWorkingKey,
         },
       };
-      this.voodooView?.webContents.send('browser:event', eventData);
-      this.shellView?.webContents.send('browser:event', eventData);
+
+      if (this.voodooView?.webContents && !this.voodooView.webContents.isDestroyed()) {
+        try { this.voodooView.webContents.send('browser:event', eventData); } catch {}
+      }
+      if (this.shellView?.webContents && !this.shellView.webContents.isDestroyed()) {
+        try { this.shellView.webContents.send('browser:event', eventData); } catch {}
+      }
     } catch (err) {
       console.warn('[Voodoo AI] Startup keys check error:', err);
     }
   }
 
-  async checkAllVoodooKeys(): Promise<{
-    results: VoodooKeyStatusItem[];
-    healthyCount: number;
-    reorderedKeys: string[];
-  }> {
-    const settings = this.stores.settings.get();
-    const keys = (settings.voodooKeys || []).map((k) => String(k).trim()).filter(Boolean);
-    const checkResult = await this.voodooService.checkAllKeys(
-      keys,
-      settings.voodooBaseUrl,
-      settings.voodooModel
-    );
+  async checkAllVoodooKeys(): Promise<VoodooCheckAllKeysResult> {
+    try {
+      const settings = this.stores.settings.get();
+      const rawKeys = Array.isArray(settings?.voodooKeys) ? settings.voodooKeys : [];
+      const keys = rawKeys.map((k) => String(k).trim()).filter(Boolean);
 
-    if (checkResult.healthyKeys.length > 0) {
-      const orderChanged = checkResult.reorderedKeys.some((k, i) => k !== keys[i]);
-      if (orderChanged) {
-        this.stores.settings.set({
-          ...settings,
-          voodooKeys: checkResult.reorderedKeys,
-        });
+      const checkResult = await this.voodooService.checkAllKeys(
+        keys,
+        settings.voodooBaseUrl,
+        settings.voodooModel
+      );
+
+      if (checkResult.healthyKeys.length > 0) {
+        const orderChanged = checkResult.reorderedKeys.length !== keys.length || checkResult.reorderedKeys.some((k, i) => k !== keys[i]);
+        if (orderChanged) {
+          const freshSettings = this.stores.settings.get();
+          this.stores.settings.set({
+            ...freshSettings,
+            voodooKeys: checkResult.reorderedKeys,
+          });
+        }
       }
-    }
-    this.emitSnapshot();
-    const eventData = {
-      type: 'voodoo-keys-checked',
-      data: {
-        healthyCount: checkResult.healthyKeys.length,
-        totalCount: keys.length,
-        primaryKey: checkResult.reorderedKeys[0] ? VoodooAiService.maskKey(checkResult.reorderedKeys[0]) : null,
-      },
-    };
-    this.voodooView?.webContents.send('browser:event', eventData);
-    this.shellView?.webContents.send('browser:event', eventData);
 
-    return {
-      results: checkResult.results,
-      healthyCount: checkResult.healthyKeys.length,
-      reorderedKeys: checkResult.reorderedKeys,
-    };
+      this.emitSnapshot();
+      const primaryWorkingKey = checkResult.healthyKeys.length > 0 && checkResult.reorderedKeys[0]
+        ? VoodooAiService.maskKey(checkResult.reorderedKeys[0])
+        : null;
+
+      const eventData = {
+        type: 'voodoo-keys-checked',
+        data: {
+          healthyCount: checkResult.healthyKeys.length,
+          totalCount: keys.length,
+          primaryKey: primaryWorkingKey,
+        },
+      };
+
+      if (this.voodooView?.webContents && !this.voodooView.webContents.isDestroyed()) {
+        try { this.voodooView.webContents.send('browser:event', eventData); } catch {}
+      }
+      if (this.shellView?.webContents && !this.shellView.webContents.isDestroyed()) {
+        try { this.shellView.webContents.send('browser:event', eventData); } catch {}
+      }
+
+      return {
+        results: checkResult.results,
+        healthyCount: checkResult.healthyKeys.length,
+        reorderedKeys: checkResult.reorderedKeys,
+      };
+    } catch (err) {
+      console.warn('[Voodoo AI] checkAllVoodooKeys error:', err);
+      return {
+        results: [],
+        healthyCount: 0,
+        reorderedKeys: [],
+      };
+    }
   }
 
   async extractActiveTabChatContext(): Promise<{ text: string; source: string; count: number }> {

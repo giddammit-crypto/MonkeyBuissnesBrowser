@@ -98,6 +98,10 @@ const INITIAL_MESSAGE: VoodooChatMessage = {
   timestamp: Date.now(),
 };
 
+function generateId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function playVoiceChime(type: 'start' | 'stop' | 'cancel') {
   try {
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -133,6 +137,8 @@ function playVoiceChime(type: 'start' | 'stop' | 'cancel') {
       osc.start(now);
       osc.stop(now + 0.12);
     }
+    // Close AudioContext after oscillator finishes to prevent resource leak
+    osc.onended = () => { void ctx.close(); };
   } catch {
     // Graceful fallback if audio is not permitted yet
   }
@@ -240,13 +246,15 @@ export default function VoodooChatBubble({
     } catch {}
   }, [messages]);
 
-  const handleCopyMessage = useCallback((text: string, id: string) => {
+  const handleCopyMessage = useCallback(async (text: string, id: string) => {
     try {
       if (navigator.clipboard?.writeText) {
-        void navigator.clipboard.writeText(text);
+        await navigator.clipboard.writeText(text);
       } else {
         const ta = document.createElement('textarea');
         ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
         document.body.appendChild(ta);
         ta.select();
         document.execCommand('copy');
@@ -254,8 +262,22 @@ export default function VoodooChatBubble({
       }
       setCopiedMessageId(id);
       setTimeout(() => setCopiedMessageId(null), 2000);
-    } catch (e) {
-      console.warn('Failed to copy message:', e);
+    } catch {
+      // Fallback to execCommand if clipboard API fails
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        setCopiedMessageId(id);
+        setTimeout(() => setCopiedMessageId(null), 2000);
+      } catch (e2) {
+        console.warn('Failed to copy message:', e2);
+      }
     }
   }, []);
 
@@ -268,7 +290,7 @@ export default function VoodooChatBubble({
     setMessages((prev) => [
       ...prev,
       {
-        id: `voodoo-stopped-${Date.now()}`,
+        id: generateId('voodoo-stopped'),
         role: 'assistant',
         content: '⏹️ [Запрос остановлен пользователем]',
         timestamp: Date.now(),
@@ -284,7 +306,7 @@ export default function VoodooChatBubble({
     if (!prompt || loading) return;
 
     const userMessage: VoodooChatMessage = {
-      id: `user-${Date.now()}`,
+      id: generateId('user'),
       role: 'user',
       content: prompt,
       timestamp: Date.now(),
@@ -314,7 +336,7 @@ export default function VoodooChatBubble({
       const response = await Promise.race([requestPromise, abortPromise]);
 
       const assistantMessage: VoodooChatMessage = {
-        id: `voodoo-${Date.now()}`,
+        id: generateId('voodoo'),
         role: 'assistant',
         content: response.reply,
         timestamp: Date.now(),
@@ -332,7 +354,7 @@ export default function VoodooChatBubble({
       setMessages((prev) => [
         ...prev,
         {
-          id: `voodoo-err-${Date.now()}`,
+          id: generateId('voodoo-err'),
           role: 'assistant',
           content: `Произошла ошибка: ${errorMsg}. Пожалуйста, проверьте API-ключ xkiro в Настройках браузера.`,
           timestamp: Date.now(),
@@ -358,7 +380,7 @@ export default function VoodooChatBubble({
 
   // Listen to IPC events from main process (context menu "Анализировать с ВуДу", hotkey, etc.)
   useEffect(() => {
-    const removeListener = window.browserApi.onTabEvent((event) => {
+    const removeListener = window.browserApi?.onTabEvent?.((event) => {
       if (event.type === 'voodoo-analyze-text' && event.message) {
         if (!isOpen) {
           if (standalone) {
@@ -380,25 +402,24 @@ export default function VoodooChatBubble({
     });
 
     return () => {
-      removeListener();
+      removeListener?.();
     };
   }, [isOpen, standalone, propsOnToggleOpen, handleAnalyzeCustomText, toggleOpen]);
 
   const handleAnalyzeActiveChat = async () => {
-    setLoading(true);
+    if (loading) return;
     try {
       const chatCtx = await window.browserApi.extractActiveTabChatContext();
       if (!chatCtx || !chatCtx.text || chatCtx.text.trim().length === 0) {
         setMessages((prev) => [
           ...prev,
           {
-            id: `voodoo-notice-${Date.now()}`,
+            id: generateId('voodoo-notice'),
             role: 'assistant',
             content: `Не удалось обнаружить открытый диалог на этой вкладке. Перейди в нужный чат ВКонтакте (vk.com/im), Telegram Web или выдели текст на странице и выбери в контекстном меню «Анализировать с ВуДу».`,
             timestamp: Date.now(),
           },
         ]);
-        setLoading(false);
         return;
       }
 
@@ -408,13 +429,13 @@ export default function VoodooChatBubble({
         title: currentTab?.title,
         chatText: chatCtx.text,
       });
-    } catch {
-      setLoading(false);
+    } catch (e) {
+      console.warn('Failed to analyze active chat:', e);
     }
   };
 
   const handleAnalyzePageSummary = async () => {
-    setLoading(true);
+    if (loading) return;
     try {
       const chatCtx = await window.browserApi.extractActiveTabChatContext();
       const prompt = `Кратко расскажи, о чём эта страница («${currentTab?.title || 'текущая страница'}») и выдели 3 ключевых мысли.`;
@@ -423,13 +444,37 @@ export default function VoodooChatBubble({
         title: currentTab?.title,
         chatText: chatCtx?.text,
       });
-    } catch {
-      setLoading(false);
+    } catch (e) {
+      console.warn('Failed to analyze page summary:', e);
     }
   };
 
-  const handleCopyReply = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
+  const handleCopyReply = async (text: string, key: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch { /* ignore */ }
+    }
     setCopiedKey(key);
     setTimeout(() => setCopiedKey(null), 2000);
   };
@@ -548,40 +593,47 @@ export default function VoodooChatBubble({
           const reader = new FileReader();
           reader.readAsDataURL(audioBlob);
           reader.onloadend = async () => {
-            const dataUrl = reader.result as string;
-            const base64 = dataUrl.split(',')[1] || '';
-            const res = await window.browserApi.transcribeAudio(base64, audioBlob.type);
-            setIsTranscribing(false);
-            setInterimTranscript('');
+            try {
+              const dataUrl = reader.result as string;
+              const base64 = dataUrl.split(',')[1] || '';
+              const res = await window.browserApi.transcribeAudio(base64, audioBlob.type);
 
-            if (res.success && res.text) {
-              void handleSendMessage(res.text);
-            } else if (res.error === 'NO_STT_KEY') {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: `voodoo-stt-guide-${Date.now()}`,
-                  role: 'assistant',
-                  content: `🎙️ **Голос записан!**\n\nВ среде Electron на Linux встроенное облако Google Speech отключено Chromium. Чтобы расшифровывать голос в текст через Whisper AI:\n• Укажите бесплатный ключ **Groq** (\`gsk_...\`) в Настройках браузера (раздел «AI-Ассистент Вуду»).\n\n*Или выберите готовую команду из вариантов ниже:*`,
-                  suggestedReplies: [
-                    'Подбери мне 5 вариантов шапки зимней мужской на вайлдберис, создай html фаил с твоим подбором, описанием, фото и активными ссылками-кнопками на эти товары. И открой этот фаил в новой вкладке',
-                    'Какая погода в моём городе?',
-                    'Найди последние новости технологий',
-                    'Сохрани план задач на день в Заметки',
-                    'Проанализируй открытую страницу',
-                  ],
-                  timestamp: Date.now(),
-                },
-              ]);
-            } else {
-              setVoiceError(res.error || 'Не удалось распознать речь');
+              if (res.success && res.text) {
+                void handleSendMessage(res.text);
+              } else if (res.error === 'NO_STT_KEY') {
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: generateId('voodoo-stt-guide'),
+                    role: 'assistant',
+                    content: `🎙️ **Голос записан!**\n\nВ среде Electron на Linux встроенное облако Google Speech отключено Chromium. Чтобы расшифровывать голос в текст через Whisper AI:\n• Укажите бесплатный ключ **Groq** (\`gsk_...\`) в Настройках браузера (раздел «AI-Ассистент Вуду»).\n\n*Или выберите готовую команду из вариантов ниже:*`,
+                    suggestedReplies: [
+                      'Подбери мне 5 вариантов шапки зимней мужской на вайлдберис, создай html фаил с твоим подбором, описанием, фото и активными ссылками-кнопками на эти товары. И открой этот фаил в новой вкладке',
+                      'Какая погода в моём городе?',
+                      'Найди последние новости технологий',
+                      'Сохрани план задач на день в Заметки',
+                      'Проанализируй открытую страницу',
+                    ],
+                    timestamp: Date.now(),
+                  },
+                ]);
+              } else {
+                setVoiceError(res.error || 'Не удалось распознать речь');
+                setTimeout(() => setVoiceError(null), 4000);
+              }
+            } catch (err) {
+              console.error('Audio transcription error:', err);
+              setVoiceError('Ошибка при обработке голоса');
               setTimeout(() => setVoiceError(null), 4000);
+            } finally {
+              setIsTranscribing(false);
+              setInterimTranscript('');
             }
           };
         } catch (e) {
           setIsTranscribing(false);
           setInterimTranscript('');
-          console.error('Audio transcription error:', e);
+          console.error('Audio reader initialization error:', e);
         }
       };
 
@@ -712,6 +764,19 @@ export default function VoodooChatBubble({
         try {
           recognitionRef.current.abort();
         } catch {}
+        recognitionRef.current = null;
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch {}
+        mediaRecorderRef.current = null;
+      }
+      if (mediaStreamRef.current) {
+        try {
+          mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+        } catch {}
+        mediaStreamRef.current = null;
       }
     };
   }, []);
