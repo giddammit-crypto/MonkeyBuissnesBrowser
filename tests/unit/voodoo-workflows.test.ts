@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VoodooAiService } from '../../src/main/services/VoodooAiService';
+import { estimateRequestTokens } from '../../src/main/services/AgentWorkflow';
 
 const keys = ['sk-xt-FAKE-workflow-test-credential'];
 const request = [{ id: 'workflow', role: 'user' as const, content: 'Найди сведения, сравни источники и сохрани отчёт.', timestamp: 1 }];
@@ -206,12 +207,12 @@ describe('Voodoo complex workflows', () => {
         ? completion({ tool_calls: [call('read_page', { tab_id: `source_${sent.length}` }, `read_${sent.length}`)] }, 'tool_calls')
         : completion({ content: 'Восемнадцать источников прочитаны.' });
     }));
-    const result = await new VoodooAiService().chat(request, { keys, toolExecutor: executor });
+    const result = await new VoodooAiService().chat(request, { keys, toolExecutor: executor, contextWindowTokens: 30000 });
     expect(result.error).toBeUndefined();
     expect(executor).toHaveBeenCalledTimes(18);
     expect(sent.some(body => JSON.stringify(body.messages).includes('Журнал уже выполненных действий'))).toBe(true);
     for (const body of sent) {
-      expect(JSON.stringify(body.messages).length).toBeLessThanOrEqual(112000);
+      expect(estimateRequestTokens(body.messages, { tools: body.tools, outputTokens: body.max_tokens })).toBeLessThanOrEqual(30000);
       for (let i = 0; i < body.messages.length; i++) {
         const message = body.messages[i];
         if (message.tool_calls) {
@@ -244,7 +245,7 @@ describe('Voodoo complex workflows', () => {
     expect(result.reply).toBe('Уточню план.');
   });
 
-  it('preserves continuation offsets and source links when a large page observation is shortened', async () => {
+  it('preserves complete page content and source links when they fit the default budget', async () => {
     let sent: any;
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(completion({ tool_calls: [call('read_page', { start: 12000 }, 'chunk')] }, 'tool_calls'))
@@ -261,9 +262,8 @@ describe('Voodoo complex workflows', () => {
     expect(result.error).toBeUndefined();
     const observed = JSON.parse(sent.messages.find((m: any) => m.role === 'tool').content);
     expect(observed.success).toBe(true);
-    expect(observed.result.truncated).toBe(true);
-    expect(observed.result.next_start).toBe(12000 + observed.result.text.length);
-    expect(observed.result.next_start).toBeLessThan(34000);
+    expect(observed.result.text).toBe('R'.repeat(22000));
+    expect(observed.result.next_start).toBe(34000);
     expect(observed.result.total_length).toBe(50000);
     expect(observed.result.links[0].href).toBe('https://source.example/report');
   });
@@ -341,7 +341,7 @@ describe('Voodoo complex workflows', () => {
     expect(result.error).toBeUndefined();
   });
 
-  it('keeps valid complete observed URLs and pagination when a long page contains forty links', async () => {
+  it('retains all forty complete observed links and full page content when the budget allows', async () => {
     const links = Array.from({ length: 40 }, (_, index) => ({ title: `Source ${index}`, href: `https://source.example/${index}?token=${'v'.repeat(index % 5 === 0 ? 2300 : 900)}` }));
     let sent: any;
     vi.stubGlobal('fetch', vi.fn()
@@ -355,17 +355,46 @@ describe('Voodoo complex workflows', () => {
     } }) });
     expect(result.error).toBeUndefined();
     const observation = sent.messages.find((message: any) => message.role === 'tool').content;
-    expect(observation.length).toBeLessThanOrEqual(16000);
     const data = JSON.parse(observation).result;
+    expect(data.text).toBe('Q'.repeat(25000));
+    expect(data.links).toEqual(links);
     expect(data.next_start).toBe(500 + data.text.length);
     expect(data.totalLength).toBe(40000);
-    expect(data.links.length).toBeGreaterThan(0);
-    expect(data.links_truncated).toBe(true);
+    expect(data.links).toHaveLength(40);
     const actualHrefs = new Set(links.map(link => link.href));
     for (const link of data.links) {
       expect(actualHrefs.has(link.href)).toBe(true);
       expect(new URL(link.href).protocol).toBe('https:');
     }
+  });
+
+  it('preserves structured readable chunks, continuation offsets and source links under budget pressure', async () => {
+    const originalText = 'Ж'.repeat(60000);
+    const originalLinks = Array.from({ length: 40 }, (_, index) => ({ title: `Источник ${index}`, href: `https://source.example/${index}?q=${'a'.repeat(300)}` }));
+    let sent: any;
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(completion({ tool_calls: [call('read_page', { start: 1000 }, 'budgeted_chunk')] }, 'tool_calls'))
+      .mockImplementationOnce(async (_url, options) => {
+        sent = JSON.parse(options.body);
+        return completion({ content: 'Часть прочитана, продолжение доступно.' });
+      }));
+    const result = await new VoodooAiService().chat(request, {
+      keys, contextWindowTokens: 50000, toolExecutor: vi.fn().mockResolvedValue({ success: true, result: {
+        text: originalText, start: 1000, next_start: 61000, totalLength: 100000, url: 'https://source.example/full', links: originalLinks,
+      } }),
+    });
+    expect(result.error).toBeUndefined();
+    const observed = JSON.parse(sent.messages.find((message: any) => message.role === 'tool').content);
+    expect(observed.result.text.length).toBeGreaterThan(0);
+    expect(observed.result.text.length).toBeLessThan(originalText.length);
+    expect(observed.result.text).toBe(originalText.slice(0, observed.result.text.length));
+    expect(observed.result.next_start).toBe(1000 + observed.result.text.length);
+    expect(observed.result.totalLength).toBe(100000);
+    expect(observed.result.url).toBe('https://source.example/full');
+    expect(observed.result.links.length).toBeGreaterThan(0);
+    const actualHrefs = new Set(originalLinks.map(link => link.href));
+    expect(observed.result.links.every((link: any) => actualHrefs.has(link.href))).toBe(true);
+    expect(estimateRequestTokens(sent.messages, { tools: sent.tools, outputTokens: sent.max_tokens })).toBeLessThanOrEqual(50000);
   });
 
 });

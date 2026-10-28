@@ -418,16 +418,38 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
 // In-page media downloader helper for VK and YouTube
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   const initMediaHelper = () => {
+    // Decorative/discovery polling does not need to walk hidden documents.
+    // Playback/capture event handlers and essential media checks remain active.
+    const visibleTasks: Array<{ callback: () => void; milliseconds: number; timer?: ReturnType<typeof setInterval> }> = [];
+    let suspended = false;
+    const refreshVisibleTasks = () => {
+      const visible = !suspended && document.hidden !== true;
+      for (const task of visibleTasks) {
+        if (!visible && task.timer !== undefined) { clearInterval(task.timer); task.timer = undefined; }
+        else if (visible && task.timer === undefined) {
+          task.timer = setInterval(task.callback, task.milliseconds);
+          task.callback();
+        }
+      }
+    };
+    const repeatWhenVisible = (callback: () => void, milliseconds: number) => {
+      const task: typeof visibleTasks[number] = { callback, milliseconds };
+      visibleTasks.push(task);
+      if (document.hidden !== true && !suspended) task.timer = setInterval(callback, milliseconds);
+    };
+    document.addEventListener('visibilitychange', refreshVisibleTasks);
+    window.addEventListener('pagehide', () => { suspended = true; refreshVisibleTasks(); });
+    window.addEventListener('pageshow', () => { suspended = false; refreshVisibleTasks(); });
     const host = window.location.hostname || '';
     const isHostOrSubdomain = (domain: string): boolean => Boolean(host) && (host === domain || host.endsWith(`.${domain}`));
     const isVkHost = isHostOrSubdomain('vk.com') || isHostOrSubdomain('vkvideo.ru');
     const injectors: Array<() => void> = [];
     let injectionTimer: ReturnType<typeof setTimeout> | undefined;
     const scheduleInjection = () => {
-      if (injectionTimer) return;
+      if (document.hidden === true || suspended || injectionTimer) return;
       injectionTimer = setTimeout(() => {
         injectionTimer = undefined;
-        for (const inject of injectors) inject();
+        if (document.hidden !== true && !suspended) for (const inject of injectors) inject();
       }, 350);
     };
 
@@ -728,9 +750,16 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
             }
           };
 
-          setInterval(handlePlayerAds, 150);
+          let lastAdCheckAt = 0;
+          const checkAdsThrottled = () => {
+            const now = Date.now();
+            if (now - lastAdCheckAt < 150) return;
+            lastAdCheckAt = now;
+            handlePlayerAds();
+          };
+          setInterval(checkAdsThrottled, 150);
           if (typeof MutationObserver !== 'undefined' && (document.documentElement || document.body)) {
-            const observer = new MutationObserver(handlePlayerAds);
+            const observer = new MutationObserver(checkAdsThrottled);
             observer.observe(document.documentElement || document.body, {
               childList: true,
               subtree: true,
@@ -1091,7 +1120,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       window.addEventListener('yt-page-data-updated', scheduleInjection);
       window.addEventListener('popstate', scheduleInjection);
       window.addEventListener('scroll', scheduleInjection, { passive: true });
-      setInterval(scheduleInjection, 1500);
+      repeatWhenVisible(scheduleInjection, 1500);
     }
 
     // Rutube does not expose a stable action toolbar across its player layouts.
@@ -1148,6 +1177,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       const observer = new MutationObserver(scheduleInjection);
       observer.observe(document.body, { childList: true, subtree: true });
     }
+    document.addEventListener('visibilitychange', scheduleInjection);
     scheduleInjection();
 
     // 4. Video & Audio media detection for download button checkmark
@@ -1210,7 +1240,9 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 
     // 5. Google Account Detection & SSO Auto-sync
     if (isHostOrSubdomain('google.com') || isHostOrSubdomain('google.ru')) {
+      let lastAccountSignature = '';
       const checkGoogleAccount = () => {
+        if (document.hidden === true || suspended) return;
         try {
           const ariaEl = document.querySelector('a[aria-label*="@"], div[aria-label*="@"], [data-email*="@"]');
           let email = '';
@@ -1242,12 +1274,15 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
           }
 
           if (email) {
+            const signature = JSON.stringify([email, name, avatar]);
+            if (signature === lastAccountSignature) return;
+            lastAccountSignature = signature;
             ipcRenderer.send('page:google-account-detected', { email, name, avatar });
           }
         } catch {}
       };
       checkGoogleAccount();
-      setInterval(checkGoogleAccount, 4000);
+      repeatWhenVisible(checkGoogleAccount, 4000);
     }
 
     // 6. Native Video, Picture-in-Picture & Speed Controller (Chrome & Yandex Flagship)
@@ -1284,14 +1319,14 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     // discovery rather than walking its entire DOM in every observer callback.
     let videoCheckTimer: ReturnType<typeof setTimeout> | undefined;
     const scheduleVideoCheck = () => {
-      if (videoCheckTimer !== undefined) return;
+      if (document.hidden === true || suspended || videoCheckTimer !== undefined) return;
       videoCheckTimer = setTimeout(() => {
         videoCheckTimer = undefined;
-        checkVideo();
+        if (document.hidden !== true && !suspended) checkVideo();
       }, 250);
     };
     checkVideo();
-    setInterval(scheduleVideoCheck, 2500);
+    repeatWhenVisible(scheduleVideoCheck, 2500);
     document.addEventListener('play', checkVideo, true);
     document.addEventListener('playing', checkVideo, true);
     document.addEventListener('loadeddata', checkVideo, true);
@@ -1922,6 +1957,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     };
 
     const checkReaderStatus = () => {
+      if (document.hidden === true || suspended) return;
       try {
         const href = window.location.href;
         if (isExcludedFromReader(href)) {
@@ -1967,7 +2003,7 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       } catch {}
     };
     checkReaderStatus();
-    setInterval(checkReaderStatus, 4000);
+    repeatWhenVisible(checkReaderStatus, 4000);
     window.addEventListener('popstate', checkReaderStatus);
 
     // 8. Reader Article Extractor

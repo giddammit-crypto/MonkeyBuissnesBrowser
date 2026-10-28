@@ -208,7 +208,7 @@ describe('VoodooAiService', () => {
     }
   });
 
-  it('executeChatCompletion does not mark healthy key as permanently exhausted on timeout', async () => {
+  it('returns endpoint timeout promptly without rotating keys or exhausting credentials', async () => {
     const service = new VoodooAiService();
     const timeoutKey = 'sk-xt-timeout-key';
     const backupKey = 'sk-xt-backup-working-key';
@@ -234,7 +234,9 @@ describe('VoodooAiService', () => {
         { keys: [timeoutKey, backupKey] }
       );
 
-      expect(res.reply).toBe('Ответ от резервного ключа');
+      expect(res.error).toContain('Тайм-аут');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0][1].headers.Authorization).toContain(timeoutKey);
 
       // Key status should NOT be 'exhausted'
       const statuses = service.getKeysStatus([timeoutKey, backupKey]);

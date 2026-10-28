@@ -31,7 +31,7 @@ describe('Voodoo key hygiene and recovery', () => {
     const response = await service.chat(messages, { keys: [first] });
     expect(service.getKeysStatus([first])[0].status).toBe('unknown');
     expect(response.reply).not.toContain(first);
-    expect(service.getKeysStatus([first])[0].lastError).not.toContain(first);
+    expect(service.getKeysStatus([first])[0].lastError).toBeUndefined();
   });
   it('rejects unsafe endpoints before sending authorization and forbids redirects', async () => {
     const fetchMock = vi.fn().mockImplementation(async () => ok());

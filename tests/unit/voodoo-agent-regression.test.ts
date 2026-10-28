@@ -70,13 +70,12 @@ describe('Voodoo agent execution regressions', () => {
     expect(result.reply).toBe('Страница не загрузилась.');
   });
 
-  it('bounds large tool observations before submitting them to the provider', async () => {
+  it('retains a complete large tool observation when it fits the configured token budget', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(response({ tool_calls: [tool('read_page', {})] }))
       .mockImplementationOnce(async (_url, options) => {
         const observation = JSON.parse(options.body).messages.at(-1).content;
-        expect(observation.length).toBeLessThanOrEqual(17000);
-        expect(observation).toContain('AAAA');
+        expect(JSON.parse(observation).result.text).toBe('A'.repeat(100000));
         return response({ content: 'Данные получены.' });
       }));
     const result = await new VoodooAiService().chat(messages, {
@@ -108,12 +107,15 @@ describe('Voodoo agent execution regressions', () => {
     const parsed = VoodooAiService.parseTextActionCalls(`${JSON.stringify(first)}\n${JSON.stringify(second)}`);
     expect(parsed.map(({ tool, args }) => ({ tool, args }))).toEqual([first, second]);
   });
-  it('caps actions even when a single model message contains an oversized batch', async () => {
+  it('executes a large finite batch while bounding retained trace memory', async () => {
     const executor = vi.fn().mockResolvedValue({ success: true });
-    const fetchMock = vi.fn().mockResolvedValue(response({ tool_calls: Array.from({ length: 60 }, (_, i) => tool('list_tabs', {}, `call_${i}`)) }));
+    const fetchMock = vi.fn().mockResolvedValue(response({ tool_calls: Array.from({ length: 300 }, (_, i) => tool('list_tabs', {}, `call_${i}`)) }));
     vi.stubGlobal('fetch', fetchMock);
-    const result = await new VoodooAiService().chat(messages, { keys, toolExecutor: executor });
-    expect(executor).toHaveBeenCalledTimes(48);
+    const result = await new VoodooAiService().chat(messages, { keys, toolExecutor: executor, maxSteps: 1 });
+    expect(executor).toHaveBeenCalledTimes(300);
+    expect(result.executedActions).toHaveLength(256);
+    expect(result.executedActionCount).toBe(300);
+    expect(result.actionsTruncated).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.error).toBe('agent_limit');
   });

@@ -130,6 +130,8 @@ export class BrowsecService {
   private readonly countriesMap: Record<string, BrowsecCountry>;
   private readonly lastAppliedPac = new Map<Session, string>();
   private webContentsProvider?: () => WebContents[];
+  private startupTimer?: NodeJS.Timeout;
+  private disposed = false;
 
   constructor(userDataPath: string, options?: BrowsecServiceOptions) {
     const storePath = path.join(userDataPath, 'browser-data', 'browsec-settings.json');
@@ -160,9 +162,11 @@ export class BrowsecService {
 
     if (options?.enableHealthCheck ?? true) {
       const startupDelay = options?.startupDelayMs ?? 5000;
-      setTimeout(() => {
-        void this.checkServersHealth();
-      }, startupDelay).unref();
+      this.startupTimer = setTimeout(() => {
+        this.startupTimer = undefined;
+        if (!this.disposed) void this.checkServersHealth();
+      }, startupDelay);
+      this.startupTimer.unref();
     }
   }
 
@@ -172,8 +176,9 @@ export class BrowsecService {
 
   async checkServersHealth(): Promise<HealthCheckSummary> {
     const summary = await this.healthCheck.checkAllServers();
-    this.updateCountriesFromHealth(this.healthCheck.getDeadServers(), this.healthCheck.getAllLatencies());
-    this.persistHealthStatus();
+    if (this.disposed) return summary;
+    // The engine's status callback already updates and durably persists this batch.
+    // Await proxy application here without writing the same health records twice.
     await this.smoothlyReapplyProxy();
     return summary;
   }
@@ -250,8 +255,9 @@ export class BrowsecService {
 
   async triggerManualHealthCheck(countryCode?: string): Promise<VpnHealthStatus> {
     const result = await this.healthCheck.triggerManualHealthCheck(countryCode);
-    this.updateCountriesFromHealth(this.healthCheck.getDeadServers(), this.healthCheck.getAllLatencies());
-    this.persistHealthStatus();
+    if (this.disposed) return result;
+    // The engine's status callback already updates and durably persists this batch.
+    // Await proxy application here without writing the same health records twice.
     await this.smoothlyReapplyProxy();
     this.notify();
     return result;
@@ -530,6 +536,9 @@ export class BrowsecService {
   }
 
   destroy(): void {
+    this.disposed = true;
+    if (this.startupTimer) clearTimeout(this.startupTimer);
+    this.startupTimer = undefined;
     this.healthCheck.destroy();
     this.registeredSessions.clear();
     this.lastAppliedPac.clear();

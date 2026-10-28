@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { once } from 'node:events';
-import { _electron as electron } from '@playwright/test';
+import { _electron as electron, expect } from '@playwright/test';
 
 // Real Electron + IPC + DOM, with a deterministic local OpenAI-compatible server.
 // Never sends real credentials or visits third-party pages.
@@ -19,6 +19,7 @@ let tabId;
 const tool = (name, args) => ({ id: `call_${round}`, type: 'function', function: { name, arguments: JSON.stringify(args) } });
 const server = http.createServer(async (req, res) => {
   if (req.method !== 'POST') {
+    if (req.url === '/v1/models') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ data: [{ id: 'fixture', context_length: 600000 }] })); return; }
     res.writeHead(200, { 'content-type': 'text/html' });
     if (req.url === '/source-a') { res.end('<title>Источник A</title><article>A=12; ' + 'Подтвержденные данные. '.repeat(30) + 'END_A</article>'); return; }
     if (req.url === '/source-b') { res.end('<title>Источник B</title><article>B=18; END_B</article>'); return; }
@@ -108,12 +109,22 @@ try {
   workflow = true;
   const complex = await invoke('sendVoodooMessage', [{ role: 'user', content: 'Прочитай два источника, сравни числа и сохрани отчёт. Проверь файл.' }]);
   assert.equal(complex.error, undefined);
+  assert.equal(complex.contextUsage.requestedWindowTokens, 600000);
+  assert.equal(complex.contextUsage.effectiveWindowTokens, 600000);
+  assert.equal(complex.contextUsage.providerLimitKnown, true);
   assert.equal(workflowRound, 14);
   assert.ok(complex.executedActions.some(action => action.tool === 'update_plan'));
   assert.match(fs.readFileSync(path.join(documentsPath, 'comparison.md'), 'utf8'), /A=12; B=18; разница=6/);
   assert.ok(complex.executedActions.some(action => action.tool === 'read_file' && !action.error));
   console.log('PASS 14-round plan → premature reply recovery → two sources → pagination → comparison file → read-back');
   workflow = false;
+  await shell.locator('.sidebar').getByRole('button', { name: 'Настройки', exact: true }).click();
+  const contextSelector = shell.locator('#voodoo-context-window');
+  await contextSelector.scrollIntoViewIfNeeded();
+  await expect(contextSelector).toHaveValue('600000');
+  await contextSelector.selectOption('128000');
+  await expect.poll(async () => (await invoke('getSnapshot')).settings.voodooContextWindowTokens).toBe(128000);
+  console.log('PASS context settings UI → persisted budget → provider metadata integration');
   cancelling = true;
   const observed = new Promise(resolve => { started = resolve; });
   const pending = invoke('sendVoodooMessage', [{ role: 'user', content: 'Долгая задача' }]);
@@ -121,6 +132,7 @@ try {
   await invoke('cancelVoodooRequest');
   const cancelled = await pending;
   assert.equal(cancelled.error, 'cancelled');
+  assert.equal(cancelled.contextUsage.requestedWindowTokens, 128000);
   console.log('PASS cancellation aborts real pending provider request');
 } finally {
   if (app) {

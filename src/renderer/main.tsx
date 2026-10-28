@@ -4818,7 +4818,7 @@ function SettingsPanel({
         <div className="settings-section">
           <h3>AI-Ассистент Вуду</h3>
           <p className="privacy-note">
-            Интеллектуальный советник для соцсетей (ВКонтакте, Telegram), анализа диалогов и страниц на базе модели Qwen 3.8 Max (провайдер xkiro).
+            Агент для многошаговых задач: работа со вкладками, страницами, файлами и диалогами через провайдер xkiro.
           </p>
 
           <label className="checkbox-setting" style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0" }}>
@@ -4839,6 +4839,29 @@ function SettingsPanel({
             />
             <span>Отображать плавающий кружок в правом нижнем углу экрана</span>
           </label>
+
+          <div style={{ marginTop: 14, marginBottom: 18 }}>
+            <label htmlFor="voodoo-context-window" style={{ display: "block", fontWeight: 600, marginBottom: 6 }}>
+              Бюджет контекста Вуду
+            </label>
+            <select id="voodoo-context-window" value={settings.voodooContextWindowTokens ?? 600000}
+              aria-describedby="voodoo-context-help"
+              onChange={(event) => update({ voodooContextWindowTokens: Number(event.target.value) })}
+              style={{ padding: "7px 10px", borderRadius: 8, background: "var(--surface, #17202c)", color: "var(--text-main)", border: "1px solid var(--border)" }}>
+              <option value={32000}>32 000 токенов</option>
+              <option value={128000}>128 000 токенов</option>
+              <option value={256000}>256 000 токенов</option>
+              <option value={600000}>600 000 токенов (по умолчанию)</option>
+              {![32000, 128000, 256000, 600000].includes(settings.voodooContextWindowTokens ?? 600000) && (
+                <option value={settings.voodooContextWindowTokens}>{settings.voodooContextWindowTokens?.toLocaleString()} токенов</option>
+              )}
+            </select>
+            <small id="voodoo-context-help" style={{ display: "block", color: "var(--text-muted, #94a3b8)", marginTop: 6, lineHeight: 1.5 }}>
+              Верхняя граница истории, результатов инструментов и ответа. Фактический предел модели или xkiro может быть ниже;
+              число токенов оценивается приблизительно. Большой контекст помогает длинным задачам, но может увеличить время ответа и расход токенов.
+              Для ускорения коротких диалогов выберите меньший бюджет.
+            </small>
+          </div>
 
           <div style={{ marginTop: 14 }}>
             <strong style={{ fontSize: 13, display: "block", marginBottom: 4 }}>

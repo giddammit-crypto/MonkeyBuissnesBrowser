@@ -143,6 +143,7 @@ export interface BrowserSettings {
   voodooBubblePosition?: { x: number; y: number };
   voodooKeys?: string[];
   voodooModel?: string;
+  voodooContextWindowTokens?: number;
   voodooBaseUrl?: string;
   voodooSttKey?: string;
   neverSavePasswordOrigins?: string[];
@@ -427,6 +428,9 @@ export interface VoodooToolDefinition {
 }
 
 export interface VoodooChatMessage {
+  contextUsage?: VoodooContextUsage;
+  executedActionCount?: number;
+  actionsTruncated?: boolean;
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -437,7 +441,19 @@ export interface VoodooChatMessage {
   executedActions?: VoodooActionExecution[];
 }
 
+export interface VoodooContextUsage {
+  requestedWindowTokens: number;
+  effectiveWindowTokens: number;
+  estimatedInputTokens: number;
+  reservedOutputTokens: number;
+  providerLimitKnown: boolean;
+  estimateOnly: true;
+}
+
 export interface VoodooChatResponse {
+  contextUsage?: VoodooContextUsage;
+  executedActionCount?: number;
+  actionsTruncated?: boolean;
   reply: string;
   suggestedReplies?: string[];
   error?: string;

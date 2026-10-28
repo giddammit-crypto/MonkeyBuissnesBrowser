@@ -1,5 +1,5 @@
 import type { Session } from 'electron';
-import { isAdBlockDisabledForSite } from '../../shared/sitePolicy';
+import { normalizeSiteExceptions, normalizeSiteKey } from '../../shared/sitePolicy';
 
 export interface AdBlockStats {
   enabled: boolean;
@@ -80,6 +80,10 @@ export class FilterEngine {
   private enabled = true;
   private readonly rules: FilterRule[] = [...builtInRules];
   private exceptions: string[] = [];
+  private exceptionSites = new Set<string>();
+  private readonly exceptionDecisions = new Map<string, boolean>();
+  private readonly hostRules = new Set(builtInRules.filter(rule => rule.kind === 'host').map(rule => rule.token));
+  private readonly pathRules = builtInRules.filter(rule => rule.kind === 'path').map(rule => rule.token);
   private blockedTotal = 0;
   private readonly blockedByHost = new Map<string, number>();
 
@@ -88,7 +92,9 @@ export class FilterEngine {
   }
 
   setExceptions(exceptions: string[]): void {
-    this.exceptions = Array.isArray(exceptions) ? exceptions : [];
+    this.exceptions = normalizeSiteExceptions(exceptions);
+    this.exceptionSites = new Set(this.exceptions);
+    this.exceptionDecisions.clear();
   }
 
   getExceptions(): string[] {
@@ -97,14 +103,25 @@ export class FilterEngine {
 
   isException(initiatingPageUrl?: string): boolean {
     if (!initiatingPageUrl || this.exceptions.length === 0) return false;
-    return isAdBlockDisabledForSite(initiatingPageUrl, this.exceptions);
+    const cacheable = initiatingPageUrl.length <= 4096;
+    const known = cacheable ? this.exceptionDecisions.get(initiatingPageUrl) : undefined;
+    if (known !== undefined) return known;
+    const site = normalizeSiteKey(initiatingPageUrl);
+    const decision = site !== null && this.exceptionSites.has(site);
+    if (this.exceptionDecisions.size >= 256) this.exceptionDecisions.delete(this.exceptionDecisions.keys().next().value!);
+    if (cacheable) this.exceptionDecisions.set(initiatingPageUrl, decision);
+    return decision;
   }
 
   addRule(rule: string): void {
     const token = rule.trim().toLowerCase();
     if (!token || token.length > 512) return;
     const kind = token.includes('/') ? 'path' : 'host';
-    if (!this.rules.some((item) => item.token === token && item.kind === kind)) this.rules.push({ token, kind });
+    if (!this.rules.some((item) => item.token === token && item.kind === kind)) {
+      this.rules.push({ token, kind });
+      if (kind === 'host') this.hostRules.add(token);
+      else this.pathRules.push(token);
+    }
   }
 
   shouldBlock(rawUrl: string, resourceType?: string, initiatingPageUrl?: string): boolean {
@@ -119,9 +136,21 @@ export class FilterEngine {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
     const host = url.hostname.toLowerCase();
     const pathAndQuery = `${url.pathname}${url.search}`.toLowerCase();
-    const blocked = this.rules.some((rule) => rule.kind === 'host' ? (host === rule.token || host.endsWith(`.${rule.token}`)) : (pathAndQuery.includes(rule.token) || rawUrl.toLowerCase().includes(rule.token)));
+    let matchedHost = host;
+    let hostBlocked = false;
+    while (matchedHost) {
+      if (this.hostRules.has(matchedHost)) { hostBlocked = true; break; }
+      const dot = matchedHost.indexOf('.');
+      if (dot < 0) break;
+      matchedHost = matchedHost.slice(dot + 1);
+    }
+    const rawLower = hostBlocked ? '' : rawUrl.toLowerCase();
+    const blocked = hostBlocked || this.pathRules.some(token => pathAndQuery.includes(token) || rawLower.includes(token));
     if (blocked) {
       this.blockedTotal += 1;
+      if (!this.blockedByHost.has(host) && this.blockedByHost.size >= 1024) {
+        this.blockedByHost.delete(this.blockedByHost.keys().next().value!);
+      }
       this.blockedByHost.set(host, (this.blockedByHost.get(host) ?? 0) + 1);
     }
     return blocked;

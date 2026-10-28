@@ -66,6 +66,8 @@ export class BrowsecHealthCheckEngine {
   private onStatusChange?: (deadServers: Set<string>, latencies?: Map<string, number>) => void;
   private readonly serversProvider?: () => BrowsecServer[];
   private isChecking = false;
+  private disposed = false;
+  private readonly pendingProbes = new Set<() => void>();
 
   constructor(options: BrowsecHealthCheckOptions = {}) {
     this.intervalMs = options.intervalMs ?? DEFAULT_CHECK_INTERVAL_MS;
@@ -93,7 +95,7 @@ export class BrowsecHealthCheckEngine {
   }
 
   startSchedule(customDelayMs?: number): void {
-    if (this.timer || this.startupTimer) {
+    if (this.disposed || this.timer || this.startupTimer) {
       return;
     }
     const delay = customDelayMs ?? this.startupDelayMs;
@@ -155,7 +157,8 @@ export class BrowsecHealthCheckEngine {
   markHealthy(server: BrowsecServer | string, latency?: number): void {
     const key = normalizeServerKey(server);
     const hostOnly = typeof server === 'string' ? server.split(':')[0].trim().toLowerCase() : server.host.trim().toLowerCase();
-    const removed = this.deadServers.delete(key) || this.deadServers.delete(hostOnly);
+    const removedKey = this.deadServers.delete(key);
+    const removed = this.deadServers.delete(hostOnly) || removedKey;
     if (typeof latency === 'number' && latency >= 0) {
       this.serverLatencies.set(key, latency);
     }
@@ -176,7 +179,7 @@ export class BrowsecHealthCheckEngine {
   }
 
   private notifyStatusChange(): void {
-    if (this.onStatusChange) {
+    if (!this.disposed && this.onStatusChange) {
       try {
         this.onStatusChange(new Set(this.deadServers), new Map(this.serverLatencies));
       } catch (err) {
@@ -186,6 +189,7 @@ export class BrowsecHealthCheckEngine {
   }
 
   async checkServer(server: BrowsecServer, timeoutMs = this.socketTimeoutMs): Promise<boolean> {
+    if (this.disposed) return false;
     const key = normalizeServerKey(server);
     const port = server.port || 443;
     const host = server.host.trim();
@@ -194,10 +198,15 @@ export class BrowsecHealthCheckEngine {
       let settled = false;
       let socket: tls.TLSSocket | null = null;
       const startTime = Date.now();
+      let headerBuffer = '';
+      let deadline: NodeJS.Timeout | undefined;
+      const cancel = () => finish(false, undefined, 'Health check cancelled');
 
       const finish = (healthy: boolean, latency?: number, errorMessage?: string) => {
         if (settled) return;
         settled = true;
+        if (deadline) clearTimeout(deadline);
+        this.pendingProbes.delete(cancel);
 
         if (socket) {
           try {
@@ -207,6 +216,7 @@ export class BrowsecHealthCheckEngine {
           socket = null;
         }
 
+        if (this.disposed) { resolve(false); return; }
         const now = Date.now();
         this.serverLastChecked.set(key, now);
 
@@ -227,6 +237,9 @@ export class BrowsecHealthCheckEngine {
         resolve(healthy);
       };
 
+      this.pendingProbes.add(cancel);
+      deadline = setTimeout(() => finish(false, Math.max(1, Date.now() - startTime), 'Connection timed out'), timeoutMs);
+      deadline.unref?.();
       try {
         const connectFn = this.tlsConnect;
         const options: tls.ConnectionOptions = {
@@ -257,14 +270,18 @@ export class BrowsecHealthCheckEngine {
         });
 
         socket.on('data', (chunk) => {
+          if (settled) return;
           const latency = Math.max(1, Date.now() - startTime);
-          const firstLine = (chunk.toString('utf8').split('\r\n')[0] || '').trim();
-          const is200 = /^HTTP\/\d(?:\.\d)?\s+200/i.test(firstLine) || firstLine.includes('200');
-          if (is200) {
-            finish(true, latency);
-          } else {
-            finish(false, latency, `Proxy returned status: ${firstLine}`);
+          if (Buffer.byteLength(headerBuffer) + chunk.length > 8192) {
+            finish(false, latency, 'Proxy response header exceeds 8 KiB');
+            return;
           }
+          headerBuffer += chunk.toString('utf8');
+          const end = headerBuffer.indexOf('\r\n');
+          if (end < 0) return;
+          const firstLine = headerBuffer.slice(0, end).trim();
+          if (/^HTTP\/\d(?:\.\d)?\s+200(?:\s|$)/i.test(firstLine)) finish(true, latency);
+          else finish(false, latency, `Proxy returned status: ${firstLine.slice(0, 200)}`);
         });
 
         socket.once('timeout', () => {
@@ -277,11 +294,8 @@ export class BrowsecHealthCheckEngine {
           finish(false, latency, err?.message || 'Socket error');
         });
 
-        socket.once('close', (hadError) => {
-          if (hadError) {
-            const latency = Math.max(1, Date.now() - startTime);
-            finish(false, latency, 'Connection closed with error');
-          }
+        socket.once('close', () => {
+          finish(false, Math.max(1, Date.now() - startTime), 'Connection closed before proxy response');
         });
       } catch (err: any) {
         finish(false, 0, err?.message || 'Connection initialization error');
@@ -290,7 +304,7 @@ export class BrowsecHealthCheckEngine {
   }
 
   async checkAllServers(): Promise<HealthCheckSummary> {
-    if (this.isChecking) {
+    if (this.isChecking || this.disposed) {
       return {
         totalChecked: 0,
         healthyCount: 0,
@@ -305,7 +319,7 @@ export class BrowsecHealthCheckEngine {
 
       // Concurrency batch execution (limit to 10 parallel probes to avoid socket limits)
       const batchSize = 10;
-      for (let i = 0; i < servers.length; i += batchSize) {
+      for (let i = 0; i < servers.length && !this.disposed; i += batchSize) {
         const batch = servers.slice(i, i + batchSize);
         await Promise.all(batch.map((server) => this.checkServer(server)));
       }
@@ -460,7 +474,10 @@ export class BrowsecHealthCheckEngine {
   }
 
   destroy(): void {
+    this.disposed = true;
     this.stopSchedule();
+    for (const cancel of this.pendingProbes) cancel();
+    this.pendingProbes.clear();
     this.deadServers.clear();
     this.serverLatencies.clear();
     this.serverLastChecked.clear();

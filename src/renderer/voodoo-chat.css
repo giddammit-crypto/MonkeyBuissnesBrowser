@@ -1353,3 +1353,51 @@ body.voodoo-standalone #root {
     scroll-behavior: auto !important;
   }
 }
+
+.voodoo-history-more {
+  align-self: center;
+  max-width: 100%;
+  padding: 6px 9px;
+  margin: 5px 0;
+  border: 1px solid rgba(0, 210, 255, 0.3);
+  border-radius: 7px;
+  color: var(--accent, #00d2ff);
+  background: rgba(0, 210, 255, 0.06);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.voodoo-history-more:hover {
+  background: rgba(0, 210, 255, 0.14);
+}
+
+.voodoo-message-item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
+.voodoo-history-note {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-muted, #94a3b8);
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.voodoo-message-pages {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--text-muted, #94a3b8);
+}
+
+.voodoo-history-more:disabled {
+  cursor: default;
+  opacity: 0.45;
+}

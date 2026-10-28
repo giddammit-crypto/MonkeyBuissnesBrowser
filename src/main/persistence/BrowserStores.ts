@@ -1,3 +1,4 @@
+import { requestedContextWindow } from '../../shared/voodooContext';
 import { normalizeVoodooKeys } from '../../shared/voodooKeys';
 import path from 'node:path';
 import type {
@@ -47,6 +48,7 @@ const defaultSettings: BrowserSettings = {
   voodooBubbleVisible: true,
   voodooKeys: [],
   voodooModel: 'qwen/qwen3.8-max:free',
+  voodooContextWindowTokens: 600000,
   voodooBaseUrl: 'https://api.xkiro.com/v1',
 };
 
@@ -230,6 +232,7 @@ function normalizeSettings(value: unknown): BrowserSettings {
       ? { x: Math.round((raw.voodooBubblePosition as JsonObject).x as number), y: Math.round((raw.voodooBubblePosition as JsonObject).y as number) }
       : undefined,
     voodooKeys: normalizeVoodooKeys(raw.voodooKeys),
+    voodooContextWindowTokens: requestedContextWindow(typeof raw.voodooContextWindowTokens === 'number' ? raw.voodooContextWindowTokens : undefined),
     voodooModel: typeof raw.voodooModel === 'string' && raw.voodooModel.trim() ? raw.voodooModel.trim() : 'qwen/qwen3.8-max:free',
     voodooBaseUrl: typeof raw.voodooBaseUrl === 'string' && raw.voodooBaseUrl.trim() ? raw.voodooBaseUrl.trim() : 'https://api.xkiro.com/v1',
     voodooSttKey: typeof raw.voodooSttKey === 'string' && raw.voodooSttKey.trim() ? raw.voodooSttKey.trim() : undefined,

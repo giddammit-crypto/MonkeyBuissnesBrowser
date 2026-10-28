@@ -115,7 +115,7 @@ export class PasswordStore {
       normalizedOrigin = origin;
     }
 
-    const existing = this.read(false);
+    const existing = this.read(true);
     const normalize = (val: string): string => {
       try {
         return new URL(val.includes('://') ? val : `https://${val}`).origin;

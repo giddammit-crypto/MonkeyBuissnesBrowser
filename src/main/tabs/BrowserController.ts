@@ -1,3 +1,5 @@
+import { requestedContextWindow } from '../../shared/voodooContext';
+import { VoodooModelCatalog } from '../services/VoodooModelCatalog';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -112,28 +114,21 @@ function formatBytes(bytes: number): string {
   return `${formatted} ГБ`;
 }
 
-function getDirectorySize(dirPath: string): number {
+async function getDirectorySize(dirPath: string): Promise<number> {
   try {
-    if (!fs.existsSync(dirPath)) return 0;
     let total = 0;
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
+    // Stream entries asynchronously so cache scans do not block browser input
+    // or retain an entire large directory listing on the main thread.
+    const directory = await fs.promises.opendir(dirPath);
+    for await (const entry of directory) {
       const fullPath = path.join(dirPath, entry.name);
       try {
-        if (entry.isDirectory()) {
-          total += getDirectorySize(fullPath);
-        } else if (entry.isFile()) {
-          const stats = fs.statSync(fullPath);
-          total += stats.size;
-        }
-      } catch {
-        // ignore unreadable
-      }
+        if (entry.isDirectory()) total += await getDirectorySize(fullPath);
+        else if (entry.isFile()) total += (await fs.promises.stat(fullPath)).size;
+      } catch { /* Cache entries may disappear during the scan. */ }
     }
     return total;
-  } catch {
-    return 0;
-  }
+  } catch { return 0; }
 }
 
 export class BrowserController {
@@ -148,6 +143,7 @@ export class BrowserController {
   readonly memoryManager = new MemoryManager();
   readonly vpn = new VpnConfigStore(app.getPath('userData'));
   readonly voodooService = new VoodooAiService();
+  private readonly voodooModelCatalog = new VoodooModelCatalog();
   window?: BaseWindow;
   shellView?: WebContentsView;
   voodooView?: WebContentsView;
@@ -165,6 +161,9 @@ export class BrowserController {
   private eventListener?: (event: { type: string; tab?: TabSnapshot; message?: string }) => void;
   private shellContentsId?: number;
   private metricsTimer?: NodeJS.Timeout;
+  private memorySweepRunning = false;
+  private readonly tabHandlerCleanup = new Map<number, () => void>();
+  private readonly pageIpcCleanup: Array<() => void> = [];
   private snapshotTimer?: NodeJS.Timeout;
   private downloadPersistTimer?: NodeJS.Timeout;
   private sessionPersistTimer?: NodeJS.Timeout;
@@ -234,14 +233,14 @@ export class BrowserController {
     void this.browsec.registerSession(this.browserSession);
     this.configureSession(this.browserSession);
 
-    ipcMain.on('page:zoom-wheel', (event, { direction }) => {
+    this.listenToPage('page:zoom-wheel', (event, { direction }: { direction: string }) => {
       const tab = Array.from(this.tabs.values()).find((t) => t.webContentsId === event.sender.id) || this.getActiveTab();
       if (tab && (direction === 'zoom-in' || direction === 'zoom-out')) {
         void this.tabAction(tab.id, direction);
       }
     });
 
-    ipcMain.on('page:password-form-submitted', (event, data: { origin: string; url: string; username: string; password: string }) => {
+    this.listenToPage('page:password-form-submitted', (event, data: { origin: string; url: string; username: string; password: string }) => {
       if (!data || !data.origin || !data.username || !data.password) return;
       if (this.neverSaveOrigins.has(data.origin)) return;
       // Найти активную вкладку
@@ -399,19 +398,24 @@ export class BrowserController {
     this.metricsTimer = setInterval(() => {
       this.memoryManager.sample();
       const idleMinutes = this.stores.settings.get().sleepAfterMinutes;
-      if (idleMinutes > 0) {
-        for (const tab of this.tabs.values()) {
-          if (tab.lifecycle === 'background' && this.memoryManager.canHibernate(tab.id, idleMinutes).allowed) void this.hibernateTab(tab.id);
-        }
-      }
+      if (idleMinutes > 0) void this.hibernateIdleTabs(idleMinutes);
       this.emitSnapshot();
     }, 5000);
     this.metricsTimer.unref();
     this.window.show();
     this.emitSnapshot();
 
-    // Auto-verify all xkiro keys at startup and select only working ones
-    void this.performStartupVoodooKeysCheck();
+    // Verify credentials with real user requests; an eager completion per key
+    // competes for provider capacity at startup. Manual bulk checks remain in Settings.
+  }
+
+  private listenToPage(channel: string, listener: (event: Electron.IpcMainEvent, ...args: any[]) => void): void {
+    const guarded = (event: Electron.IpcMainEvent, ...args: any[]) => {
+      if (this.disposed || !this.isTrustedPage(event.sender.id)) return;
+      listener(event, ...args);
+    };
+    ipcMain.on(channel, guarded);
+    this.pageIpcCleanup.push(() => ipcMain.removeListener(channel, guarded));
   }
 
   isTrustedShell(senderId: number): boolean {
@@ -1142,6 +1146,24 @@ export class BrowserController {
     if (tab?.view) tab.view.webContents.stop();
   }
 
+  private async hibernateIdleTabs(idleMinutes: number): Promise<void> {
+    if (this.disposed || this.memorySweepRunning) return;
+    this.memorySweepRunning = true;
+    try {
+      // Release the oldest eligible page first. Staggering discard avoids a
+      // burst of renderer teardown and subsequent reloads after a long idle.
+      for (const tabId of this.memoryManager.getHibernateCandidates(idleMinutes)) {
+        const tab = this.tabs.get(tabId);
+        // Private pages may contain transient authentication/unsaved state;
+        // only an explicit user request may discard them.
+        if (!tab || tab.isPrivate) continue;
+        if (await this.hibernateTab(tabId)) break;
+      }
+    } finally {
+      this.memorySweepRunning = false;
+    }
+  }
+
   async hibernateTab(tabId: string): Promise<boolean> {
     const tab = this.tabs.get(tabId);
     // OAuth popups need their original WebContents/WindowProxy until the flow
@@ -1152,7 +1174,7 @@ export class BrowserController {
     if (!eligible.allowed) return false;
     this.detachView(tab);
     tab.lifecycle = 'hibernated';
-    this.memoryManager.updateTab(tab.id, { lifecycle: 'hibernated', active: false });
+    this.memoryManager.updateTab(tab.id, { lifecycle: 'hibernated', active: false, loading: false, audible: false, capturing: false });
     this.emitSnapshot();
     return true;
   }
@@ -1448,6 +1470,7 @@ export class BrowserController {
         voodooKeys: Array.isArray(patch.voodooKeys)
           ? patch.voodooKeys.map(k => String(k).trim()).filter(Boolean)
           : current.voodooKeys,
+        voodooContextWindowTokens: requestedContextWindow(typeof patch.voodooContextWindowTokens === 'number' ? patch.voodooContextWindowTokens : current.voodooContextWindowTokens),
         voodooModel: typeof patch.voodooModel === 'string' && patch.voodooModel.trim() ? patch.voodooModel.trim() : current.voodooModel,
         voodooBaseUrl: typeof patch.voodooBaseUrl === 'string' && patch.voodooBaseUrl.trim() ? patch.voodooBaseUrl.trim() : current.voodooBaseUrl,
       };
@@ -1564,15 +1587,17 @@ export class BrowserController {
 
   async getStorageMetrics(): Promise<StorageMetrics> {
     let cacheSizeBytes = 0;
+    let cacheMeasured = false;
     try {
       if (typeof this.browserSession.getCacheSize === 'function') {
         cacheSizeBytes = await this.browserSession.getCacheSize();
+        cacheMeasured = Number.isFinite(cacheSizeBytes) && cacheSizeBytes >= 0;
       }
     } catch {
       cacheSizeBytes = 0;
     }
 
-    if (!cacheSizeBytes) {
+    if (!cacheMeasured) {
       try {
         const userData = app.getPath('userData');
         const possibleDirs = [
@@ -1586,7 +1611,7 @@ export class BrowserController {
           path.join(userData, 'Partitions', 'northstar-default', 'DawnWebGPUCache'),
         ];
         for (const dir of possibleDirs) {
-          cacheSizeBytes += getDirectorySize(dir);
+          cacheSizeBytes += await getDirectorySize(dir);
         }
       } catch {
         // ignore
@@ -3007,7 +3032,21 @@ export class BrowserController {
     if (this.htmlFullscreenTabId === tab.id) this.leaveHtmlFullscreen();
     tab.view = undefined;
     tab.webContentsId = undefined;
+    tab.isLoading = false;
+    tab.isAudible = false;
+    tab.hasVideoMedia = false;
+    tab.hasDownloadableMedia = false;
+    tab.capturedAudioFilename = undefined;
+    tab.isPictureInPicture = false;
+    tab.pipMode = undefined;
     if (!view) return;
+    if (contents) {
+      // Detach our closures before closing native content: late navigation,
+      // renderer-gone or window-close events must not corrupt a sleeping tab.
+      this.tabHandlerCleanup?.get(contents.id)?.();
+      this.tabHandlerCleanup?.delete(contents.id);
+      this.capturedMediaStreams?.delete(contents.id);
+    }
     if (this.window && !this.window.isDestroyed()) {
       try { this.window.contentView.removeChildView(view); } catch {}
     }
@@ -3017,6 +3056,10 @@ export class BrowserController {
   private installTabHandlers(tab: TabRecord): void {
     const contents = tab.view?.webContents;
     if (!contents) return;
+    const before = new Map<string | symbol, Set<Function>>();
+    if (typeof contents.eventNames === 'function') {
+      for (const event of contents.eventNames()) before.set(event, new Set(contents.listeners(event)));
+    }
     this.installShortcuts(contents);
     contents.setWindowOpenHandler(({ url, disposition, features }) => {
       if (this.disposed || !this.window || this.window.isDestroyed()) return { action: 'deny' };
@@ -3202,16 +3245,29 @@ export class BrowserController {
       this.emitSnapshot();
     });
     contents.on('destroyed', () => {
+      this.tabHandlerCleanup?.get(contents.id)?.();
+      this.tabHandlerCleanup?.delete(contents.id);
       this.capturedMediaStreams.delete(contents.id);
       if (this.tabs.has(tab.id) && tab.webContentsId === contents.id) {
         if (this.popupOpeners.has(tab.id)) { void this.closeTab(tab.id); return; }
+        this.detachView(tab);
         tab.lifecycle = 'crashed';
+        this.memoryManager.updateTab(tab.id, { lifecycle: 'crashed', loading: false, audible: false, capturing: false });
         this.emitSnapshot();
       }
     });
     (contents as unknown as NodeJS.EventEmitter).on('window-close', () => {
       void this.closeTab(tab.id);
     });
+    if (typeof contents.eventNames === 'function') {
+      const ownedListeners = contents.eventNames().flatMap(event => contents.listeners(event)
+        .filter(listener => !before.get(event)?.has(listener))
+        .map(listener => ({ event, listener })));
+      this.tabHandlerCleanup?.set(contents.id, () => {
+        for (const { event, listener } of ownedListeners) (contents as NodeJS.EventEmitter).removeListener(event, listener as (...args: any[]) => void);
+      });
+    }
+
   }
 
   private updateUrl(tab: TabRecord, url: string): void {
@@ -4407,8 +4463,15 @@ export class BrowserController {
     const requestController = new AbortController();
     this.voodooAbortController = requestController;
     const settings = this.stores.settings.get();
+    const baseUrl = settings.voodooBaseUrl || 'https://api.xkiro.com/v1';
+    const model = settings.voodooModel || 'qwen/qwen3.8-max:free';
+    const catalog = this.voodooModelCatalog;
+    // Fetch metadata in the background; completion latency never waits for it.
+    void catalog?.warm(baseUrl, model, settings.voodooKeys?.[0] || '');
     try {
       return await this.voodooService.chat(messages, {
+        contextWindowTokens: settings.voodooContextWindowTokens,
+        providerContextWindowTokens: catalog?.getLimit(baseUrl, model),
         keys: settings.voodooKeys,
         model: settings.voodooModel,
         baseUrl: settings.voodooBaseUrl,
@@ -5936,10 +5999,13 @@ export class BrowserController {
   }
 
   private dispose(): void {
+    this.voodooModelCatalog?.dispose();
     if (this.disposed) return;
     this.persistSession();
     this.disposed = true;
     this.cancelVoodooRequest();
+    for (const cleanup of this.pageIpcCleanup) cleanup();
+    this.pageIpcCleanup.length = 0;
     if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
     if (this.sessionPersistTimer) clearTimeout(this.sessionPersistTimer);
     if (this.downloadPersistTimer) clearTimeout(this.downloadPersistTimer);
@@ -5961,6 +6027,7 @@ export class BrowserController {
     this.persistDownloads(true);
     for (const tab of this.tabs.values()) this.detachView(tab);
     this.tabs.clear();
+    this.tabHandlerCleanup.clear();
     this.memoryManager.clear();
     this.findQueries.clear();
     this.pipBounds.clear();

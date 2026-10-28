@@ -32,6 +32,9 @@ import {
 } from 'lucide-react';
 import type { TabSnapshot, VoodooChatMessage } from '../shared/types';
 import MarkdownView from './MarkdownView';
+import { boundVoodooHistory, compactVoodooMessage, restoreVoodooHistory, serializeVoodooHistory } from '../shared/voodooHistory';
+
+const MemoMarkdownView = React.memo(MarkdownView);
 import voodooAvatar from './assets/voodoo-256.png';
 import './voodoo-chat.css';
 
@@ -156,16 +159,22 @@ export default function VoodooChatBubble({
   const [isOpenState, setIsOpenState] = useState(false);
   const isOpen = standalone ? isOpenState : (propsIsOpen ?? isOpenState);
 
-  const [messages, setMessages] = useState<VoodooChatMessage[]>(() => {
+  const historyBudgetRef = useRef(600000);
+  const [messages, setStoredMessages] = useState<VoodooChatMessage[]>(() => {
     try {
-      const saved = sessionStorage.getItem('voodoo_chat_history');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
+      const restored = restoreVoodooHistory(sessionStorage.getItem('voodoo_chat_history'));
+      if (restored.length) return restored;
     } catch {}
     return [INITIAL_MESSAGE];
   });
+  const setMessages = useCallback((update: React.SetStateAction<VoodooChatMessage[]>) => {
+    setStoredMessages((previous) => boundVoodooHistory(
+      typeof update === 'function' ? update(previous) : update,
+      historyBudgetRef.current,
+    ));
+  }, []);
+  const [visibleMessageCount, setVisibleMessageCount] = useState(40);
+  const [messagePages, setMessagePages] = useState<Record<string, number>>({});
 
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -252,19 +261,26 @@ export default function VoodooChatBubble({
   useEffect(() => {
     let active = true;
     void window.browserApi.getSnapshot().then((snapshot) => {
-      if (active) setModelLabel(snapshot.settings.voodooModel || 'ИИ агент');
+      if (active) {
+        setModelLabel(snapshot.settings.voodooModel || 'ИИ агент');
+        historyBudgetRef.current = snapshot.settings.voodooContextWindowTokens ?? 600000;
+      }
     }).catch(() => {});
     const unsubscribe = window.browserApi.onSnapshotChanged((snapshot) => {
       setModelLabel(snapshot.settings.voodooModel || 'ИИ агент');
+      historyBudgetRef.current = snapshot.settings.voodooContextWindowTokens ?? 600000;
+      setMessages((previous) => previous);
     });
     return () => { active = false; unsubscribe(); };
   }, []);
 
-  // Persist history to sessionStorage
+  // Debounce synchronous Web Storage work; tool bodies have already been
+  // compacted. Persistence has its own quota, separate from live model context.
   useEffect(() => {
-    try {
-      sessionStorage.setItem('voodoo_chat_history', JSON.stringify(messages.slice(-30)));
-    } catch {}
+    const timer = setTimeout(() => {
+      try { sessionStorage.setItem('voodoo_chat_history', serializeVoodooHistory(messages)); } catch {}
+    }, 300);
+    return () => clearTimeout(timer);
   }, [messages]);
 
   const handleCopyMessage = useCallback(async (text: string, id: string) => {
@@ -375,9 +391,12 @@ export default function VoodooChatBubble({
         suggestedReplies: response.suggestedReplies,
         executedActions: response.executedActions,
         error: response.error,
+        contextUsage: response.contextUsage,
+        executedActionCount: response.executedActionCount,
+        actionsTruncated: response.actionsTruncated,
       };
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      setMessages((prev) => [...prev, compactVoodooMessage(assistantMessage)]);
     } catch (err: any) {
       if (err?.message === 'REQUEST_ABORTED') {
         return;
@@ -527,6 +546,8 @@ export default function VoodooChatBubble({
   const handleClearHistory = () => {
     if (abortControllerRef.current) return;
     setMessages([INITIAL_MESSAGE]);
+    setVisibleMessageCount(40);
+    setMessagePages({});
     try { sessionStorage.removeItem('voodoo_chat_history'); } catch {}
   };
 
@@ -1137,7 +1158,20 @@ export default function VoodooChatBubble({
               followMessagesRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
             }}
           >
-            {messages.map((msg, msgIndex) => {
+            {messages.length > visibleMessageCount && (
+              <button type="button" className="voodoo-history-more"
+                onClick={() => {
+                  followMessagesRef.current = false;
+                  setVisibleMessageCount((count) => count + 40);
+                }}>
+                Показать предыдущие сообщения ({messages.length - visibleMessageCount})
+              </button>
+            )}
+            {messages.slice(-visibleMessageCount).map((msg) => {
+              const pageCount = Math.ceil(msg.content.length / 12000);
+              const page = Math.min(messagePages[msg.id] || 0, Math.max(0, pageCount - 1));
+              const longMessage = pageCount > 1;
+              const displayedContent = longMessage ? msg.content.slice(page * 12000, (page + 1) * 12000) : msg.content;
               const timeString = new Date(msg.timestamp).toLocaleTimeString([], {
                 hour: '2-digit',
                 minute: '2-digit',
@@ -1157,8 +1191,9 @@ export default function VoodooChatBubble({
                       <div className="voodoo-agent-actions">
                         <div className="voodoo-agent-actions-title">
                           <Sparkles size={11} />
-                          <span>Действия агента: {msg.executedActions.length}</span>
+                          <span>Действия агента: {msg.executedActionCount ?? msg.executedActions.length}</span>
                         </div>
+                        {msg.actionsTruncated && <span className="voodoo-history-note">Показаны последние {msg.executedActions.length} действий. Ранние записи журнала сокращены.</span>}
                         <div className="voodoo-action-pills-list">
                           {msg.executedActions.map((action, aIdx) => {
                             const isSuccess = !action.error;
@@ -1173,7 +1208,7 @@ export default function VoodooChatBubble({
                                 </span>
                                 {getActionToolIcon(action.tool)}
                                 <span className="voodoo-action-summary">
-                                  <span className="voodoo-action-step">Шаг {aIdx + 1}. {isSuccess ? 'Выполнено' : 'Ошибка'}: </span>
+                                  <span className="voodoo-action-step">Шаг {Math.max(0, (msg.executedActionCount ?? msg.executedActions?.length ?? 0) - (msg.executedActions?.length ?? 0)) + aIdx + 1}. {isSuccess ? 'Выполнено' : 'Ошибка'}: </span>
                                   {action.summary}
                                   {action.error && <span className="voodoo-action-error">{action.error}</span>}
                                 </span>
@@ -1185,9 +1220,18 @@ export default function VoodooChatBubble({
                     )}
 
                     {msg.role === 'assistant' ? (
-                      <MarkdownView content={msg.content} />
+                      <MemoMarkdownView content={displayedContent} />
                     ) : (
-                      msg.content
+                      displayedContent
+                    )}
+                    {longMessage && (
+                      <div className="voodoo-message-pages" aria-label="Фрагменты длинного сообщения">
+                        <button type="button" className="voodoo-history-more" disabled={page === 0}
+                          onClick={() => setMessagePages((previous) => ({ ...previous, [msg.id]: page - 1 }))}>Назад</button>
+                        <span>Фрагмент {page + 1} из {pageCount}. Копирование сохраняет весь текст.</span>
+                        <button type="button" className="voodoo-history-more" disabled={page >= pageCount - 1}
+                          onClick={() => setMessagePages((previous) => ({ ...previous, [msg.id]: page + 1 }))}>Далее</button>
+                      </div>
                     )}
 
                     {msg.error && (
@@ -1201,7 +1245,7 @@ export default function VoodooChatBubble({
                     {msg.suggestedReplies && msg.suggestedReplies.length > 0 && (
                       <div className="voodoo-replies-list">
                         {msg.suggestedReplies.map((reply, rIdx) => {
-                          const replyKey = `${msgIndex}-${rIdx}`;
+                          const replyKey = `${msg.id}-${rIdx}`;
                           const isCopied = copiedKey === replyKey;
                           const isInserted = insertedKey === replyKey;
 
@@ -1232,6 +1276,13 @@ export default function VoodooChatBubble({
                       </div>
                     )}
                   </div>
+
+                  {msg.contextUsage && Number.isFinite(msg.contextUsage.estimatedInputTokens) && (
+                    <div className="voodoo-history-note" title="Приблизительная оценка, а не точный подсчёт токенизатором провайдера">
+                      Контекст ≈ {msg.contextUsage.estimatedInputTokens.toLocaleString()} / {msg.contextUsage.effectiveWindowTokens.toLocaleString()} токенов
+                      {msg.contextUsage.effectiveWindowTokens < msg.contextUsage.requestedWindowTokens ? ' · предел модели ниже выбранного бюджета' : ''}
+                    </div>
+                  )}
 
                   <div className="voodoo-message-footer">
                     <span className="voodoo-message-time">{timeString}</span>

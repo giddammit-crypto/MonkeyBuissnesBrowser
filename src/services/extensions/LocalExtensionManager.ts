@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import { dialog, type BaseWindow, type Session } from 'electron';
 import { JsonStore } from '../../main/persistence/JsonStore';
@@ -18,6 +19,7 @@ type SavedDirectory = { directory: string };
 export class LocalExtensionManager {
   private readonly saved: JsonStore<SavedDirectory[]>;
   private readonly active = new Map<string, LocalExtension>();
+  private readonly loading = new Map<string, Promise<LocalExtension>>();
   constructor(private readonly browserSession: Session, userDataPath: string) {
     this.saved = new JsonStore(path.join(userDataPath, 'browser-data', 'extensions.json'), []);
   }
@@ -26,8 +28,24 @@ export class LocalExtensionManager {
   private async validate(directory: string): Promise<{ name: string; version: string }> {
     const stat = await fs.stat(directory);
     if (!stat.isDirectory()) throw new Error('Выберите папку распакованного расширения.');
-    const manifest = await fs.readFile(path.join(directory, 'manifest.json'), 'utf8');
-    if (manifest.length > 1024 * 1024) throw new Error('Файл manifest.json слишком большой.');
+    const handle = await fs.open(path.join(directory, 'manifest.json'), constants.O_RDONLY | constants.O_NONBLOCK);
+    let manifest: string;
+    try {
+      const manifestStat = await handle.stat();
+      if (!manifestStat.isFile()) throw new Error('manifest.json должен быть обычным файлом.');
+      const limit = 1024 * 1024;
+      if (manifestStat.size > limit) throw new Error('Файл manifest.json слишком большой.');
+      // Read with a fixed bound even if a local process grows the file after stat().
+      const buffer = Buffer.alloc(limit + 1);
+      let size = 0;
+      while (size < buffer.length) {
+        const result = await handle.read(buffer, size, buffer.length - size, null);
+        if (!result.bytesRead) break;
+        size += result.bytesRead;
+      }
+      if (size > limit) throw new Error('Файл manifest.json слишком большой.');
+      manifest = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, size));
+    } finally { await handle.close(); }
     const data: unknown = JSON.parse(manifest);
     if (!data || typeof data !== 'object') throw new Error('Некорректный manifest.json.');
     const record = data as Record<string, unknown>;
@@ -42,11 +60,18 @@ export class LocalExtensionManager {
     const realPath = await fs.realpath(directory);
     const alreadyLoaded = [...this.active.values()].find((item) => item.directory === realPath);
     if (alreadyLoaded) return alreadyLoaded;
-    const manifest = await this.validate(realPath);
-    const result = await this.browserSession.extensions.loadExtension(realPath, { allowFileAccess: false });
-    const item = { id: result.id, ...manifest, directory: realPath };
-    this.active.set(item.id, item);
-    return item;
+    const pending = this.loading.get(realPath);
+    if (pending) return pending;
+    const loading = (async () => {
+      const manifest = await this.validate(realPath);
+      const result = await this.browserSession.extensions.loadExtension(realPath, { allowFileAccess: false });
+      const item = { id: result.id, ...manifest, directory: realPath };
+      this.active.set(item.id, item);
+      return item;
+    })();
+    this.loading.set(realPath, loading);
+    try { return await loading; }
+    finally { this.loading.delete(realPath); }
   }
 
   async restore(): Promise<void> {

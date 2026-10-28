@@ -1,3 +1,5 @@
+import { app } from 'electron';
+
 export interface MemoryTabState {
   tabId: string;
   active: boolean;
@@ -67,9 +69,19 @@ export class MemoryManager {
     return { allowed: true };
   }
 
-  sample(): MemoryMetrics {
-    const electronRuntime = require('electron') as typeof import('electron');
-    const processes = electronRuntime.app.getAppMetrics().map((process) => ({
+  getHibernateCandidates(idleMinutes: number): string[] {
+    return [...this.tabs.values()]
+      .filter(tab => this.canHibernate(tab.tabId, idleMinutes).allowed)
+      .sort((a, b) => a.lastInteractionAt - b.lastInteractionAt)
+      .map(tab => tab.tabId);
+  }
+
+  sample(force = false): MemoryMetrics {
+    const now = Date.now();
+    // Process metrics are native IPC/OS work. Consumers opening several panels
+    // in one frame share a sample instead of repeatedly traversing processes.
+    if (!force && this.lastMetrics && now >= this.lastMetrics.sampledAt && now - this.lastMetrics.sampledAt < 1000) return this.lastMetrics;
+    const processes = app.getAppMetrics().map((process) => ({
       pid: process.pid,
       type: process.type,
       cpuPercent: process.cpu.percentCPUUsage,
