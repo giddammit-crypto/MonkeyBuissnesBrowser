@@ -90,3 +90,84 @@ it('rejects malformed records instead of exposing them as summaries', () => {
   fs.writeFileSync(file, Buffer.from(JSON.stringify(records)).toString('base64'));
   expect(() => store.summaries()).toThrow('Операция отменена');
 });
+
+it('counts stored passwords and clears all passwords securely', () => {
+  const root = directory();
+  const store = new PasswordStore(root);
+  expect(store.count()).toBe(0);
+  expect(store.clearAll()).toBe(0);
+
+  store.addMany([
+    { origin: 'https://one.test', username: 'user1', password: 'p1', browser: 'chrome' },
+    { origin: 'https://two.test', username: 'user2', password: 'p2', browser: 'yandex' },
+  ]);
+  expect(store.count()).toBe(2);
+
+  const deleted = store.clearAll();
+  expect(deleted).toBe(2);
+  expect(store.count()).toBe(0);
+  expect(store.summaries()).toHaveLength(0);
+
+  // Calling clearAll on empty vault returns 0
+  expect(store.clearAll()).toBe(0);
+});
+
+it('clearAll and count return 0 when secure storage is unavailable', () => {
+  const root = directory();
+  const store = new PasswordStore(root);
+  store.addMany([
+    { origin: 'https://one.test', username: 'user1', password: 'p1', browser: 'chrome' },
+  ]);
+  expect(store.count()).toBe(1);
+
+  storage.isEncryptionAvailable.mockReturnValue(false);
+  expect(store.count()).toBe(0);
+  expect(store.clearAll()).toBe(0);
+
+  storage.isEncryptionAvailable.mockReturnValue(true);
+  expect(store.count()).toBe(1);
+});
+
+it('saves, updates, finds and reveals credentials for soulm8te browser', () => {
+  const root = directory();
+  const store = new PasswordStore(root);
+
+  // 1. Save new credential
+  const result1 = store.save('https://vk.com/feed', 'durov', 'secret123');
+  expect(result1.updated).toBe(false);
+  expect(result1.id).toBeDefined();
+
+  const summaries = store.summaries();
+  expect(summaries).toHaveLength(1);
+  expect(summaries[0].origin).toBe('https://vk.com');
+  expect(summaries[0].username).toBe('durov');
+  expect(summaries[0].browser).toBe('soulm8te');
+
+  // 2. getSecret
+  expect(store.getSecret(result1.id)).toBe('secret123');
+  expect(store.getSecret('non-existent')).toBeNull();
+
+  // 3. findByOriginAndUser
+  const found = store.findByOriginAndUser('https://vk.com', 'durov');
+  expect(found).not.toBeNull();
+  expect(found?.password).toBe('secret123');
+  expect(found?.id).toBe(result1.id);
+
+  // Should also find by path-based origin or exact match
+  const foundByPath = store.findByOriginAndUser('https://vk.com/login', 'durov');
+  expect(foundByPath?.id).toBe(result1.id);
+
+  // 4. Update existing credential
+  const result2 = store.save('https://vk.com', 'durov', 'newPassword456');
+  expect(result2.updated).toBe(true);
+  expect(result2.id).toBe(result1.id);
+  expect(store.getSecret(result1.id)).toBe('newPassword456');
+  expect(store.count()).toBe(1);
+
+  // 5. Secure storage unavailable
+  storage.isEncryptionAvailable.mockReturnValue(false);
+  expect(() => store.save('https://vk.com', 'durov', 'fail')).toThrow('Защищённое хранилище');
+  expect(store.getSecret(result1.id)).toBeNull();
+  expect(store.findByOriginAndUser('https://vk.com', 'durov')).toBeNull();
+});
+

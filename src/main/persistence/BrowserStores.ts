@@ -42,6 +42,11 @@ const defaultSettings: BrowserSettings = {
   googleSignInCompatibility: true,
   restoreSession: true,
   readerSettings: defaultReaderSettings,
+  voodooEnabled: true,
+  voodooBubbleVisible: true,
+  voodooKeys: ['sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0'],
+  voodooModel: 'qwen/qwen3.8-max:free',
+  voodooBaseUrl: 'https://api.xkiro.com/v1',
 };
 
 const defaultWorkspaces: WorkspaceEntry[] = [
@@ -218,6 +223,13 @@ function normalizeSettings(value: unknown): BrowserSettings {
     thirdPartyCookieExceptions: normalizeCookieExceptions(raw.thirdPartyCookieExceptions),
     restoreSession: typeof raw.restoreSession === 'boolean' ? raw.restoreSession : true,
     readerSettings: normalizeReaderSettings(raw.readerSettings),
+    voodooEnabled: typeof raw.voodooEnabled === 'boolean' ? raw.voodooEnabled : true,
+    voodooBubbleVisible: typeof raw.voodooBubbleVisible === 'boolean' ? raw.voodooBubbleVisible : true,
+    voodooKeys: Array.isArray(raw.voodooKeys) && raw.voodooKeys.length > 0
+      ? raw.voodooKeys.map((k) => String(k).trim()).filter(Boolean)
+      : ['sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0'],
+    voodooModel: typeof raw.voodooModel === 'string' && raw.voodooModel.trim() ? raw.voodooModel.trim() : 'qwen/qwen3.8-max:free',
+    voodooBaseUrl: typeof raw.voodooBaseUrl === 'string' && raw.voodooBaseUrl.trim() ? raw.voodooBaseUrl.trim() : 'https://api.xkiro.com/v1',
   };
 }
 

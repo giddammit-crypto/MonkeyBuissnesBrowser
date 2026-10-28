@@ -1,9 +1,10 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeStorage } from 'electron';
 import type { ImportBrowser, ImportedPasswordSummary } from '../../shared/types';
 
-interface StoredPassword extends ImportedPasswordSummary {
+export interface StoredPassword extends ImportedPasswordSummary {
   password: string;
 }
 
@@ -14,7 +15,7 @@ interface PasswordRecordInput {
   browser: ImportBrowser;
 }
 
-const supportedBrowsers: ImportBrowser[] = ['chrome', 'yandex', 'firefox', 'edge', 'brave', 'opera', 'vivaldi', 'file'];
+const supportedBrowsers: ImportBrowser[] = ['chrome', 'yandex', 'firefox', 'edge', 'brave', 'opera', 'vivaldi', 'file', 'soulm8te'];
 
 function isStoredPassword(value: unknown): value is StoredPassword {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -88,6 +89,113 @@ export class PasswordStore {
     if (next.length === records.length) return false;
     this.write(next);
     return true;
+  }
+
+  count(): number {
+    return this.read(false).length;
+  }
+
+  clearAll(): number {
+    if (!this.canPersistSecurely()) return 0;
+    const records = this.read(false);
+    if (records.length === 0) return 0;
+    this.write([]);
+    return records.length;
+  }
+
+  save(origin: string, username: string, password: string): { id: string; updated: boolean } {
+    if (!this.canPersistSecurely()) {
+      throw new Error('Защищённое хранилище паролей недоступно. Сохранённые данные не изменены.');
+    }
+    let normalizedOrigin = origin;
+    try {
+      const parsed = new URL(origin.includes('://') ? origin : `https://${origin}`);
+      normalizedOrigin = parsed.origin;
+    } catch {
+      normalizedOrigin = origin;
+    }
+
+    const existing = this.read(false);
+    const normalize = (val: string): string => {
+      try {
+        return new URL(val.includes('://') ? val : `https://${val}`).origin;
+      } catch {
+        return val;
+      }
+    };
+
+    const idx = existing.findIndex(
+      (r) => (r.origin === normalizedOrigin || r.origin === origin || normalize(r.origin) === normalizedOrigin) && r.username === username,
+    );
+
+    if (idx !== -1) {
+      existing[idx].password = password;
+      existing[idx].importedAt = Date.now();
+      this.write(existing);
+      return { id: existing[idx].id, updated: true };
+    }
+
+    const id = crypto.randomUUID();
+    const newRecord: StoredPassword = {
+      id,
+      origin: normalizedOrigin,
+      username,
+      password,
+      browser: 'soulm8te',
+      importedAt: Date.now(),
+    };
+    existing.push(newRecord);
+    this.write(existing);
+    return { id, updated: false };
+  }
+
+  getSecret(id: string): string | null {
+    if (!this.canPersistSecurely()) return null;
+    const records = this.read(false);
+    const found = records.find((record) => record.id === id);
+    return found ? found.password : null;
+  }
+
+  findByOriginAndUser(origin: string, username: string): StoredPassword | null {
+    if (!this.canPersistSecurely()) return null;
+    let normalizedOrigin = origin;
+    try {
+      normalizedOrigin = new URL(origin.includes('://') ? origin : `https://${origin}`).origin;
+    } catch {
+      normalizedOrigin = origin;
+    }
+    const records = this.read(false);
+    return (
+      records.find((record) => {
+        if (record.username !== username) return false;
+        if (record.origin === origin || record.origin === normalizedOrigin) return true;
+        try {
+          return new URL(record.origin.includes('://') ? record.origin : `https://${record.origin}`).origin === normalizedOrigin;
+        } catch {
+          return false;
+        }
+      }) ?? null
+    );
+  }
+
+  getSummariesForOrigin(origin: string): ImportedPasswordSummary[] {
+    if (!this.canPersistSecurely()) return [];
+    let normalizedOrigin = origin;
+    try {
+      normalizedOrigin = new URL(origin.includes('://') ? origin : `https://${origin}`).origin;
+    } catch {
+      normalizedOrigin = origin;
+    }
+    const normalize = (val: string): string => {
+      try {
+        return new URL(val.includes('://') ? val : `https://${val}`).origin;
+      } catch {
+        return val;
+      }
+    };
+    return this.summaries().filter(
+      (r) => r.origin === normalizedOrigin || r.origin === origin || normalize(r.origin) === normalizedOrigin,
+    );
   }
 
   private read(strict = false): StoredPassword[] {

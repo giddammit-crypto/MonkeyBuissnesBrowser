@@ -25,9 +25,9 @@ export interface ImportedCookie {
 
 type CookieSink = (cookies: ImportedCookie[]) => Promise<number>;
 type Row = Record<string, unknown>;
-type ChromiumBrowser = Exclude<ImportBrowser, 'firefox' | 'file'>;
+type ChromiumBrowser = Exclude<ImportBrowser, 'firefox' | 'file' | 'soulm8te'>;
 interface ImportResult { imported: number; skipped: number; warnings: string[] }
-const browserLabels: Record<ImportBrowser, string> = { chrome: 'Google Chrome', yandex: 'Яндекс Браузер', firefox: 'Firefox', edge: 'Microsoft Edge', brave: 'Brave', opera: 'Opera', vivaldi: 'Vivaldi', file: 'Файл экспорта' };
+const browserLabels: Record<ImportBrowser, string> = { chrome: 'Google Chrome', yandex: 'Яндекс Браузер', firefox: 'Firefox', edge: 'Microsoft Edge', brave: 'Brave', opera: 'Opera', vivaldi: 'Vivaldi', file: 'Файл экспорта', soulm8te: 'soulm8te' };
 const chromiumBrowsers: ChromiumBrowser[] = ['chrome', 'yandex', 'edge', 'brave', 'opera', 'vivaldi'];
 const dataKinds: ImportDataKind[] = ['history', 'bookmarks', 'cookies', 'passwords'];
 const MAX_ROWS = 10_000;

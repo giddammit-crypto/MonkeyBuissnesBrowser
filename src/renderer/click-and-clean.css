@@ -1,0 +1,1139 @@
+/**
+ * soulm8te Click & Clean — Detroit: Become Human / Cyberpunk Neon UI
+ * CyberLife-inspired HUD, glassmorphism, responsive metrics & precision toggles.
+ */
+
+:root {
+  --cc-cyan: #00f0ff;
+  --cc-cyan-dim: rgba(0, 240, 255, 0.15);
+  --cc-cyan-glow: rgba(0, 240, 255, 0.45);
+  --cc-blue: #0080ff;
+  --cc-blue-glow: rgba(0, 128, 255, 0.35);
+  --cc-violet: #8a2be2;
+  --cc-danger: var(--danger, #ff0055);
+  --cc-danger-glow: rgba(255, 0, 85, 0.45);
+  --cc-danger-bg: rgba(255, 0, 85, 0.12);
+  --cc-warning: #ffb703;
+  --cc-warning-glow: rgba(255, 183, 3, 0.4);
+  --cc-success: #00ffaa;
+  --cc-success-glow: rgba(0, 255, 170, 0.4);
+  --cc-success-bg: rgba(0, 255, 170, 0.12);
+
+  --cc-backdrop-bg: rgba(6, 10, 16, 0.72);
+  --cc-modal-bg: rgba(14, 20, 30, 0.88);
+  --cc-modal-border: rgba(0, 240, 255, 0.28);
+  --cc-card-bg: rgba(20, 28, 42, 0.65);
+  --cc-card-bg-hover: rgba(28, 40, 60, 0.8);
+  --cc-card-border: rgba(255, 255, 255, 0.08);
+  --cc-card-border-hover: rgba(0, 240, 255, 0.35);
+  --cc-text-primary: #f0f6fc;
+  --cc-text-secondary: #9db2c9;
+  --cc-text-muted: #5d7186;
+  --cc-text-code: #00f0ff;
+}
+
+:root[data-theme="dark"] {
+  --cc-backdrop-bg: rgba(4, 8, 14, 0.8);
+  --cc-modal-bg: rgba(13, 19, 29, 0.92);
+  --cc-modal-border: rgba(0, 240, 255, 0.32);
+  --cc-card-bg: rgba(20, 29, 44, 0.7);
+  --cc-card-bg-hover: rgba(26, 38, 58, 0.85);
+  --cc-text-primary: #f8fafc;
+  --cc-text-secondary: #a3b8cc;
+  --cc-text-muted: #62778c;
+}
+
+:root[data-theme="graphite"] {
+  --cc-backdrop-bg: rgba(10, 12, 16, 0.78);
+  --cc-modal-bg: rgba(22, 26, 34, 0.92);
+  --cc-modal-border: rgba(126, 168, 214, 0.35);
+  --cc-card-bg: rgba(30, 36, 48, 0.7);
+  --cc-card-bg-hover: rgba(38, 46, 62, 0.85);
+  --cc-text-primary: #f1f5f9;
+  --cc-text-secondary: #94a3b8;
+  --cc-text-muted: #64748b;
+  --cc-cyan: #7ea8d6;
+  --cc-cyan-glow: rgba(126, 168, 214, 0.45);
+}
+
+:root[data-theme="light"] {
+  --cc-backdrop-bg: rgba(220, 230, 242, 0.72);
+  --cc-modal-bg: rgba(255, 255, 255, 0.92);
+  --cc-modal-border: rgba(0, 120, 212, 0.3);
+  --cc-card-bg: rgba(243, 247, 252, 0.85);
+  --cc-card-bg-hover: rgba(235, 242, 250, 0.95);
+  --cc-card-border: rgba(0, 0, 0, 0.08);
+  --cc-card-border-hover: rgba(0, 120, 212, 0.35);
+  --cc-text-primary: #0f172a;
+  --cc-text-secondary: #475569;
+  --cc-text-muted: #64748b;
+  --cc-text-code: #0070f3;
+  --cc-cyan: #0070f3;
+  --cc-cyan-dim: rgba(0, 112, 243, 0.1);
+  --cc-cyan-glow: rgba(0, 112, 243, 0.3);
+  --cc-danger: #e11d48;
+  --cc-danger-glow: rgba(225, 29, 72, 0.3);
+  --cc-danger-bg: rgba(225, 29, 72, 0.08);
+  --cc-success: #059669;
+  --cc-success-glow: rgba(5, 150, 105, 0.3);
+  --cc-success-bg: rgba(5, 150, 105, 0.08);
+}
+
+/* ==========================================================================
+   Backdrop & Modal Shell (Glassmorphism & HUD Atmosphere)
+   ========================================================================== */
+
+.click-clean-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--cc-backdrop-bg);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  animation: ccFadeIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  isolation: isolate;
+  user-select: none;
+}
+
+@keyframes ccFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.click-clean-modal {
+  position: relative;
+  width: min(880px, 94vw);
+  max-height: min(780px, 92vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--cc-modal-bg);
+  border: 1px solid var(--cc-modal-border);
+  border-radius: 20px;
+  box-shadow: 
+    0 24px 70px rgba(0, 0, 0, 0.65),
+    0 0 40px var(--cc-cyan-dim),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  color: var(--cc-text-primary);
+  overflow: hidden;
+  animation: ccSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes ccSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Detroit CyberLife top edge LED scanner line */
+.click-clean-modal::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--cc-cyan) 30%,
+    #ffffff 50%,
+    var(--cc-cyan) 70%,
+    transparent 100%
+  );
+  box-shadow: 0 0 12px var(--cc-cyan);
+  z-index: 10;
+  opacity: 0.85;
+}
+
+/* Subtle corner HUD brackets */
+.click-clean-modal::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  pointer-events: none;
+  border-radius: 14px;
+  border: 1px dashed rgba(0, 240, 255, 0.1);
+  opacity: 0.5;
+  z-index: 1;
+}
+
+/* ==========================================================================
+   Modal Header
+   ========================================================================== */
+
+.click-clean-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 26px 18px;
+  border-bottom: 1px solid var(--cc-card-border);
+  background: rgba(0, 0, 0, 0.15);
+  z-index: 2;
+}
+
+.click-clean-header-title-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Android LED Temple Ring */
+.click-clean-avatar-led {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(0, 128, 255, 0.25));
+  border: 1.5px solid var(--cc-cyan);
+  box-shadow: 0 0 18px var(--cc-cyan-dim), inset 0 0 12px var(--cc-cyan-dim);
+  color: var(--cc-cyan);
+  flex-shrink: 0;
+}
+
+.click-clean-avatar-led-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--cc-cyan);
+  opacity: 0.6;
+  animation: ccSpinSlow 16s linear infinite;
+}
+
+@keyframes ccSpinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.click-clean-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.click-clean-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.click-clean-title-gradient {
+  font-family: Montserrat, Inter, system-ui, sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, #ffffff 0%, var(--cc-cyan) 70%, #90caf9 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin: 0;
+}
+
+:root[data-theme="light"] .click-clean-title-gradient {
+  background: linear-gradient(135deg, #0f172a 0%, var(--cc-cyan) 80%, #0369a1 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.click-clean-badge {
+  font-family: Montserrat, Inter, monospace, sans-serif;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--cc-cyan-dim);
+  color: var(--cc-cyan);
+  border: 1px solid rgba(0, 240, 255, 0.35);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.click-clean-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cc-cyan);
+  box-shadow: 0 0 6px var(--cc-cyan);
+  animation: ccPulseDot 2s infinite ease-in-out;
+}
+
+@keyframes ccPulseDot {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+.click-clean-subtitle {
+  font-size: 12.5px;
+  color: var(--cc-text-secondary);
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.click-clean-close-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--cc-card-border);
+  color: var(--cc-text-secondary);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.click-clean-close-btn:hover {
+  background: rgba(255, 0, 85, 0.15);
+  border-color: var(--cc-danger);
+  color: var(--cc-danger);
+  transform: rotate(90deg);
+  box-shadow: 0 0 12px var(--cc-danger-glow);
+}
+
+/* ==========================================================================
+   Scrollable Body
+   ========================================================================== */
+
+.click-clean-body {
+  position: relative;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px 26px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  z-index: 2;
+}
+
+.click-clean-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.click-clean-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.click-clean-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.2);
+  border-radius: 4px;
+}
+
+.click-clean-body::-webkit-scrollbar-thumb:hover {
+  background: var(--cc-cyan);
+}
+
+/* Section Headings with Cyber Sublines */
+.click-clean-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.click-clean-section-title {
+  font-family: Montserrat, Inter, system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--cc-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.click-clean-section-title::after {
+  content: "";
+  display: inline-block;
+  width: 28px;
+  height: 1px;
+  background: var(--cc-card-border-hover);
+}
+
+.click-clean-section-action {
+  font-size: 11.5px;
+  color: var(--cc-cyan);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: opacity 0.15s ease;
+}
+
+.click-clean-section-action:hover {
+  text-decoration: underline;
+  opacity: 0.85;
+}
+
+/* ==========================================================================
+   Presets Grid (.click-clean-presets)
+   ========================================================================== */
+
+.click-clean-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .click-clean-presets {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.click-clean-preset-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 14px 12px;
+  background: var(--cc-card-bg);
+  border: 1px solid var(--cc-card-border);
+  border-radius: 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.click-clean-preset-card:hover {
+  background: var(--cc-card-bg-hover);
+  border-color: var(--cc-card-border-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 16px var(--cc-cyan-dim);
+}
+
+/* Active preset glowing border */
+.click-clean-preset-card.active {
+  background: linear-gradient(145deg, rgba(0, 240, 255, 0.12), var(--cc-card-bg));
+  border-color: var(--cc-cyan);
+  box-shadow: 
+    0 0 20px var(--cc-cyan-glow),
+    inset 0 0 12px rgba(0, 240, 255, 0.08);
+}
+
+.click-clean-preset-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.click-clean-preset-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--cc-card-border);
+  color: var(--cc-text-secondary);
+  transition: all 0.2s ease;
+}
+
+.click-clean-preset-card.active .click-clean-preset-icon {
+  background: var(--cc-cyan-dim);
+  border-color: var(--cc-cyan);
+  color: var(--cc-cyan);
+  box-shadow: 0 0 10px var(--cc-cyan-dim);
+}
+
+.click-clean-preset-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--cc-text-muted);
+}
+
+.click-clean-preset-card.active .click-clean-preset-badge {
+  background: var(--cc-cyan-dim);
+  color: var(--cc-cyan);
+}
+
+.click-clean-preset-name {
+  font-family: Montserrat, Inter, system-ui, sans-serif;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--cc-text-primary);
+  margin: 0 0 4px;
+}
+
+.click-clean-preset-desc {
+  font-size: 11.5px;
+  color: var(--cc-text-secondary);
+  line-height: 1.4;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   Live HUD Metrics Grid (.click-clean-metrics-grid)
+   ========================================================================== */
+
+.click-clean-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .click-clean-metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.click-clean-metric-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 15px;
+  background: var(--cc-card-bg);
+  border: 1px solid var(--cc-card-border);
+  border-radius: 12px;
+  transition: all 0.2s ease;
+  overflow: hidden;
+}
+
+.click-clean-metric-card:hover {
+  background: var(--cc-card-bg-hover);
+  border-color: var(--cc-card-border-hover);
+}
+
+.click-clean-metric-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  height: 100%;
+  background: var(--cc-cyan);
+  opacity: 0.4;
+  transition: opacity 0.2s ease;
+}
+
+.click-clean-metric-card:hover::before {
+  opacity: 1;
+  box-shadow: 0 0 8px var(--cc-cyan);
+}
+
+.click-clean-metric-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cc-cyan-dim);
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  color: var(--cc-cyan);
+  flex-shrink: 0;
+}
+
+.click-clean-metric-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.click-clean-metric-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--cc-text-muted);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.click-clean-metric-value {
+  font-family: Montserrat, Inter, monospace, sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--cc-text-primary);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ==========================================================================
+   Options Grid (.click-clean-options-grid)
+   ========================================================================== */
+
+.click-clean-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .click-clean-options-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.click-clean-option-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  background: var(--cc-card-bg);
+  border: 1px solid var(--cc-card-border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  user-select: none;
+}
+
+.click-clean-option-item:hover {
+  background: var(--cc-card-bg-hover);
+  border-color: var(--cc-card-border-hover);
+}
+
+.click-clean-option-item.selected {
+  border-color: rgba(0, 240, 255, 0.3);
+  background: rgba(0, 240, 255, 0.04);
+}
+
+/* Danger option (passwords) */
+.click-clean-option-item.danger-option {
+  border-color: rgba(255, 0, 85, 0.2);
+}
+
+.click-clean-option-item.danger-option:hover {
+  border-color: var(--cc-danger);
+  background: var(--cc-danger-bg);
+}
+
+.click-clean-option-item.danger-option.selected {
+  border-color: var(--cc-danger);
+  background: var(--cc-danger-bg);
+  box-shadow: 0 0 16px var(--cc-danger-glow);
+}
+
+.click-clean-option-left {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.click-clean-option-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--cc-card-border);
+  color: var(--cc-text-secondary);
+  flex-shrink: 0;
+  transition: all 0.18s ease;
+}
+
+.click-clean-option-item.selected .click-clean-option-icon {
+  background: var(--cc-cyan-dim);
+  border-color: var(--cc-cyan);
+  color: var(--cc-cyan);
+}
+
+.click-clean-option-item.danger-option.selected .click-clean-option-icon {
+  background: var(--cc-danger-bg);
+  border-color: var(--cc-danger);
+  color: var(--cc-danger);
+}
+
+.click-clean-option-texts {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.click-clean-option-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.click-clean-option-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cc-text-primary);
+}
+
+.click-clean-option-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.click-clean-option-badge.danger {
+  background: var(--cc-danger-bg);
+  color: var(--cc-danger);
+  border: 1px solid var(--cc-danger);
+}
+
+.click-clean-option-badge.warning {
+  background: rgba(255, 183, 3, 0.15);
+  color: var(--cc-warning);
+  border: 1px solid var(--cc-warning);
+}
+
+.click-clean-option-desc {
+  font-size: 11px;
+  color: var(--cc-text-secondary);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Cyberpunk Toggle Switch */
+.click-clean-toggle-switch {
+  position: relative;
+  width: 38px;
+  height: 20px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--cc-card-border);
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.click-clean-toggle-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.click-clean-option-item.selected .click-clean-toggle-switch {
+  background: var(--cc-cyan);
+  border-color: var(--cc-cyan);
+  box-shadow: 0 0 12px var(--cc-cyan-glow);
+}
+
+.click-clean-option-item.selected .click-clean-toggle-switch::after {
+  transform: translateX(18px);
+  background: #001f3f;
+}
+
+.click-clean-option-item.danger-option.selected .click-clean-toggle-switch {
+  background: var(--cc-danger);
+  border-color: var(--cc-danger);
+  box-shadow: 0 0 12px var(--cc-danger-glow);
+}
+
+.click-clean-option-item.danger-option.selected .click-clean-toggle-switch::after {
+  transform: translateX(18px);
+  background: #ffffff;
+}
+
+/* ==========================================================================
+   Password Guard (.click-clean-password-guard)
+   ========================================================================== */
+
+.click-clean-password-guard {
+  position: relative;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--cc-danger-bg);
+  border: 1.5px solid var(--cc-danger);
+  box-shadow: 0 0 24px var(--cc-danger-glow);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: ccShakeOnce 0.4s ease-in-out forwards;
+}
+
+@keyframes ccShakeOnce {
+  0% { transform: scale(0.98); }
+  50% { transform: scale(1.01); }
+  100% { transform: scale(1); }
+}
+
+.click-clean-guard-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.click-clean-guard-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cc-danger);
+  color: #ffffff;
+  box-shadow: 0 0 14px var(--cc-danger);
+  flex-shrink: 0;
+}
+
+.click-clean-guard-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.click-clean-guard-title {
+  font-family: Montserrat, Inter, system-ui, sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--cc-danger);
+  margin: 0;
+}
+
+.click-clean-guard-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--cc-text-primary);
+  margin: 0;
+}
+
+.click-clean-guard-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 0, 85, 0.3);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--cc-text-primary);
+}
+
+.click-clean-guard-checkbox-label:hover {
+  background: rgba(0, 0, 0, 0.35);
+  border-color: var(--cc-danger);
+}
+
+.click-clean-guard-checkbox-label input[type="checkbox"] {
+  accent-color: var(--cc-danger);
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   Success Banner / Toast (.click-clean-success-toast)
+   ========================================================================== */
+
+.click-clean-success-toast {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-radius: 14px;
+  background: var(--cc-success-bg);
+  border: 1.5px solid var(--cc-success);
+  box-shadow: 0 0 24px var(--cc-success-glow);
+  color: var(--cc-text-primary);
+  animation: ccFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.click-clean-success-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.click-clean-success-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cc-success);
+  color: #061e14;
+  box-shadow: 0 0 16px var(--cc-success-glow);
+  flex-shrink: 0;
+}
+
+.click-clean-success-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.click-clean-success-title {
+  font-family: Montserrat, Inter, system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--cc-success);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.click-clean-success-detail {
+  font-size: 12.5px;
+  color: var(--cc-text-secondary);
+  margin: 0;
+}
+
+.click-clean-success-detail strong {
+  color: var(--cc-text-primary);
+}
+
+/* ==========================================================================
+   HUD Scanning Overlay
+   ========================================================================== */
+
+.click-clean-scanning-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 12, 18, 0.88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  animation: ccFadeIn 0.2s ease;
+}
+
+.click-clean-scanning-radar {
+  position: relative;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  border: 2px solid var(--cc-cyan);
+  box-shadow: 0 0 30px var(--cc-cyan-glow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.click-clean-scanning-radar::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  border: 1px dashed rgba(0, 240, 255, 0.4);
+  animation: ccSpinSlow 8s linear infinite reverse;
+}
+
+.click-clean-scanning-radar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
+  height: 50%;
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.6), transparent);
+  transform-origin: 100% 100%;
+  animation: ccRadarSweep 1.8s linear infinite;
+  border-radius: 100% 0 0 0;
+}
+
+@keyframes ccRadarSweep {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.click-clean-scanning-text {
+  font-family: Montserrat, Inter, monospace, sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--cc-cyan);
+  text-shadow: 0 0 10px var(--cc-cyan-glow);
+  margin: 0;
+}
+
+.click-clean-scanning-subtext {
+  font-size: 11.5px;
+  color: var(--cc-text-muted);
+  letter-spacing: 0.05em;
+  margin: 0;
+}
+
+/* ==========================================================================
+   Footer (.click-clean-footer)
+   ========================================================================== */
+
+.click-clean-footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 26px;
+  border-top: 1px solid var(--cc-card-border);
+  background: rgba(0, 0, 0, 0.2);
+  z-index: 2;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.click-clean-footer-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--cc-text-muted);
+}
+
+.click-clean-footer-hint kbd {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--cc-card-border);
+  color: var(--cc-text-secondary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.click-clean-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-clean-cancel {
+  padding: 8px 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--cc-text-secondary);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--cc-card-border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-clean-cancel:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--cc-text-primary);
+}
+
+/* Main action button (.btn-clean-action) */
+.btn-clean-action {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 9px 24px;
+  border-radius: 10px;
+  font-family: Montserrat, Inter, system-ui, sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #031526;
+  background: linear-gradient(135deg, #00f0ff 0%, #00bcff 100%);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 
+    0 4px 16px rgba(0, 240, 255, 0.35),
+    0 0 24px var(--cc-cyan-glow);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.btn-clean-action:hover:not(:disabled) {
+  background: linear-gradient(135deg, #33f3ff 0%, #00d2ff 100%);
+  transform: translateY(-1.5px);
+  box-shadow: 
+    0 6px 22px rgba(0, 240, 255, 0.5),
+    0 0 32px var(--cc-cyan-glow);
+}
+
+.btn-clean-action:active:not(:disabled) {
+  transform: translateY(0.5px);
+  box-shadow: 0 2px 10px rgba(0, 240, 255, 0.3);
+}
+
+.btn-clean-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--cc-text-muted);
+  border-color: var(--cc-card-border);
+}
+
+/* Spinner rotation */
+.btn-clean-spinner {
+  animation: ccSpin 0.9s linear infinite;
+}
+
+@keyframes ccSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

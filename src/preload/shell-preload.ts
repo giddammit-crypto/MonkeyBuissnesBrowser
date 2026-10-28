@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { BrowserApi, ChromeBounds } from '../shared/ipc';
-import type { BrowserSettings } from '../shared/types';
+import type { BrowserSettings, CleanTargetOptions } from '../shared/types';
 
 const api: BrowserApi = {
   getSnapshot: () => ipcRenderer.invoke('browser:get-snapshot'),
@@ -68,11 +68,17 @@ const api: BrowserApi = {
   toggleBrowsecSmartRule: (domain: string) => ipcRenderer.invoke('browsec:toggle-smart-rule', domain),
   updateBrowsec: (patch) => ipcRenderer.invoke('browsec:update', patch),
   clearHistoryAndCookies: () => ipcRenderer.invoke('browser:clear-history-cookies'),
+  getStorageMetrics: () => ipcRenderer.invoke('browser:get-storage-metrics'),
+  executeClean: (options: CleanTargetOptions) => ipcRenderer.invoke('browser:execute-clean', options),
   discoverImportProfiles: () => ipcRenderer.invoke('browser:discover-import-profiles'),
   importBrowserData: (input) => ipcRenderer.invoke('browser:import-data', input),
   getImportedPasswordSummaries: () => ipcRenderer.invoke('browser:get-imported-passwords'),
   deleteSavedPassword: (id) => ipcRenderer.invoke('browser:delete-saved-password', id),
   fillSavedPassword: (tabId, id) => ipcRenderer.invoke('browser:fill-saved-password', tabId, id),
+  saveCredential: (origin: string, username: string, password: string) => ipcRenderer.invoke('browser:save-credential', origin, username, password),
+  revealSavedPassword: (passwordId: string) => ipcRenderer.invoke('browser:reveal-password', passwordId),
+  getSavedCredentialsForOrigin: (origin: string) => ipcRenderer.invoke('browser:get-saved-credentials-for-origin', origin),
+  neverSavePasswordForOrigin: (origin: string) => ipcRenderer.invoke('browser:never-save-origin', origin),
   setChromeBounds: (bounds: ChromeBounds) => ipcRenderer.invoke('browser:set-chrome-bounds', bounds),
   setPopoverOpen: (open: boolean) => ipcRenderer.invoke('browser:set-popover-open', open),
   reorderTab: (tabId, targetTabId, position) => ipcRenderer.invoke('browser:reorder-tab', tabId, targetTabId, position),
@@ -93,6 +99,14 @@ const api: BrowserApi = {
   deleteNote: (id) => ipcRenderer.invoke('browser:delete-note', id),
   togglePinNote: (id) => ipcRenderer.invoke('browser:toggle-pin-note', id),
   createNoteFromTab: (tabId, textSnippet) => ipcRenderer.invoke('browser:create-note-from-tab', tabId, textSnippet),
+  sendVoodooMessage: (messages, tabContext) => ipcRenderer.invoke('browser:voodoo-message', messages, tabContext),
+  testVoodooKey: (key) => ipcRenderer.invoke('browser:voodoo-test-key', key),
+  extractActiveTabChatContext: () => ipcRenderer.invoke('browser:voodoo-extract-chat'),
+  insertTextIntoActiveTab: (text) => ipcRenderer.invoke('browser:voodoo-insert-text', text),
+  setVoodooOpen: (open) => ipcRenderer.invoke('browser:set-voodoo-open', open),
+  moveVoodoo: (deltaX, deltaY) => ipcRenderer.invoke('browser:move-voodoo', deltaX, deltaY),
+  resizeVoodoo: (width, height, deltaX, deltaY) => ipcRenderer.invoke('browser:resize-voodoo', width, height, deltaX, deltaY),
+  resetVoodooPosition: () => ipcRenderer.invoke('browser:reset-voodoo-position'),
   onSnapshotChanged: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof callback>[0]) => callback(snapshot);
     ipcRenderer.on('browser:snapshot', listener);

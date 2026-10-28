@@ -80,7 +80,9 @@ function registerAppProtocol(): void {
 }
 
 function requireShell(event: Electron.IpcMainInvokeEvent): BrowserController {
-  if (!controller || (!controller.isTrustedShell(event.sender.id) || event.senderFrame !== event.sender.mainFrame || event.senderFrame.url !== 'app://shell/index.html')) {
+  const frameUrl = event.senderFrame?.url || '';
+  const isAppShell = frameUrl === 'app://shell/index.html' || frameUrl.startsWith('app://shell/index.html?');
+  if (!controller || (!controller.isTrustedShell(event.sender.id) || event.senderFrame !== event.sender.mainFrame || !isAppShell)) {
     throw new Error('Untrusted IPC sender');
   }
   return controller;
@@ -158,11 +160,17 @@ function registerIpc(): void {
   ipcMain.handle('browsec:toggle-smart-rule', (event, domain: string) => requireShell(event).toggleBrowsecSmartRule(domain));
   ipcMain.handle('browsec:update', (event, patch: Partial<import('../shared/types').BrowsecState>) => requireShell(event).updateBrowsec(patch));
   ipcMain.handle('browser:clear-history-cookies', (event) => requireShell(event).clearHistoryAndCookies());
+  ipcMain.handle('browser:get-storage-metrics', (event) => requireShell(event).getStorageMetrics());
+  ipcMain.handle('browser:execute-clean', (event, options: import('../shared/types').CleanTargetOptions) => requireShell(event).executeClean(options));
   ipcMain.handle('browser:discover-import-profiles', (event) => requireShell(event).discoverImportProfiles());
   ipcMain.handle('browser:import-data', (event, input: { profileId: string; data: import('../shared/types').ImportDataKind[] }) => requireShell(event).importBrowserData(input));
   ipcMain.handle('browser:get-imported-passwords', (event) => requireShell(event).getImportedPasswordSummaries());
   ipcMain.handle('browser:delete-saved-password', (event, id: string) => requireShell(event).deleteSavedPassword(id));
   ipcMain.handle('browser:fill-saved-password', (event, tabId: string, id: string) => requireShell(event).fillSavedPassword(tabId, id));
+  ipcMain.handle('browser:save-credential', (event, origin: string, username: string, password: string) => requireShell(event).saveCredential(origin, username, password));
+  ipcMain.handle('browser:reveal-password', (event, passwordId: string) => requireShell(event).revealSavedPassword(passwordId));
+  ipcMain.handle('browser:get-saved-credentials-for-origin', (event, origin: string) => requireShell(event).getSavedCredentialsForOrigin(origin));
+  ipcMain.handle('browser:never-save-origin', (event, origin: string) => requireShell(event).neverSavePasswordForOrigin(origin));
   ipcMain.handle('browser:set-chrome-bounds', (event, bounds: ChromeBounds) => requireShell(event).setChromeBounds(bounds));
   ipcMain.handle('browser:set-popover-open', (event, open: boolean) => requireShell(event).setPopoverOpen(open));
   ipcMain.handle('browser:reorder-tab', (event, tabId: string, targetTabId: string, position?: 'before' | 'after') => requireShell(event).reorderTab(tabId, targetTabId, position));
@@ -237,6 +245,14 @@ function registerIpc(): void {
   ipcMain.handle('browser:delete-note', (event, id: string) => requireShell(event).deleteNote(id));
   ipcMain.handle('browser:toggle-pin-note', (event, id: string) => requireShell(event).togglePinNote(id));
   ipcMain.handle('browser:create-note-from-tab', (event, tabId: string, textSnippet?: string) => requireShell(event).createNoteFromTab(tabId, textSnippet));
+  ipcMain.handle('browser:voodoo-message', (event, messages, tabContext) => requireShell(event).sendVoodooMessage(messages, tabContext));
+  ipcMain.handle('browser:voodoo-test-key', (event, key: string) => requireShell(event).testVoodooKey(key));
+  ipcMain.handle('browser:voodoo-extract-chat', (event) => requireShell(event).extractActiveTabChatContext());
+  ipcMain.handle('browser:voodoo-insert-text', (event, text: string) => requireShell(event).insertTextIntoActiveTab(text));
+  ipcMain.handle('browser:set-voodoo-open', (event, open: boolean) => requireShell(event).setVoodooOpen(open));
+  ipcMain.handle('browser:move-voodoo', (event, deltaX: number, deltaY: number) => requireShell(event).moveVoodoo(deltaX, deltaY));
+  ipcMain.handle('browser:resize-voodoo', (event, width: number, height: number, deltaX?: number, deltaY?: number) => requireShell(event).resizeVoodoo(width, height, deltaX, deltaY));
+  ipcMain.handle('browser:reset-voodoo-position', (event) => requireShell(event).resetVoodooPosition());
   ipcMain.handle('window:minimize', (event) => requireShell(event).minimizeWindow());
   ipcMain.handle('window:toggle-maximize', (event) => requireShell(event).toggleMaximizeWindow());
   ipcMain.handle('window:toggle-fullscreen', (event) => requireShell(event).toggleFullScreen());
@@ -253,8 +269,14 @@ async function createApplication(): Promise<void> {
     registerAppProtocol();
     controller = new BrowserController();
     controller.setListeners(
-      (snapshot) => controller?.shellView?.webContents.send('browser:snapshot', snapshot),
-      (event) => controller?.shellView?.webContents.send('browser:event', event),
+      (snapshot) => {
+        controller?.shellView?.webContents.send('browser:snapshot', snapshot);
+        controller?.voodooView?.webContents.send('browser:snapshot', snapshot);
+      },
+      (event) => {
+        controller?.shellView?.webContents.send('browser:event', event);
+        controller?.voodooView?.webContents.send('browser:event', event);
+      },
     );
     registerIpc();
     await controller.createWindow();

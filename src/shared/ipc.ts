@@ -12,6 +12,7 @@ import type {
   ImportProfile,
   ImportReport,
   ImportedPasswordSummary,
+  SavePasswordOffer,
   TabSnapshot,
   VpnSnapshot,
   WorkspaceEntry,
@@ -23,6 +24,11 @@ import type {
   ReaderArticle,
   NoteEntry,
   SaveNoteInput,
+  VoodooChatMessage,
+  VoodooChatResponse,
+  CleanTargetOptions,
+  StorageMetrics,
+  CleanResult,
 } from './types';
 
 export interface ChromeBounds {
@@ -101,11 +107,17 @@ export interface BrowserApi {
   toggleBrowsecSmartRule(domain: string): Promise<BrowsecState>;
   updateBrowsec(patch: Partial<BrowsecState>): Promise<BrowsecState>;
   clearHistoryAndCookies(): Promise<void>;
+  getStorageMetrics(): Promise<StorageMetrics>;
+  executeClean(options: CleanTargetOptions): Promise<CleanResult>;
   discoverImportProfiles(): Promise<ImportProfile[]>;
   importBrowserData(input: { profileId: string; data: ImportDataKind[] }): Promise<ImportReport>;
   getImportedPasswordSummaries(): Promise<ImportedPasswordSummary[]>;
   deleteSavedPassword(passwordId: string): Promise<boolean>;
   fillSavedPassword(tabId: string, passwordId: string): Promise<{ filled: boolean; reason?: string }>;
+  saveCredential(origin: string, username: string, password: string): Promise<{ success: boolean; id: string; updated: boolean }>;
+  revealSavedPassword(passwordId: string): Promise<string | null>;
+  getSavedCredentialsForOrigin(origin: string): Promise<ImportedPasswordSummary[]>;
+  neverSavePasswordForOrigin(origin: string): Promise<void>;
   setChromeBounds(bounds: ChromeBounds): Promise<void>;
   setPopoverOpen(open: boolean): Promise<void>;
   reorderTab(tabId: string, targetTabId: string, position?: 'before' | 'after'): Promise<void>;
@@ -126,7 +138,15 @@ export interface BrowserApi {
   deleteNote(id: string): Promise<boolean>;
   togglePinNote(id: string): Promise<NoteEntry | null>;
   createNoteFromTab(tabId: string, textSnippet?: string): Promise<NoteEntry>;
+  sendVoodooMessage(messages: VoodooChatMessage[], tabContext?: { url?: string; title?: string; chatText?: string }): Promise<VoodooChatResponse>;
+  testVoodooKey(key: string): Promise<{ success: boolean; latencyMs?: number; error?: string }>;
+  extractActiveTabChatContext(): Promise<{ text: string; source: string; count: number }>;
+  insertTextIntoActiveTab(text: string): Promise<boolean>;
+  setVoodooOpen(open: boolean): Promise<void>;
+  moveVoodoo(deltaX: number, deltaY: number): Promise<void>;
+  resizeVoodoo(width: number, height: number, deltaX?: number, deltaY?: number): Promise<void>;
+  resetVoodooPosition(): Promise<void>;
   onSnapshotChanged(callback: (snapshot: BrowserSnapshot) => void): () => void;
-  onTabEvent(callback: (event: { type: string; tab?: TabSnapshot; message?: string }) => void): () => void;
+  onTabEvent(callback: (event: { type: string; tab?: TabSnapshot; message?: string; data?: unknown }) => void): () => void;
   onBrowsecSnapshot(callback: (snapshot: BrowsecState) => void): () => void;
 }

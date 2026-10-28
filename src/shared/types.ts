@@ -138,6 +138,12 @@ export interface BrowserSettings {
   restoreSession?: boolean;
   thirdPartyCookieExceptions?: string[];
   readerSettings?: ReaderSettings;
+  voodooEnabled?: boolean;
+  voodooBubbleVisible?: boolean;
+  voodooKeys?: string[];
+  voodooModel?: string;
+  voodooBaseUrl?: string;
+  neverSavePasswordOrigins?: string[];
 }
 
 export type NotificationPermissionDecision = 'allow' | 'deny';
@@ -197,7 +203,7 @@ export interface PrivacyDashboardSnapshot {
   }>;
 }
 
-export type ImportBrowser = 'chrome' | 'yandex' | 'firefox' | 'edge' | 'brave' | 'opera' | 'vivaldi' | 'file';
+export type ImportBrowser = 'chrome' | 'yandex' | 'firefox' | 'edge' | 'brave' | 'opera' | 'vivaldi' | 'file' | 'soulm8te';
 export type ImportFileKind = 'bookmarks' | 'passwords';
 export interface ImportFileReport {
   kind: ImportFileKind;
@@ -232,6 +238,15 @@ export interface ImportedPasswordSummary {
   username: string;
   browser: ImportBrowser;
   importedAt: number;
+}
+
+export interface SavePasswordOffer {
+  id?: string;
+  origin: string;
+  domain: string;
+  username: string;
+  password: string;
+  isUpdate: boolean;
 }
 
 export type VpnConnectionState = 'not-configured' | 'configured' | 'error';
@@ -377,4 +392,83 @@ export interface TaskManagerSnapshot {
   sampledAt: number;
   processes: TaskManagerProcess[];
 }
+
+export interface VoodooActionExecution {
+  tool: string;
+  args: Record<string, unknown>;
+  result?: unknown;
+  error?: string;
+  summary: string;
+}
+
+export interface VoodooToolDefinition {
+  name: string;
+  description: string;
+  parameters: {
+    type: 'object';
+    properties: Record<string, { type: string; description: string; enum?: string[] }>;
+    required?: string[];
+  };
+}
+
+export interface VoodooChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  suggestedReplies?: string[];
+  analyzedContext?: string;
+  error?: string;
+  executedActions?: VoodooActionExecution[];
+}
+
+export interface VoodooChatResponse {
+  reply: string;
+  suggestedReplies?: string[];
+  error?: string;
+  keyIndexUsed?: number;
+  activeKeyMasked?: string;
+  executedActions?: VoodooActionExecution[];
+}
+
+export type CleanPresetId = 'quick' | 'post-payment' | 'kiosk' | 'custom';
+
+export interface CleanTargetOptions {
+  cache?: boolean;             // Кэш Chromium: HTTP Cache, GPUCache, Code Cache, DawnWebGPUCache
+  cookies?: boolean;           // Cookies веб-сайтов (SQLite база + session cookies)
+  history?: boolean;           // История посещений (history.json + navigationHistory вкладок)
+  downloadsHistory?: boolean;  // Список загрузок downloads.json (без удаления файлов с диска)
+  localStorage?: boolean;      // LocalStorage и SessionStorage
+  indexedDB?: boolean;         // Базы данных IndexedDB сайтов
+  serviceWorkers?: boolean;    // Service Workers и CacheStorage
+  authCache?: boolean;         // Кэш HTTP-аутентификации (Basic/Digest/NTLM)
+  dnsCache?: boolean;          // Внутренний DNS-кэш Chromium Host Resolver
+  passwords?: boolean;         // Зашифрованные пароли passwords.enc (требует подтверждения)
+  closeTabs?: boolean;         // Закрыть обычные вкладки и открыть browser://newtab
+  closedTabsHistory?: boolean; // Очистить стек закрытых вкладок (Ctrl+Shift+T)
+}
+
+export interface StorageMetrics {
+  cacheSizeBytes: number;       // Размер кэша на диске в байтах
+  cacheSizeFormatted: string;   // Отформатированный размер (например, "48.2 МБ")
+  cookiesCount: number;         // Количество куки в базе данных SQLite
+  historyCount: number;         // Количество записей в history.json
+  downloadsCount: number;       // Количество записей в downloads.json
+  passwordsCount: number;       // Количество сохраненных аккаунтов в PasswordStore
+  openTabsCount: number;        // Количество открытых обычных вкладок
+  hasSecureStorage: boolean;    // Доступность safeStorage
+  sampledAt: number;            // Timestamp замера
+}
+
+export interface CleanResult {
+  success: boolean;
+  freedBytesEstimate: number;
+  freedFormatted: string;       // Например, "124.5 МБ"
+  clearedTargets: Array<keyof CleanTargetOptions>;
+  durationMs: number;
+  metricsAfter: StorageMetrics;
+  error?: string;
+}
+
+
 

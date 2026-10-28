@@ -5,6 +5,7 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
   AlertTriangle,
   Bookmark,
   BookOpen,
@@ -41,6 +42,7 @@ import {
   Shield,
   ShieldCheck,
   ShieldOff,
+  Sparkles,
   Square,
   Star,
   StickyNote,
@@ -53,6 +55,7 @@ import {
   Volume2,
   VolumeX,
   X,
+  Zap,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -66,6 +69,8 @@ import type {
   ImportFileKind,
   ImportFileReport,
   PrivacyDashboardSnapshot,
+  SavePasswordOffer,
+  ImportedPasswordSummary,
 } from "../shared/types";
 import { getGoogleAuthNotice, getSiteKey, normalizePermissionOrigin, normalizeSiteKey } from "../shared/sitePolicy";
 import { normalizeNewTabBackground } from "../shared/background";
@@ -94,9 +99,13 @@ import SiteFavicon from "./SiteFavicon";
 import SiteErrorPage from "./SiteErrorPage";
 import PrivacyDashboard from "./PrivacyDashboard";
 import TaskManagerModal from "./TaskManagerModal";
+import ClickAndCleanModal from "./ClickAndCleanModal";
+import SavePasswordPrompt from "./SavePasswordPrompt";
 import { QrCodePopover } from "./QrCodePopover";
 import { ReaderView } from "./ReaderView";
 import { QuickNotesDrawer } from "./QuickNotesDrawer";
+import VoodooChatBubble from "./VoodooChatBubble";
+import voodooAvatar from "./assets/voodoo-256.png";
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
@@ -330,6 +339,10 @@ function App(): React.JSX.Element {
   const [authNoticeDismissed, setAuthNoticeDismissed] = useState(false);
   const [tabSearchOpen, setTabSearchOpen] = useState(false);
   const [taskManagerOpen, setTaskManagerOpen] = useState(false);
+  const [clickCleanOpen, setClickCleanOpen] = useState(false);
+  const [voodooOpen, setVoodooOpen] = useState(false);
+  const [pendingPasswordOffer, setPendingPasswordOffer] = useState<SavePasswordOffer | null>(null);
+  const [siteCredentials, setSiteCredentials] = useState<ImportedPasswordSummary[]>([]);
   const previousTabId = useRef<string | undefined>(undefined);
   const [findText, setFindText] = useState("");
   const [findResult, setFindResult] = useState("");
@@ -487,6 +500,32 @@ function App(): React.JSX.Element {
         setPopover(null);
         return;
       }
+      if (event.type === "password-save-prompt" && event.data) {
+        setPendingPasswordOffer(event.data as SavePasswordOffer);
+        return;
+      }
+      if (event.type === "passwords-changed" && currentTab?.url) {
+        try {
+          const u = new URL(currentTab.url);
+          window.browserApi.getSavedCredentialsForOrigin(u.origin)
+            .then((creds) => setSiteCredentials(creds || []))
+            .catch(() => setSiteCredentials([]));
+        } catch {}
+        return;
+      }
+      if (event.type === "toggle-click-and-clean") {
+        setClickCleanOpen((prev) => !prev);
+        setPopover(null);
+        return;
+      }
+      if (event.type === "voodoo-set-open") {
+        setVoodooOpen(event.message === "true");
+        return;
+      }
+      if (event.type === "voodoo-analyze-text") {
+        setVoodooOpen(true);
+        return;
+      }
       if (event.type === "show-tab-search") {
         setTabSearchOpen(true);
         setPopover(null);
@@ -525,6 +564,24 @@ function App(): React.JSX.Element {
       originalAddressRef.current = url;
     }
   }, [currentTab?.id, currentTab?.url, currentTab?.isInternal, editingAddress]);
+  useEffect(() => {
+    if (!currentTab || currentTab.isPrivate || currentTab.isInternal || !currentTab.url) {
+      setSiteCredentials([]);
+      return;
+    }
+    try {
+      const u = new URL(currentTab.url);
+      if (u.protocol === "https:" || u.protocol === "http:") {
+        window.browserApi.getSavedCredentialsForOrigin(u.origin)
+          .then((creds) => setSiteCredentials(creds || []))
+          .catch(() => setSiteCredentials([]));
+      } else {
+        setSiteCredentials([]);
+      }
+    } catch {
+      setSiteCredentials([]);
+    }
+  }, [currentTab?.id, currentTab?.url, currentTab?.isPrivate, currentTab?.isInternal]);
   useEffect(() => {
     const previous = previousTabId.current;
     if (previous && previous !== currentTab?.id) run(window.browserApi.stopFindInPage(previous));
@@ -684,6 +741,10 @@ function App(): React.JSX.Element {
       }
 
       if (event.key === "Escape") {
+        if (clickCleanOpen) {
+          setClickCleanOpen(false);
+          return;
+        }
         if (taskManagerOpen) {
           setTaskManagerOpen(false);
           return;
@@ -758,7 +819,18 @@ function App(): React.JSX.Element {
         activeElement instanceof HTMLTextAreaElement;
 
       // Google Chrome keyboard shortcuts
-      if (modifier && event.shiftKey && (key === "n" || key === "p")) {
+      if (modifier && event.shiftKey && (key === "delete" || key === "del" || key === "backspace")) {
+        event.preventDefault();
+        setClickCleanOpen((val) => !val);
+        setPopover(null);
+        return;
+      } else if (modifier && event.shiftKey && key === "v") {
+        event.preventDefault();
+        const next = !voodooOpen;
+        setVoodooOpen(next);
+        void window.browserApi.setVoodooOpen(next);
+        return;
+      } else if (modifier && event.shiftKey && (key === "n" || key === "p")) {
         event.preventDefault();
         createTab(true);
       } else if (modifier && !event.shiftKey && key === "p") {
@@ -823,7 +895,23 @@ function App(): React.JSX.Element {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [currentTab, findOpen, panel, tabSearchOpen, taskManagerOpen, isPrivate, snapshot, run, openPanel, action]);
+  }, [currentTab, findOpen, panel, tabSearchOpen, taskManagerOpen, clickCleanOpen, voodooOpen, isPrivate, snapshot, run, openPanel, action]);
+
+  // Google Chrome Ctrl + Wheel zoom support on shell / viewport
+  useEffect(() => {
+    const onWheelZoom = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        if (currentTab) {
+          // deltaY < 0: away from user (от себя) -> zoom-in
+          // deltaY > 0: towards user (на себя) -> zoom-out
+          action(e.deltaY < 0 ? "zoom-in" : "zoom-out");
+        }
+      }
+    };
+    window.addEventListener("wheel", onWheelZoom, { passive: false, capture: true });
+    return () => window.removeEventListener("wheel", onWheelZoom, { capture: true });
+  }, [currentTab, action]);
 
   if (!snapshot)
     return (
@@ -1108,6 +1196,34 @@ function App(): React.JSX.Element {
             autoComplete="off"
           />
           <div className="omnibox-tools" role="group" aria-label="Действия со страницей">
+          {siteCredentials.length > 0 && currentTab && !currentTab.isInternal && (
+            <button
+              type="button"
+              className="omnibox-credentials-btn"
+              title={`Сохранённые пароли для этого сайта (${siteCredentials.length}). Нажмите для автозаполнения`}
+              aria-label="Сохранённые пароли"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                if (siteCredentials.length === 1) {
+                  void window.browserApi.fillSavedPassword(currentTab.id, siteCredentials[0].id)
+                    .then((res) => {
+                      setToast({
+                        tone: res.filled ? "success" : "info",
+                        message: res.filled ? `Логин ${siteCredentials[0].username || ""} заполнен` : (res.reason || "Не удалось заполнить форму"),
+                      });
+                    })
+                    .catch(() => {
+                      setToast({ tone: "error", message: "Не удалось заполнить пароль" });
+                    });
+                } else {
+                  openPanel("settings");
+                }
+              }}
+            >
+              <KeyRound size={13} />
+              <span>{siteCredentials.length > 1 ? siteCredentials.length : "Вход"}</span>
+            </button>
+          )}
           {Math.round((currentTab?.zoomFactor ?? 1) * 100) !== 100 && (
             <button
               type="button"
@@ -1317,6 +1433,17 @@ function App(): React.JSX.Element {
             </span>
           </button>
           <button
+            className={`icon-button ${clickCleanOpen ? "selected" : ""}`}
+            title="Click & Clean (Ctrl+Shift+Del) · Очистка кэша, куки и истории"
+            aria-label="Click & Clean"
+            onClick={() => {
+              setPopover(null);
+              setClickCleanOpen((val) => !val);
+            }}
+          >
+            <Sparkles size={18} />
+          </button>
+          <button
             className={`mode-chip ${isPrivate ? "is-private" : ""}`}
             onClick={() => createTab(!isPrivate)}
             title={
@@ -1349,6 +1476,20 @@ function App(): React.JSX.Element {
               {snapshot.activeGoogleAccount ? (snapshot.activeGoogleAccount.name ? snapshot.activeGoogleAccount.name.split(' ')[0] : snapshot.activeGoogleAccount.email.split('@')[0]) : "Google"}
             </span>
           </button>
+          {snapshot.settings.voodooEnabled !== false && (
+            <button
+              className={`icon-button voodoo-toolbar-btn ${voodooOpen ? "selected" : ""}`}
+              title="AI-Ассистент Вуду (Ctrl+Shift+V)"
+              aria-label="AI-Ассистент Вуду"
+              onClick={() => {
+                const next = !voodooOpen;
+                setVoodooOpen(next);
+                void window.browserApi.setVoodooOpen(next);
+              }}
+            >
+              <img src={voodooAvatar} alt="Вуду" className="voodoo-toolbar-avatar" />
+            </button>
+          )}
           <button
             className={`icon-button ${popover === "menu" ? "selected" : ""}`}
             title="Меню браузера"
@@ -1468,6 +1609,25 @@ function App(): React.JSX.Element {
               detail="Shift+Esc"
               onClick={() => {
                 setTaskManagerOpen(true);
+                setPopover(null);
+              }}
+            />
+            <MenuAction
+              icon={<Sparkles size={16} />}
+              label="AI-Ассистент Вуду"
+              detail="Ctrl+Shift+V"
+              onClick={() => {
+                setVoodooOpen(true);
+                void window.browserApi.setVoodooOpen(true);
+                setPopover(null);
+              }}
+            />
+            <MenuAction
+              icon={<Sparkles size={16} />}
+              label="Click & Clean"
+              detail="Ctrl+Shift+Del"
+              onClick={() => {
+                setClickCleanOpen(true);
                 setPopover(null);
               }}
             />
@@ -2103,6 +2263,53 @@ function App(): React.JSX.Element {
         <TaskManagerModal
           onDismiss={() => setTaskManagerOpen(false)}
           onError={showError}
+        />
+      )}
+      {clickCleanOpen && (
+        <ClickAndCleanModal
+          onDismiss={() => setClickCleanOpen(false)}
+          onCleanComplete={(res) => {
+            const freed = res.freedFormatted
+              ? `освобождено ${res.freedFormatted}`
+              : res.freedBytesEstimate
+              ? `освобождено ${formatBytes(res.freedBytesEstimate)}`
+              : "данные успешно очищены";
+            setToast({
+              tone: "success",
+              message: `Click & Clean: ${freed}`,
+            });
+          }}
+          onError={showError}
+        />
+      )}
+      {pendingPasswordOffer && (
+        <SavePasswordPrompt
+          offer={pendingPasswordOffer}
+          onSave={async (orig, user, pwd) => {
+            try {
+              const res = await window.browserApi.saveCredential(orig, user, pwd);
+              setPendingPasswordOffer(null);
+              setToast({
+                tone: "success",
+                message: res.updated
+                  ? `Пароль для ${pendingPasswordOffer.domain} обновлён`
+                  : `Пароль для ${pendingPasswordOffer.domain} сохранён`,
+              });
+              const updated = await window.browserApi.getSavedCredentialsForOrigin(orig);
+              setSiteCredentials(updated || []);
+            } catch {
+              showError("Не удалось сохранить пароль");
+            }
+          }}
+          onDismiss={() => setPendingPasswordOffer(null)}
+          onNeverSave={async (orig) => {
+            await window.browserApi.neverSavePasswordForOrigin(orig);
+            setPendingPasswordOffer(null);
+            setToast({
+              tone: "info",
+              message: `Пароли для ${pendingPasswordOffer.domain} больше не сохраняются`,
+            });
+          }}
         />
       )}
       {notesDrawerOpen && (
@@ -3827,6 +4034,10 @@ function SettingsPanel({
   const [proxy, setProxy] = useState(snapshot.privacy?.proxy ?? "");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  const [newVoodooKey, setNewVoodooKey] = useState("");
+  const [testingKey, setTestingKey] = useState<string | null>(null);
+  const [keyTestFeedback, setKeyTestFeedback] = useState<{ text: string; isError: boolean } | null>(null);
+  const [keyStatuses, setKeyStatuses] = useState<Record<string, { status: 'healthy' | 'exhausted' | 'invalid'; latencyMs?: number; error?: string }>>({});
   const [installedExtensions, setInstalledExtensions] = useState<Array<{ id: string; name: string; version: string; directory: string }>>([]);
   const [extensionError, setExtensionError] = useState("");
   const refreshExtensions = useCallback(async () => {
@@ -3847,6 +4058,105 @@ function SettingsPanel({
     } catch (error) { setExtensionError(userFacingError(error)); }
   };
   const settings = snapshot.settings;
+
+  const handleAddVoodooKey = () => {
+    const raw = newVoodooKey.trim();
+    if (!raw) return;
+    const extracted = raw
+      .split(/[\r\n,;\s]+/)
+      .map((k) => k.trim())
+      .filter((k) => k.length >= 10);
+    const toAdd = extracted.length > 0 ? extracted : [raw];
+    const currentKeys = settings.voodooKeys ?? ['sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0'];
+
+    const addedList: string[] = [];
+    const nextKeys = [...currentKeys];
+    for (const k of toAdd) {
+      if (!nextKeys.includes(k)) {
+        nextKeys.push(k);
+        addedList.push(k);
+      }
+    }
+
+    if (addedList.length > 0) {
+      update({ voodooKeys: nextKeys });
+      setKeyTestFeedback({
+        text: addedList.length === 1
+          ? `Ключ ${addedList[0].slice(0, 10)}… добавлен в список ротации.`
+          : `Добавлено ${addedList.length} новых ключей без дубликатов.`,
+        isError: false,
+      });
+    } else {
+      setKeyTestFeedback({
+        text: "Все указанные ключи уже есть в списке.",
+        isError: true,
+      });
+    }
+    setNewVoodooKey("");
+  };
+
+  const handleMakePrimaryKey = (index: number) => {
+    if (index <= 0) return;
+    const currentKeys = settings.voodooKeys ?? ['sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0'];
+    const key = currentKeys[index];
+    const nextKeys = [key, ...currentKeys.filter((_, idx) => idx !== index)];
+    update({ voodooKeys: nextKeys });
+    setKeyTestFeedback({
+      text: `Ключ ${key.slice(0, 10)}… установлен как основной (приоритетный).`,
+      isError: false,
+    });
+  };
+
+  const handleRemoveVoodooKey = (indexToRemove: number) => {
+    const currentKeys = settings.voodooKeys ?? ['sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0'];
+    const updated = currentKeys.filter((_, idx) => idx !== indexToRemove);
+    update({ voodooKeys: updated });
+  };
+
+  const handleTestVoodooKey = async (key: string) => {
+    setTestingKey(key);
+    try {
+      const res = await window.browserApi.testVoodooKey(key);
+      if (res.success) {
+        setKeyStatuses((prev) => ({
+          ...prev,
+          [key]: { status: 'healthy', latencyMs: res.latencyMs },
+        }));
+        setKeyTestFeedback({
+          text: `Ключ активен и работает! Задержка отклика: ${res.latencyMs ?? 0} мс`,
+          isError: false,
+        });
+      } else {
+        const isExhausted = /quota|limit|rate|balance|credit|429/i.test(res.error || "");
+        setKeyStatuses((prev) => ({
+          ...prev,
+          [key]: {
+            status: isExhausted ? 'exhausted' : 'invalid',
+            latencyMs: res.latencyMs,
+            error: res.error,
+          },
+        }));
+        setKeyTestFeedback({
+          text: `Ошибка проверки ключа: ${res.error || "Неизвестная ошибка"}`,
+          isError: true,
+        });
+      }
+    } catch (e) {
+      setKeyStatuses((prev) => ({
+        ...prev,
+        [key]: {
+          status: 'invalid',
+          error: e instanceof Error ? e.message : "Ошибка",
+        },
+      }));
+      setKeyTestFeedback({
+        text: `Ошибка соединения: ${e instanceof Error ? e.message : "Ошибка"}`,
+        isError: true,
+      });
+    } finally {
+      setTestingKey(null);
+    }
+  };
   const [customWallpaper, saveCustomWallpaper] = useCustomWallpaper();
   const [wallpaperMessage, setWallpaperMessage] = useState("");
   const onWallpaperFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -4412,6 +4722,161 @@ function SettingsPanel({
             </p>
           ))}
         </div>
+        <div className="settings-section">
+          <h3>AI-Ассистент Вуду</h3>
+          <p className="privacy-note">
+            Интеллектуальный советник для соцсетей (ВКонтакте, Telegram), анализа диалогов и страниц на базе модели Qwen 3.8 Max (провайдер xkiro).
+          </p>
+
+          <label className="checkbox-setting" style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0" }}>
+            <input
+              type="checkbox"
+              checked={settings.voodooEnabled !== false}
+              onChange={(e) => update({ voodooEnabled: e.target.checked })}
+            />
+            <span>Включить ассистента Вуду</span>
+          </label>
+
+          <label className="checkbox-setting" style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0" }}>
+            <input
+              type="checkbox"
+              checked={settings.voodooBubbleVisible !== false}
+              disabled={settings.voodooEnabled === false}
+              onChange={(e) => update({ voodooBubbleVisible: e.target.checked })}
+            />
+            <span>Отображать плавающий кружок в правом нижнем углу экрана</span>
+          </label>
+
+          <div style={{ marginTop: 14 }}>
+            <strong style={{ fontSize: 13, display: "block", marginBottom: 4 }}>
+              API-ключи xkiro (ротация при исчерпании лимита токенов)
+            </strong>
+            <small style={{ color: "var(--text-muted, #94a3b8)", display: "block", marginBottom: 10 }}>
+              Добавьте один или несколько ключей от xkiro. Браузер автоматически и незаметно переключится на следующий ключ при превышении квоты или лимита токенов.
+            </small>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <input
+                type="password"
+                placeholder="Вставьте ключ(и) sk-xt-... (можно несколько через перенос или запятую)"
+                value={newVoodooKey}
+                onChange={(e) => setNewVoodooKey(e.target.value)}
+                style={{
+                  flex: 1,
+                  padding: "7px 10px",
+                  borderRadius: 8,
+                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid var(--border)",
+                  color: "var(--text-main)",
+                  fontSize: 13,
+                }}
+              />
+              <button
+                className="plain-button"
+                onClick={handleAddVoodooKey}
+                disabled={!newVoodooKey.trim()}
+              >
+                <Plus size={15} /> Добавить
+              </button>
+            </div>
+
+            {keyTestFeedback && (
+              <p style={{ fontSize: 12, marginBottom: 8, color: keyTestFeedback.isError ? "#ef4444" : "#10b981" }}>
+                {keyTestFeedback.text}
+              </p>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {(settings.voodooKeys ?? ['sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0']).map((key, idx) => {
+                const masked = key.length > 14
+                  ? `${key.slice(0, 10)}${"•".repeat(Math.max(4, key.length - 14))}${key.slice(-4)}`
+                  : key;
+                const statusInfo = keyStatuses[key];
+                const isPrimary = idx === 0;
+
+                return (
+                  <div
+                    key={idx}
+                    className="voodoo-key-item"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      background: "rgba(255,255,255,0.03)",
+                      border: isPrimary ? "1px solid rgba(0, 210, 255, 0.35)" : "1px solid var(--border)",
+                      gap: 8,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1 }}>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          padding: "2px 6px",
+                          borderRadius: 6,
+                          background: isPrimary ? "rgba(16, 185, 129, 0.2)" : "rgba(255, 255, 255, 0.08)",
+                          color: isPrimary ? "#10b981" : "var(--text-muted)",
+                          border: isPrimary ? "1px solid rgba(16, 185, 129, 0.3)" : "1px solid rgba(255, 255, 255, 0.08)",
+                        }}
+                      >
+                        {isPrimary ? "Основной" : `Резервный #${idx}`}
+                      </span>
+                      <span style={{ fontSize: 13, fontFamily: "monospace", color: "var(--text-main)" }}>
+                        {masked}
+                      </span>
+                      {statusInfo && (
+                        statusInfo.status === 'healthy' ? (
+                          <span style={{ fontSize: 11, color: "#10b981", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                            <CheckCircle2 size={12} /> Работает ({statusInfo.latencyMs ?? 0} мс)
+                          </span>
+                        ) : statusInfo.status === 'exhausted' ? (
+                          <span style={{ fontSize: 11, color: "#f59e0b", display: "inline-flex", alignItems: "center", gap: 3 }} title={statusInfo.error}>
+                            <AlertTriangle size={12} /> Исчерпан
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 11, color: "#ef4444", display: "inline-flex", alignItems: "center", gap: 3 }} title={statusInfo.error}>
+                            <AlertTriangle size={12} /> {statusInfo.error?.slice(0, 25) || "Ошибка"}
+                          </span>
+                        )
+                      )}
+                    </div>
+                    <div className="voodoo-key-actions" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      {!isPrimary && (
+                        <button
+                          className="plain-button"
+                          style={{ fontSize: 11, padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 3 }}
+                          title="Сделать основным (приоритетным)"
+                          onClick={() => handleMakePrimaryKey(idx)}
+                        >
+                          <ArrowUp size={12} /> Вверх
+                        </button>
+                      )}
+                      <button
+                        className="plain-button"
+                        style={{ fontSize: 11, padding: "3px 8px", display: "inline-flex", alignItems: "center", gap: 3 }}
+                        onClick={() => handleTestVoodooKey(key)}
+                        disabled={testingKey === key}
+                        title="Проверить работоспособность ключа (⚡)"
+                      >
+                        <Zap size={12} /> {testingKey === key ? "Проверка…" : "Проверить"}
+                      </button>
+                      <button
+                        className="plain-button"
+                        style={{ fontSize: 11, padding: "3px 8px", color: "#ef4444" }}
+                        onClick={() => handleRemoveVoodooKey(idx)}
+                        title="Удалить ключ"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
         <div className="about-card">
           <div className="about-icon-wrapper">
             <img className="about-brand-icon" src={chloeIcon} alt="soulm8te" />
@@ -4427,4 +4892,33 @@ function SettingsPanel({
     </section>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+function VoodooStandaloneApp(): React.JSX.Element {
+  const [snapshot, setSnapshot] = useState<BrowserSnapshot | null>(null);
+
+  useEffect(() => {
+    document.documentElement.classList.add("voodoo-standalone");
+    document.body.classList.add("voodoo-standalone");
+
+    void window.browserApi.getSnapshot().then(setSnapshot).catch(console.error);
+    const remove = window.browserApi.onSnapshotChanged((next) => {
+      setSnapshot(next);
+    });
+    return remove;
+  }, []);
+
+  const currentTab = snapshot?.tabs.find((t) => t.id === snapshot.activeTabId);
+
+  return (
+    <VoodooChatBubble
+      standalone={true}
+      bubbleVisible={snapshot?.settings?.voodooBubbleVisible !== false && snapshot?.settings?.voodooEnabled !== false}
+      currentTab={currentTab}
+    />
+  );
+}
+
+if (window.location.search.includes("view=voodoo")) {
+  createRoot(document.getElementById("root")!).render(<VoodooStandaloneApp />);
+} else {
+  createRoot(document.getElementById("root")!).render(<App />);
+}

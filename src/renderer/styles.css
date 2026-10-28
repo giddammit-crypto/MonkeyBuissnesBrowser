@@ -6174,6 +6174,31 @@ select:focus-visible {
   transform: scale(1.04);
 }
 
+/* Omnibox Credentials / Key Button */
+.omnibox-credentials-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  margin-right: 4px;
+  border-radius: 6px;
+  background: rgba(0, 240, 255, 0.08);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  color: #00f0ff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  flex-shrink: 0;
+}
+.omnibox-credentials-btn:hover {
+  background: rgba(0, 240, 255, 0.18);
+  border-color: #00f0ff;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+  transform: scale(1.04);
+}
+
 /* Tab Audio / Mute Button */
 .tab-audio-button {
   display: grid;

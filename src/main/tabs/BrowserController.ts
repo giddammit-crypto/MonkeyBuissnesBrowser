@@ -10,6 +10,7 @@ import {
   BrowserWindow,
   clipboard,
   dialog,
+  ipcMain,
   Menu,
   nativeImage,
   nativeTheme,
@@ -17,6 +18,7 @@ import {
   shell,
   WebContentsView,
 } from 'electron';
+import { getNextZoomFactor } from '../../shared/zoom';
 import { computePopupWindowBounds, isPopupWindowRequest, parseWindowFeatures, type ParsedWindowFeatures } from './popupUtils';
 import type { ChromeBounds, TabAction, DownloadAction } from '../../shared/ipc';
 import { FilterEngine, SessionAdBlock } from '../../services/adblock/FilterEngine';
@@ -58,11 +60,17 @@ import type {
   ReaderSettings,
   NoteEntry,
   SaveNoteInput,
+  VoodooChatMessage,
+  VoodooChatResponse,
+  CleanTargetOptions,
+  StorageMetrics,
+  CleanResult,
 } from '../../shared/types';
 import { BrowserStores, buildStoredSession, defaultBrowsecCountries, defaultReaderSettings } from '../persistence/BrowserStores';
 import { PasswordStore } from '../persistence/PasswordStore';
 import { fillSavedCredential } from '../passwords/PasswordAutofill';
 import { BrowserDataImporter, type ImportedCookie } from '../import/BrowserDataImporter';
+import { VoodooAiService } from '../services/VoodooAiService';
 
 const shellPreloadPath = path.resolve(__dirname, '../../preload/shell-preload.js');
 const pagePreloadPath = path.resolve(__dirname, '../../preload/page-preload.js');
@@ -81,6 +89,48 @@ function emptyNavigation(url: string): Pick<TabSnapshot, 'canGoBack' | 'canGoFor
   return { canGoBack: false, canGoForward: false };
 }
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 Б';
+  if (bytes < 1024) return `${Math.round(bytes)} Б`;
+  const kb = bytes / 1024;
+  if (kb < 1024) {
+    const formatted = kb >= 100 ? Math.round(kb).toString() : kb.toFixed(1).replace(/\.0$/, '');
+    return `${formatted} КБ`;
+  }
+  const mb = kb / 1024;
+  if (mb < 1024) {
+    const formatted = mb >= 100 ? Math.round(mb).toString() : mb.toFixed(1).replace(/\.0$/, '');
+    return `${formatted} МБ`;
+  }
+  const gb = mb / 1024;
+  const formatted = gb >= 100 ? Math.round(gb).toString() : gb.toFixed(1).replace(/\.0$/, '');
+  return `${formatted} ГБ`;
+}
+
+function getDirectorySize(dirPath: string): number {
+  try {
+    if (!fs.existsSync(dirPath)) return 0;
+    let total = 0;
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      try {
+        if (entry.isDirectory()) {
+          total += getDirectorySize(fullPath);
+        } else if (entry.isFile()) {
+          const stats = fs.statSync(fullPath);
+          total += stats.size;
+        }
+      } catch {
+        // ignore unreadable
+      }
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
 export class BrowserController {
   readonly stores: BrowserStores;
   readonly downloads: DownloadEntry[];
@@ -92,8 +142,15 @@ export class BrowserController {
   readonly adBlock = new SessionAdBlock(new FilterEngine());
   readonly memoryManager = new MemoryManager();
   readonly vpn = new VpnConfigStore(app.getPath('userData'));
+  readonly voodooService = new VoodooAiService();
   window?: BaseWindow;
   shellView?: WebContentsView;
+  voodooView?: WebContentsView;
+  voodooContentsId?: number;
+  private voodooOpen = false;
+  private voodooDimensions = { width: 395, height: 555 };
+  private voodooPosition: { x?: number; y?: number } = {};
+  private voodooBubblePosition: { x?: number; y?: number } = {};
   private activeTabId = '';
   private activeWorkspaceId = 'personal';
   private chromeBounds: ChromeBounds = { x: 176, y: 112, width: 1200, height: 700 };
@@ -118,7 +175,7 @@ export class BrowserController {
   private readonly sessionDownloadHandlers = new Map<Electron.Session, (event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents) => void>();
   private readonly liveDownloads = new Map<string, { item: Electron.DownloadItem; tabId?: string }>();
   private readonly ytDlpProcesses = new Map<string, { child: ChildProcess; isPaused: boolean }>();
-  private readonly closedTabs: Array<Pick<TabSnapshot, 'url' | 'workspaceId' | 'isPinned' | 'isMuted'>> = [];
+  private closedTabs: Array<Pick<TabSnapshot, 'url' | 'workspaceId' | 'isPinned' | 'isMuted'>> = [];
   private readonly popupOpeners = new Map<string, string>();
   private readonly popupWindows = new Set<Electron.BrowserWindow>();
   private readonly popupToTab = new Map<number, string>();
@@ -127,6 +184,7 @@ export class BrowserController {
   private readonly capturedMediaStreams = new Map<number, { video?: string; audio?: string }>();
   private readonly notificationPermissions = new Map<string, NotificationPermissionDecision>();
   private readonly extensionsManager: LocalExtensionManager;
+  private neverSaveOrigins = new Set<string>();
 
   constructor() {
     this.stores = new BrowserStores(app.getPath('userData'));
@@ -166,6 +224,43 @@ export class BrowserController {
     });
     void this.browsec.registerSession(this.browserSession);
     this.configureSession(this.browserSession);
+
+    ipcMain.on('page:zoom-wheel', (event, { direction }) => {
+      const tab = Array.from(this.tabs.values()).find((t) => t.webContentsId === event.sender.id) || this.getActiveTab();
+      if (tab && (direction === 'zoom-in' || direction === 'zoom-out')) {
+        void this.tabAction(tab.id, direction);
+      }
+    });
+
+    ipcMain.on('page:password-form-submitted', (event, data: { origin: string; url: string; username: string; password: string }) => {
+      if (!data || !data.origin || !data.username || !data.password) return;
+      if (this.neverSaveOrigins.has(data.origin)) return;
+      // Найти активную вкладку
+      const tab = Array.from(this.tabs.values()).find((t) => t.webContentsId === event.sender.id) || this.getActiveTab();
+      if (!tab || tab.isPrivate) return; // Не сохранять пароли в режиме инкогнито!
+
+      // Проверить, сохранен ли уже этот пароль с тем же значением
+      const existing = this.passwords.findByOriginAndUser(data.origin, data.username);
+      if (existing && existing.password === data.password) {
+        return; // Пароль уже актуален, не беспокоим пользователя
+      }
+
+      let domain = data.origin;
+      try { domain = new URL(data.origin).hostname; } catch {}
+
+      // Отправить событие в UI shell
+      this.shellView?.webContents.send('browser:event', {
+        type: 'password-save-prompt',
+        data: {
+          id: existing?.id,
+          origin: data.origin,
+          domain,
+          username: data.username,
+          password: data.password,
+          isUpdate: Boolean(existing),
+        },
+      });
+    });
   }
 
   setListeners(
@@ -192,6 +287,25 @@ export class BrowserController {
     const appIcon = nativeImage.createFromPath(appIconPath);
     if (!appIcon.isEmpty()) this.window.setIcon(appIcon);
 
+    session.defaultSession.setPermissionCheckHandler((contents, permission, origin) => {
+      if (permission === 'media') {
+        return origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId;
+      }
+      return permission === 'fullscreen' || permission === 'clipboard-sanitized-write';
+    });
+    session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+      const origin = details?.requestingUrl || (contents && !contents.isDestroyed() ? contents.getURL() : '') || '';
+      if (permission === 'media' && (origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId)) {
+        callback(true);
+        return;
+      }
+      if (permission === 'fullscreen' || permission === 'clipboard-sanitized-write') {
+        callback(true);
+        return;
+      }
+      callback(false);
+    });
+
     this.shellView = new WebContentsView({
       webPreferences: {
         preload: shellPreloadPath,
@@ -217,6 +331,26 @@ export class BrowserController {
     this.window.contentView.addChildView(this.shellView);
     this.shellView.setBounds({ x: 0, y: 0, width: 1440, height: 900 });
     await this.shellView.webContents.loadURL('app://shell/index.html');
+
+    this.voodooView = new WebContentsView({
+      webPreferences: {
+        preload: shellPreloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+      },
+    });
+    this.voodooView.setBackgroundColor('#00000000');
+    this.voodooContentsId = this.voodooView.webContents.id;
+    this.voodooView.webContents.on('will-navigate', (event) => event.preventDefault());
+    this.voodooView.webContents.on('will-redirect', (event) => event.preventDefault());
+    this.voodooView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    this.installShortcuts(this.voodooView.webContents);
+    this.window.contentView.addChildView(this.voodooView);
+    this.refreshVoodooBounds();
+    void this.voodooView.webContents.loadURL('app://shell/index.html?view=voodoo');
+
     await this.extensionsManager.restore();
 
     this.restoring = true;
@@ -267,7 +401,7 @@ export class BrowserController {
   }
 
   isTrustedShell(senderId: number): boolean {
-    return senderId === this.shellContentsId;
+    return senderId === this.shellContentsId || (this.voodooContentsId !== undefined && senderId === this.voodooContentsId);
   }
 
   isTrustedPage(senderId: number): boolean {
@@ -312,6 +446,10 @@ export class BrowserController {
           }
         : null,
     };
+  }
+
+  getActiveTab(): TabRecord | undefined {
+    return this.tabs.get(this.activeTabId);
   }
 
   async getPrivacyDashboard(tabId?: string): Promise<PrivacyDashboardSnapshot> {
@@ -753,9 +891,10 @@ export class BrowserController {
       });
     } else if (['zoom-in', 'zoom-out', 'zoom-reset'].includes(action) && tab.view && !tab.view.webContents.isDestroyed()) {
       const contents = tab.view.webContents;
-      const level = action === 'zoom-reset' ? 0 : Math.max(-4, Math.min(5, contents.getZoomLevel() + (action === 'zoom-in' ? 0.5 : -0.5)));
-      contents.setZoomLevel(level);
-      tab.zoomFactor = contents.getZoomFactor();
+      const current = tab.zoomFactor ?? contents.getZoomFactor() ?? 1.0;
+      const next = getNextZoomFactor(current, action as 'zoom-in' | 'zoom-out' | 'zoom-reset');
+      contents.setZoomFactor(next);
+      tab.zoomFactor = next;
     }
     this.emitSnapshot();
   }
@@ -1274,6 +1413,13 @@ export class BrowserController {
         googleSignInCompatibility: typeof patch.googleSignInCompatibility === 'boolean' ? patch.googleSignInCompatibility : current.googleSignInCompatibility ?? true,
         thirdPartyCookieExceptions: patch.thirdPartyCookieExceptions === undefined ? current.thirdPartyCookieExceptions ?? [] : normalizeCookieExceptions(patch.thirdPartyCookieExceptions),
         restoreSession: typeof patch.restoreSession === 'boolean' ? patch.restoreSession : current.restoreSession ?? true,
+        voodooEnabled: typeof patch.voodooEnabled === 'boolean' ? patch.voodooEnabled : current.voodooEnabled ?? true,
+        voodooBubbleVisible: typeof patch.voodooBubbleVisible === 'boolean' ? patch.voodooBubbleVisible : current.voodooBubbleVisible ?? true,
+        voodooKeys: Array.isArray(patch.voodooKeys)
+          ? patch.voodooKeys.map(k => String(k).trim()).filter(Boolean)
+          : current.voodooKeys,
+        voodooModel: typeof patch.voodooModel === 'string' && patch.voodooModel.trim() ? patch.voodooModel.trim() : current.voodooModel,
+        voodooBaseUrl: typeof patch.voodooBaseUrl === 'string' && patch.voodooBaseUrl.trim() ? patch.voodooBaseUrl.trim() : current.voodooBaseUrl,
       };
     });
     if (next.theme) {
@@ -1283,6 +1429,7 @@ export class BrowserController {
     this.privateAdBlock.engine.setEnabled(next.adBlockEnabled !== false);
     this.adBlock.engine.setExceptions(next.adBlockExceptions ?? []);
     this.privateAdBlock.engine.setExceptions(next.adBlockExceptions ?? []);
+    this.refreshVoodooBounds();
     this.emitSnapshot();
     return next;
   }
@@ -1378,6 +1525,227 @@ export class BrowserController {
       tab.canGoForward = false;
     }
     this.emitSnapshot();
+  }
+
+  broadcastHistoryUpdate(): void {
+    this.eventListener?.({ type: 'history-cleared' });
+    this.emitSnapshot();
+  }
+
+  async getStorageMetrics(): Promise<StorageMetrics> {
+    let cacheSizeBytes = 0;
+    try {
+      if (typeof this.browserSession.getCacheSize === 'function') {
+        cacheSizeBytes = await this.browserSession.getCacheSize();
+      }
+    } catch {
+      cacheSizeBytes = 0;
+    }
+
+    if (!cacheSizeBytes) {
+      try {
+        const userData = app.getPath('userData');
+        const possibleDirs = [
+          path.join(userData, 'Cache'),
+          path.join(userData, 'GPUCache'),
+          path.join(userData, 'Code Cache'),
+          path.join(userData, 'DawnWebGPUCache'),
+          path.join(userData, 'Partitions', 'northstar-default', 'Cache'),
+          path.join(userData, 'Partitions', 'northstar-default', 'GPUCache'),
+          path.join(userData, 'Partitions', 'northstar-default', 'Code Cache'),
+          path.join(userData, 'Partitions', 'northstar-default', 'DawnWebGPUCache'),
+        ];
+        for (const dir of possibleDirs) {
+          cacheSizeBytes += getDirectorySize(dir);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    let cookiesCount = 0;
+    try {
+      if (this.browserSession.cookies && typeof this.browserSession.cookies.get === 'function') {
+        const cookies = await this.browserSession.cookies.get({});
+        cookiesCount = cookies.length;
+      }
+    } catch {
+      cookiesCount = 0;
+    }
+
+    return {
+      cacheSizeBytes,
+      cacheSizeFormatted: formatBytes(cacheSizeBytes),
+      cookiesCount,
+      historyCount: this.stores.history.get().length,
+      downloadsCount: this.stores.downloads.get().length,
+      passwordsCount: this.passwords.count(),
+      openTabsCount: Array.from(this.tabs.values()).filter((t) => !t.isPrivate).length,
+      hasSecureStorage: this.passwords.canPersistSecurely(),
+      sampledAt: Date.now(),
+    };
+  }
+
+  async executeClean(options: CleanTargetOptions): Promise<CleanResult> {
+    const startTime = performance.now();
+    const before = await this.getStorageMetrics();
+
+    // 1. options.cache
+    if (options.cache) {
+      if (typeof this.browserSession.clearCache === 'function') {
+        await this.browserSession.clearCache();
+      }
+      if (typeof this.browserSession.clearStorageData === 'function') {
+        await this.browserSession.clearStorageData({ storages: ['shadercache', 'cachestorage'] });
+      }
+      if (this.privateSession && typeof this.privateSession.clearCache === 'function') {
+        await this.privateSession.clearCache();
+      }
+      if (session.defaultSession && typeof session.defaultSession.clearCache === 'function') {
+        await session.defaultSession.clearCache();
+      }
+    }
+
+    // 2. options.cookies
+    if (options.cookies) {
+      if (typeof this.browserSession.clearStorageData === 'function') {
+        await this.browserSession.clearStorageData({ storages: ['cookies'] });
+      }
+      if (this.privateSession && typeof this.privateSession.clearStorageData === 'function') {
+        await this.privateSession.clearStorageData({ storages: ['cookies'] });
+      }
+      if (session.defaultSession && typeof session.defaultSession.clearStorageData === 'function') {
+        await session.defaultSession.clearStorageData({ storages: ['cookies'] });
+      }
+    }
+
+    // 3. options.localStorage
+    if (options.localStorage) {
+      if (typeof this.browserSession.clearStorageData === 'function') {
+        await this.browserSession.clearStorageData({ storages: ['localstorage', 'websql' as any] });
+      }
+      if (this.privateSession && typeof this.privateSession.clearStorageData === 'function') {
+        await this.privateSession.clearStorageData({ storages: ['localstorage', 'websql' as any] });
+      }
+    }
+
+    // 4. options.indexedDB
+    if (options.indexedDB) {
+      if (typeof this.browserSession.clearStorageData === 'function') {
+        await this.browserSession.clearStorageData({ storages: ['indexdb', 'filesystem'] });
+      }
+      if (this.privateSession && typeof this.privateSession.clearStorageData === 'function') {
+        await this.privateSession.clearStorageData({ storages: ['indexdb', 'filesystem'] });
+      }
+    }
+
+    // 5. options.serviceWorkers
+    if (options.serviceWorkers) {
+      if (typeof this.browserSession.clearStorageData === 'function') {
+        await this.browserSession.clearStorageData({ storages: ['serviceworkers'] });
+      }
+      if (this.privateSession && typeof this.privateSession.clearStorageData === 'function') {
+        await this.privateSession.clearStorageData({ storages: ['serviceworkers'] });
+      }
+    }
+
+    // 6. options.authCache
+    if (options.authCache) {
+      if (typeof this.browserSession.clearAuthCache === 'function') {
+        await this.browserSession.clearAuthCache();
+      }
+      if (this.privateSession && typeof this.privateSession.clearAuthCache === 'function') {
+        await this.privateSession.clearAuthCache();
+      }
+    }
+
+    // 7. options.dnsCache
+    if (options.dnsCache) {
+      if (typeof this.browserSession.clearHostResolverCache === 'function') {
+        await this.browserSession.clearHostResolverCache();
+      }
+      if (this.privateSession && typeof this.privateSession.clearHostResolverCache === 'function') {
+        await this.privateSession.clearHostResolverCache();
+      }
+    }
+
+    // 8. options.history
+    if (options.history) {
+      this.stores.history.set([]);
+      for (const tab of this.tabs.values()) {
+        if (!tab.isPrivate) {
+          if (tab.view && !tab.view.webContents.isDestroyed()) {
+            try {
+              tab.view.webContents.navigationHistory.clear();
+            } catch {}
+          }
+          (tab as any).navigationHistory = [];
+          tab.canGoBack = false;
+          tab.canGoForward = false;
+        }
+      }
+      this.broadcastHistoryUpdate();
+    }
+
+    // 9. options.downloadsHistory
+    if (options.downloadsHistory) {
+      this.stores.downloads.set([]);
+      const remaining = this.downloads.filter((entry) => this.liveDownloads.has(entry.id) || entry.state === 'queued' || entry.state === 'progressing');
+      this.downloads.splice(0, this.downloads.length, ...remaining);
+      this.eventListener?.({ type: 'downloads-cleared' });
+    }
+
+    // 11. options.passwords
+    if (options.passwords) {
+      this.passwords.clearAll();
+      this.eventListener?.({ type: 'passwords-changed' });
+    }
+
+    // 12. options.closeTabs
+    if (options.closeTabs) {
+      const normalTabs = Array.from(this.tabs.values()).filter((t) => !t.isPrivate);
+      let keptNewTab = false;
+      for (const tab of normalTabs) {
+        if (!keptNewTab && tab.url === NEW_TAB_URL) {
+          keptNewTab = true;
+          continue;
+        }
+        await this.closeTab(tab.id);
+      }
+      const remainingNormal = Array.from(this.tabs.values()).filter((t) => !t.isPrivate);
+      if (remainingNormal.length === 0) {
+        await this.createTab({ url: NEW_TAB_URL, isPrivate: false, active: true });
+      } else if (keptNewTab && remainingNormal[0]) {
+        this.activateTab(remainingNormal[0].id);
+      }
+      this.stores.session.set({ tabs: [], activeIndex: 0 });
+    }
+
+    // 10. options.closedTabsHistory
+    if (options.closedTabsHistory) {
+      this.closedTabs = [];
+    }
+
+    this.emitSnapshot();
+
+    const after = await this.getStorageMetrics();
+    let freed = Math.max(0, before.cacheSizeBytes - after.cacheSizeBytes);
+    if (options.cache && freed === 0 && before.cacheSizeBytes > 0) {
+      freed = before.cacheSizeBytes;
+    }
+
+    const clearedTargets = (Object.keys(options) as Array<keyof CleanTargetOptions>).filter(
+      (k) => Boolean(options[k]),
+    );
+
+    return {
+      success: true,
+      freedBytesEstimate: freed,
+      freedFormatted: formatBytes(freed),
+      clearedTargets,
+      durationMs: Math.round(performance.now() - startTime),
+      metricsAfter: after,
+    };
   }
 
   async openCurrentPageExternally(tabId: string): Promise<void> {
@@ -1499,6 +1867,25 @@ export class BrowserController {
     });
     if (result.filled) this.memoryManager.updateTab(tabId, { hasFormEdits: true, lastInteractionAt: Date.now() });
     return result;
+  }
+
+  async saveCredential(origin: string, username: string, password: string): Promise<{ success: boolean; id: string; updated: boolean }> {
+    const { id, updated } = this.passwords.save(origin, username, password);
+    this.shellView?.webContents.send('browser:event', { type: 'passwords-changed' });
+    this.emitSnapshot();
+    return { success: true, id, updated };
+  }
+
+  async revealSavedPassword(passwordId: string): Promise<string | null> {
+    return this.passwords.getSecret(passwordId);
+  }
+
+  async getSavedCredentialsForOrigin(origin: string): Promise<ImportedPasswordSummary[]> {
+    return this.passwords.summaries().filter((s) => s.origin === origin);
+  }
+
+  async neverSavePasswordForOrigin(origin: string): Promise<void> {
+    this.neverSaveOrigins.add(origin);
   }
 
   setChromeBounds(bounds: ChromeBounds): void {
@@ -2174,6 +2561,11 @@ export class BrowserController {
       googleSignInCompatibility: this.stores.settings.get().googleSignInCompatibility,
     }));
     targetSession.setPermissionCheckHandler((contents, permission, origin, details) => {
+      if (permission === 'media') {
+        if (origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId) {
+          return true;
+        }
+      }
       if (permission === 'storage-access') {
         return storageEligible(details.requestingUrl || origin, contents) && Boolean(contents && allowedPermissions.has(storageKey(contents.getURL(), origin)));
       }
@@ -2185,6 +2577,13 @@ export class BrowserController {
     });
     targetSession.setPermissionRequestHandler((contents, permission, callback, details) => {
       if (permission === 'fullscreen' || permission === 'clipboard-sanitized-write') { callback(true); return; }
+      if (permission === 'media') {
+        const reqOrigin = details.requestingUrl || (contents && !contents.isDestroyed() ? contents.getURL() : '') || '';
+        if (reqOrigin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId) {
+          callback(true);
+          return;
+        }
+      }
       if (permission === 'storage-access') {
         if (!this.window || !storageEligible(details.requestingUrl, contents)) { callback(false); return; }
         const topOrigin = new URL(contents.getURL()).origin;
@@ -2620,6 +3019,9 @@ export class BrowserController {
       };
     });
     contents.on('context-menu', (_event, params) => this.showContextMenu(contents, params));
+    contents.on('zoom-changed', (_event, zoomDirection) => {
+      void this.tabAction(tab.id, zoomDirection === 'in' ? 'zoom-in' : 'zoom-out');
+    });
     contents.on('devtools-opened', () => {
       const devContents = contents.devToolsWebContents;
       if (devContents && !devContents.isDestroyed()) {
@@ -2851,6 +3253,13 @@ export class BrowserController {
     }
     // Bounds updates arrive after React layout and must never cover a dialog.
     this.raiseShellOverlay();
+
+    // Ensure Voodoo floating assistant stays on top of all views
+    if (this.voodooView && !this.voodooView.webContents.isDestroyed() && this.window && !this.window.isDestroyed()) {
+      try { this.window.contentView.removeChildView(this.voodooView); } catch {}
+      this.window.contentView.addChildView(this.voodooView);
+      this.refreshVoodooBounds();
+    }
   }
 
   private applyBounds(tab: TabRecord): void {
@@ -3197,11 +3606,21 @@ export class BrowserController {
       template.push({ label: 'Вырезать', click: () => contents.cut() });
       template.push({ label: 'Копировать', click: () => contents.copy() });
       template.push({ label: 'Вставить', click: () => contents.paste() });
+      if (params.selectionText?.trim()) {
+        template.push({
+          label: 'Анализировать с ВуДу',
+          click: () => this.analyzeWithVoodoo(params.selectionText),
+        });
+      }
       template.push({ type: 'separator' });
     } else if (params.selectionText) {
       template.push({ label: 'Копировать выделение', click: () => contents.copy() });
       const query = params.selectionText.trim();
       if (query) {
+        template.push({
+          label: 'Анализировать с ВуДу',
+          click: () => this.analyzeWithVoodoo(params.selectionText),
+        });
         const querySnippet = query.length > 25 ? `${query.slice(0, 25)}…` : query;
         template.push({
           label: `Найти «${querySnippet}» в Google`,
@@ -3652,6 +4071,13 @@ export class BrowserController {
         this.shellView?.webContents.focus();
         this.eventListener?.({ type: 'toggle-task-manager' });
       });
+      else if (modifier && input.shift && key === 'v') run(() => {
+        this.toggleVoodoo();
+      });
+      else if (modifier && input.shift && (key === 'delete' || key === 'backspace')) run(() => {
+        this.shellView?.webContents.focus();
+        this.eventListener?.({ type: 'toggle-click-and-clean' });
+      });
       else if (modifier && key === 'l') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'focus-address' }); });
       else if (modifier && input.shift && key === 'a') run(() => {
         this.exitPageFullscreen();
@@ -3731,6 +4157,973 @@ export class BrowserController {
     }, 250);
   }
 
+  toggleVoodoo(): void {
+    this.setVoodooOpen(!this.voodooOpen);
+  }
+
+  setVoodooOpen(open: boolean): void {
+    this.voodooOpen = Boolean(open);
+    this.refreshVoodooBounds();
+    this.voodooView?.webContents.send('browser:event', {
+      type: 'voodoo-set-open',
+      message: String(this.voodooOpen),
+    });
+    if (this.voodooOpen) {
+      this.voodooView?.webContents.focus();
+    }
+  }
+
+  moveVoodoo(deltaX: number, deltaY: number): void {
+    if (!this.window || this.window.isDestroyed()) return;
+    const winBounds = this.window.getContentBounds();
+    if (this.voodooOpen) {
+      const curX = this.voodooPosition.x ?? (winBounds.width - this.voodooDimensions.width - 24);
+      const curY = this.voodooPosition.y ?? (winBounds.height - this.voodooDimensions.height - 24);
+      this.voodooPosition = {
+        x: Math.max(0, Math.min(curX + deltaX, winBounds.width - 100)),
+        y: Math.max(0, Math.min(curY + deltaY, winBounds.height - 100)),
+      };
+    } else {
+      const curX = this.voodooBubblePosition.x ?? (winBounds.width - 68 - 24);
+      const curY = this.voodooBubblePosition.y ?? (winBounds.height - 68 - 24);
+      this.voodooBubblePosition = {
+        x: Math.max(0, Math.min(curX + deltaX, winBounds.width - 60)),
+        y: Math.max(0, Math.min(curY + deltaY, winBounds.height - 60)),
+      };
+    }
+    this.refreshVoodooBounds();
+  }
+
+  resizeVoodoo(width: number, height: number, deltaX?: number, deltaY?: number): void {
+    const winBounds = this.window?.getContentBounds() || { width: 1200, height: 800 };
+    const maxW = Math.max(320, winBounds.width - 20);
+    const maxH = Math.max(380, winBounds.height - 30);
+    const newW = Math.min(Math.max(320, Math.round(width)), maxW);
+    const newH = Math.min(Math.max(380, Math.round(height)), maxH);
+    this.voodooDimensions = { width: newW, height: newH };
+    if (this.voodooPosition.x === undefined) {
+      this.voodooPosition.x = Math.max(10, winBounds.width - newW - 24);
+    }
+    if (this.voodooPosition.y === undefined) {
+      this.voodooPosition.y = Math.max(10, winBounds.height - newH - 24);
+    }
+    if (typeof deltaX === 'number' && deltaX !== 0) {
+      this.voodooPosition.x = Math.max(0, Math.min(this.voodooPosition.x + deltaX, winBounds.width - newW));
+    }
+    if (typeof deltaY === 'number' && deltaY !== 0) {
+      this.voodooPosition.y = Math.max(0, Math.min(this.voodooPosition.y + deltaY, winBounds.height - newH));
+    }
+    this.refreshVoodooBounds();
+  }
+
+  resetVoodooPosition(): void {
+    this.voodooPosition = {};
+    this.voodooBubblePosition = {};
+    this.refreshVoodooBounds();
+  }
+
+  refreshVoodooBounds(): void {
+    if (!this.window || this.window.isDestroyed() || !this.voodooView || this.voodooView.webContents.isDestroyed()) return;
+    const winBounds = this.window.getContentBounds();
+    const settings = this.stores.settings.get();
+
+    if (settings.voodooEnabled === false) {
+      this.voodooView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      return;
+    }
+
+    if (this.voodooOpen) {
+      const w = Math.min(Math.max(320, this.voodooDimensions.width), winBounds.width - 10);
+      const h = Math.min(Math.max(380, this.voodooDimensions.height), winBounds.height - 20);
+      const defaultX = Math.max(10, winBounds.width - w - 24);
+      const defaultY = Math.max(10, winBounds.height - h - 24);
+
+      let targetX = this.voodooPosition.x ?? defaultX;
+      let targetY = this.voodooPosition.y ?? defaultY;
+
+      targetX = Math.max(0, Math.min(targetX, winBounds.width - w));
+      targetY = Math.max(0, Math.min(targetY, winBounds.height - h));
+
+      this.voodooPosition = { x: targetX, y: targetY };
+      this.voodooView.setBounds({ x: targetX, y: targetY, width: w, height: h });
+    } else if (settings.voodooBubbleVisible !== false) {
+      const size = 68;
+      const defaultX = Math.max(10, winBounds.width - size - 24);
+      const defaultY = Math.max(10, winBounds.height - size - 24);
+
+      let targetX = this.voodooBubblePosition.x ?? defaultX;
+      let targetY = this.voodooBubblePosition.y ?? defaultY;
+
+      targetX = Math.max(0, Math.min(targetX, winBounds.width - size));
+      targetY = Math.max(0, Math.min(targetY, winBounds.height - size));
+
+      this.voodooBubblePosition = { x: targetX, y: targetY };
+      this.voodooView.setBounds({ x: targetX, y: targetY, width: size, height: size });
+    } else {
+      this.voodooView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    }
+  }
+
+  analyzeWithVoodoo(selectedText: string): void {
+    const text = (selectedText || '').trim();
+    if (!text) return;
+    this.setVoodooOpen(true);
+    this.voodooView?.webContents.focus();
+    this.voodooView?.webContents.send('browser:event', {
+      type: 'voodoo-analyze-text',
+      message: text,
+    });
+  }
+
+  async sendVoodooMessage(
+    messages: VoodooChatMessage[],
+    tabContext?: { url?: string; title?: string; chatText?: string }
+  ): Promise<VoodooChatResponse> {
+    const settings = this.stores.settings.get();
+    return this.voodooService.chat(messages, {
+      keys: settings.voodooKeys,
+      model: settings.voodooModel,
+      baseUrl: settings.voodooBaseUrl,
+      tabContext,
+      toolExecutor: (name, args) => this.executeVoodooTool(name, args),
+    });
+  }
+
+  async executeVoodooTool(
+    toolName: string,
+    args: Record<string, unknown>
+  ): Promise<{ success: boolean; result?: unknown; error?: string; summary?: string }> {
+    try {
+      switch (toolName) {
+        case 'search_web': {
+          const query = String(args.query || '').trim();
+          if (!query) {
+            return { success: false, error: 'Поисковый запрос не может быть пустым', summary: '❌ Поиск: пустой запрос' };
+          }
+          const newTab = Boolean(args.new_tab);
+          const searchEngine = this.stores.settings.get().searchEngine;
+          const intent = parseOmniboxInput(query, searchEngine);
+          const targetUrl = intent.kind === 'url' ? intent.url : intent.kind === 'search' ? intent.url : `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+
+          if (newTab) {
+            await this.createTab({ url: targetUrl, active: true });
+          } else {
+            const activeTab = this.tabs.get(this.activeTabId);
+            if (activeTab) {
+              await this.navigate(activeTab.id, targetUrl);
+            } else {
+              await this.createTab({ url: targetUrl, active: true });
+            }
+          }
+          return {
+            success: true,
+            result: { url: targetUrl, query, inNewTab: newTab },
+            summary: `🔍 Поиск: «${query}»${newTab ? ' (новая вкладка)' : ''}`,
+          };
+        }
+
+        case 'open_url': {
+          let rawUrl = String(args.url || '').trim();
+          if (!rawUrl) {
+            return { success: false, error: 'Адрес URL не может быть пустым', summary: '❌ Открытие: URL не указан' };
+          }
+          const newTab = Boolean(args.new_tab);
+          const searchEngine = this.stores.settings.get().searchEngine;
+          const intent = parseOmniboxInput(rawUrl, searchEngine);
+          let targetUrl = intent.kind === 'url' ? intent.url : rawUrl;
+          if (!/^https?:\/\//i.test(targetUrl) && !/^browser:\/\//i.test(targetUrl)) {
+            targetUrl = `https://${targetUrl}`;
+          }
+
+          if (newTab) {
+            await this.createTab({ url: targetUrl, active: true });
+          } else {
+            const activeTab = this.tabs.get(this.activeTabId);
+            if (activeTab) {
+              await this.navigate(activeTab.id, targetUrl);
+            } else {
+              await this.createTab({ url: targetUrl, active: true });
+            }
+          }
+          return {
+            success: true,
+            result: { url: targetUrl, inNewTab: newTab },
+            summary: `🌐 Открыта страница: ${targetUrl}${newTab ? ' (новая вкладка)' : ''}`,
+          };
+        }
+
+        case 'list_tabs': {
+          const tabList = Array.from(this.tabs.values()).map((t) => ({
+            id: t.id,
+            title: t.title || 'Новая вкладка',
+            url: t.url,
+            isActive: t.id === this.activeTabId,
+            isPinned: Boolean(t.isPinned),
+          }));
+          return {
+            success: true,
+            result: { tabs: tabList, count: tabList.length },
+            summary: `📑 Список вкладок (${tabList.length})`,
+          };
+        }
+
+        case 'switch_tab': {
+          const tabId = String(args.tab_id || '').trim();
+          if (!tabId || !this.tabs.has(tabId)) {
+            return { success: false, error: `Вкладка с ID "${tabId}" не найдена`, summary: `❌ Вкладка не найдена` };
+          }
+          const targetTab = this.tabs.get(tabId)!;
+          this.activateTab(tabId);
+          const title = targetTab.title || targetTab.url || tabId;
+          return {
+            success: true,
+            result: { tabId, title, url: targetTab.url },
+            summary: `📑 Переключено на вкладку: «${title}»`,
+          };
+        }
+
+        case 'close_tab': {
+          const tabId = String(args.tab_id || this.activeTabId || '').trim();
+          if (!tabId || !this.tabs.has(tabId)) {
+            return { success: false, error: `Вкладка не найдена`, summary: `❌ Закрытие: вкладка не найдена` };
+          }
+          const targetTab = this.tabs.get(tabId)!;
+          const title = targetTab.title || targetTab.url || tabId;
+          this.closeTab(tabId);
+          return {
+            success: true,
+            result: { closedTabId: tabId, title },
+            summary: `❌ Закрыта вкладка: «${title}»`,
+          };
+        }
+
+        case 'read_page': {
+          const tabId = String(args.tab_id || this.activeTabId || '').trim();
+          const tab = this.tabs.get(tabId);
+          if (!tab || !tab.view || tab.view.webContents.isDestroyed()) {
+            return { success: false, error: 'Вкладка недоступна для чтения', summary: '❌ Страница недоступна' };
+          }
+          if (tab.isInternal) {
+            return {
+              success: true,
+              result: { title: tab.title, url: tab.url, text: 'Служебная страница браузера.' },
+              summary: `📄 Служебная страница «${tab.title}»`,
+            };
+          }
+
+          const maxLength = typeof args.max_length === 'number' && args.max_length > 0 ? args.max_length : 4000;
+          const pageData = await tab.view.webContents.executeJavaScript(`
+            (function(maxChars) {
+              try {
+                const clone = document.body ? document.body.cloneNode(true) : null;
+                if (!clone) return { title: document.title, url: location.href, text: '' };
+
+                const removeSelectors = ['script', 'style', 'noscript', 'header', 'footer', 'nav', 'svg', 'iframe'];
+                for (const sel of removeSelectors) {
+                  const elements = clone.querySelectorAll(sel);
+                  elements.forEach((el) => el.remove());
+                }
+
+                const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
+                  .map((h) => h.textContent ? h.textContent.trim() : '')
+                  .filter(Boolean)
+                  .slice(0, 8);
+
+                let text = (clone.innerText || clone.textContent || '')
+                  .replace(/\\s+/g, ' ')
+                  .trim();
+
+                if (text.length > maxChars) {
+                  text = text.slice(0, maxChars) + '... [содержимое сокращено]';
+                }
+
+                return {
+                  title: document.title,
+                  url: location.href,
+                  headings,
+                  text,
+                };
+              } catch (e) {
+                return { title: document.title, url: location.href, text: '', error: String(e) };
+              }
+            })(${JSON.stringify(maxLength)})
+          `, true);
+
+          return {
+            success: true,
+            result: pageData,
+            summary: `📄 Прочитана страница «${pageData.title || tab.title}» (${pageData.text?.length || 0} симв.)`,
+          };
+        }
+
+        case 'get_page_elements': {
+          const tabId = String(args.tab_id || this.activeTabId || '').trim();
+          const tab = this.tabs.get(tabId);
+          if (!tab || !tab.view || tab.view.webContents.isDestroyed() || tab.isInternal) {
+            return { success: false, error: 'Вкладка недоступна для анализа элементов', summary: '❌ Элементы недоступны' };
+          }
+          const filterType = String(args.type || 'all');
+          const elements = await tab.view.webContents.executeJavaScript(`
+            (function(type) {
+              try {
+                const results = [];
+                const isVisible = function(el) {
+                  if (!el.offsetParent && el.tagName !== 'BODY') return false;
+                  const r = el.getBoundingClientRect();
+                  return r.width > 0 && r.height > 0 && window.getComputedStyle(el).visibility !== 'hidden';
+                };
+
+                if (type === 'all' || type === 'buttons') {
+                  const btns = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"]'));
+                  for (const b of btns) {
+                    if (!isVisible(b)) continue;
+                    const text = (b.innerText || b.value || b.getAttribute('aria-label') || '').trim();
+                    const id = b.id ? '#' + b.id : '';
+                    const cls = b.className && typeof b.className === 'string' ? '.' + b.className.trim().split(/\\s+/)[0] : '';
+                    results.push({
+                      category: 'button',
+                      tag: b.tagName.toLowerCase(),
+                      text: text.slice(0, 60),
+                      selector: id || (cls ? b.tagName.toLowerCase() + cls : b.tagName.toLowerCase()),
+                      id: b.id || undefined,
+                    });
+                    if (results.length >= 30) break;
+                  }
+                }
+
+                if ((type === 'all' || type === 'links') && results.length < 30) {
+                  const links = Array.from(document.querySelectorAll('a[href]'));
+                  for (const a of links) {
+                    if (!isVisible(a)) continue;
+                    const text = (a.innerText || a.getAttribute('aria-label') || '').trim();
+                    if (!text && !a.title) continue;
+                    const id = a.id ? '#' + a.id : '';
+                    results.push({
+                      category: 'link',
+                      tag: 'a',
+                      text: (text || a.title || '').slice(0, 60),
+                      href: a.href,
+                      selector: id || 'a[href="' + a.getAttribute('href') + '"]',
+                    });
+                    if (results.length >= 30) break;
+                  }
+                }
+
+                if ((type === 'all' || type === 'inputs') && results.length < 30) {
+                  const inputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="button"]):not([type="submit"]), textarea, select, [contenteditable="true"]'));
+                  for (const inp of inputs) {
+                    if (!isVisible(inp)) continue;
+                    const id = inp.id ? '#' + inp.id : '';
+                    const name = inp.name ? '[name="' + inp.name + '"]' : '';
+                    const ph = inp.placeholder || inp.getAttribute('aria-label') || '';
+                    results.push({
+                      category: 'input',
+                      tag: inp.tagName.toLowerCase(),
+                      type: inp.type || 'text',
+                      placeholder: ph,
+                      name: inp.name || undefined,
+                      selector: id || name || inp.tagName.toLowerCase(),
+                      currentValue: (inp.value || inp.innerText || '').slice(0, 30),
+                    });
+                    if (results.length >= 30) break;
+                  }
+                }
+
+                return results;
+              } catch (e) {
+                return [];
+              }
+            })(${JSON.stringify(filterType)})
+          `, true);
+
+          return {
+            success: true,
+            result: { elements, count: elements.length },
+            summary: `🔍 Найдено ${elements.length} интерактивных элементов на странице`,
+          };
+        }
+
+        case 'click_element': {
+          const tabId = String(args.tab_id || this.activeTabId || '').trim();
+          const tab = this.tabs.get(tabId);
+          if (!tab || !tab.view || tab.view.webContents.isDestroyed() || tab.isInternal) {
+            return { success: false, error: 'Вкладка недоступна для клика', summary: '❌ Вкладка недоступна' };
+          }
+          const targetText = typeof args.text === 'string' ? args.text.trim() : '';
+          const targetSelector = typeof args.selector === 'string' ? args.selector.trim() : '';
+          if (!targetText && !targetSelector) {
+            return { success: false, error: 'Не указан селектор или текст для клика', summary: '❌ Не указан элемент' };
+          }
+
+          const clickResult = await tab.view.webContents.executeJavaScript(`
+            (function(text, selector) {
+              try {
+                let target = null;
+                if (selector) {
+                  target = document.querySelector(selector);
+                }
+                if (!target && text) {
+                  const lower = text.toLowerCase();
+                  const candidates = Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], span, div, p'));
+                  target = candidates.find(function(el) {
+                    const content = (el.innerText || el.value || el.getAttribute('aria-label') || '').toLowerCase().trim();
+                    return content === lower || (content.includes(lower) && content.length < lower.length + 30);
+                  });
+                }
+
+                if (!target) {
+                  return { success: false, error: 'Элемент не найден на странице' };
+                }
+
+                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                if (typeof target.focus === 'function') target.focus();
+                target.click();
+
+                return {
+                  success: true,
+                  tag: target.tagName.toLowerCase(),
+                  text: (target.innerText || target.value || target.getAttribute('aria-label') || '').slice(0, 40),
+                };
+              } catch (err) {
+                return { success: false, error: String(err) };
+              }
+            })(${JSON.stringify(targetText)}, ${JSON.stringify(targetSelector)})
+          `, true);
+
+          if (clickResult.success) {
+            return {
+              success: true,
+              result: clickResult,
+              summary: `🖱️ Клик по элементу: «${targetText || targetSelector}»`,
+            };
+          } else {
+            return {
+              success: false,
+              error: clickResult.error || 'Элемент не найден',
+              summary: `❌ Не удалось кликнуть по «${targetText || targetSelector}»`,
+            };
+          }
+        }
+
+        case 'fill_input': {
+          const tabId = String(args.tab_id || this.activeTabId || '').trim();
+          const tab = this.tabs.get(tabId);
+          if (!tab || !tab.view || tab.view.webContents.isDestroyed() || tab.isInternal) {
+            return { success: false, error: 'Вкладка недоступна для ввода текста', summary: '❌ Вкладка недоступна' };
+          }
+          const text = String(args.text ?? '');
+          const selector = typeof args.selector === 'string' ? args.selector.trim() : '';
+          const placeholder = typeof args.placeholder === 'string' ? args.placeholder.trim() : '';
+          const submit = Boolean(args.submit);
+
+          const fillResult = await tab.view.webContents.executeJavaScript(`
+            (function(val, sel, ph, doSubmit) {
+              try {
+                let target = null;
+                if (sel) target = document.querySelector(sel);
+                if (!target && ph) {
+                  const lowerPh = ph.toLowerCase();
+                  target = Array.from(document.querySelectorAll('input, textarea')).find(function(el) {
+                    return (el.placeholder || el.getAttribute('aria-label') || '').toLowerCase().includes(lowerPh);
+                  });
+                }
+                if (!target) {
+                  target = document.querySelector('input:not([type="hidden"]):not([type="button"]):not([type="submit"]), textarea, [contenteditable="true"]');
+                }
+
+                if (!target) {
+                  return { success: false, error: 'Поле ввода не найдено' };
+                }
+
+                target.focus();
+                if (target.isContentEditable) {
+                  target.innerText = val;
+                  target.dispatchEvent(new Event('input', { bubbles: true }));
+                } else {
+                  const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+                    || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+                  if (nativeSetter) {
+                    nativeSetter.call(target, val);
+                  } else {
+                    target.value = val;
+                  }
+                  target.dispatchEvent(new Event('input', { bubbles: true }));
+                  target.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                if (doSubmit) {
+                  const form = target.form || target.closest('form');
+                  if (form) {
+                    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+                  }
+                  target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+                  target.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true }));
+                }
+
+                return {
+                  success: true,
+                  tag: target.tagName.toLowerCase(),
+                  placeholder: target.placeholder || undefined,
+                };
+              } catch (e) {
+                return { success: false, error: String(e) };
+              }
+            })(${JSON.stringify(text)}, ${JSON.stringify(selector)}, ${JSON.stringify(placeholder)}, ${JSON.stringify(submit)})
+          `, true);
+
+          if (fillResult.success) {
+            const preview = text.length > 25 ? text.slice(0, 25) + '…' : text;
+            return {
+              success: true,
+              result: fillResult,
+              summary: `✏️ Введён текст «${preview}»${submit ? ' с отправкой' : ''}`,
+            };
+          } else {
+            return {
+              success: false,
+              error: fillResult.error,
+              summary: `❌ Ошибка ввода в поле: ${fillResult.error}`,
+            };
+          }
+        }
+
+        case 'scroll_page': {
+          const tabId = String(args.tab_id || this.activeTabId || '').trim();
+          const tab = this.tabs.get(tabId);
+          if (!tab || !tab.view || tab.view.webContents.isDestroyed() || tab.isInternal) {
+            return { success: false, error: 'Вкладка недоступна для прокрутки', summary: '❌ Вкладка недоступна' };
+          }
+          const direction = String(args.direction || 'down');
+          const amount = typeof args.amount === 'number' && args.amount > 0 ? args.amount : 500;
+
+          await tab.view.webContents.executeJavaScript(`
+            (function(dir, px) {
+              try {
+                if (dir === 'up') window.scrollBy({ top: -px, behavior: 'smooth' });
+                else if (dir === 'down') window.scrollBy({ top: px, behavior: 'smooth' });
+                else if (dir === 'top') window.scrollTo({ top: 0, behavior: 'smooth' });
+                else if (dir === 'bottom') window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+              } catch (_) {}
+            })(${JSON.stringify(direction)}, ${JSON.stringify(amount)})
+          `, true);
+
+          const dirLabel = direction === 'up' ? 'вверх' : direction === 'down' ? 'вниз' : direction === 'top' ? 'в самое начало' : 'в самый низ';
+          return {
+            success: true,
+            result: { direction, amount },
+            summary: `📜 Прокрутка страницы ${dirLabel}`,
+          };
+        }
+
+        case 'execute_script': {
+          const tabId = String(args.tab_id || this.activeTabId || '').trim();
+          const tab = this.tabs.get(tabId);
+          if (!tab || !tab.view || tab.view.webContents.isDestroyed() || tab.isInternal) {
+            return { success: false, error: 'Вкладка недоступна для выполнения скрипта', summary: '❌ Вкладка недоступна' };
+          }
+          const code = String(args.code || '');
+          if (!code.trim()) {
+            return { success: false, error: 'Код скрипта не может быть пустым', summary: '❌ Пустой скрипт' };
+          }
+
+          const scriptResult = await tab.view.webContents.executeJavaScript(code, true);
+          const codeSnippet = code.slice(0, 30).replace(/\s+/g, ' ');
+          return {
+            success: true,
+            result: scriptResult,
+            summary: `⚡ Выполнен скрипт: «${codeSnippet}…»`,
+          };
+        }
+
+        case 'get_active_dialog': {
+          const dialogCtx = await this.extractActiveTabChatContext();
+          return {
+            success: true,
+            result: dialogCtx,
+            summary: `💬 Извлечён диалог (${dialogCtx.source || 'чат'}, сообщений: ${dialogCtx.count})`,
+          };
+        }
+
+        case 'clean_browser': {
+          const preset = String(args.preset || 'quick');
+          const cleanPresets: Record<string, CleanTargetOptions> = {
+            quick: {
+              cache: true,
+              history: true,
+              closedTabsHistory: true,
+              dnsCache: true,
+              cookies: false,
+              downloadsHistory: false,
+              localStorage: false,
+              indexedDB: false,
+              serviceWorkers: false,
+              authCache: false,
+              closeTabs: false,
+              passwords: false,
+            },
+            'post-payment': {
+              cache: true,
+              cookies: true,
+              localStorage: true,
+              indexedDB: true,
+              serviceWorkers: true,
+              authCache: true,
+              history: false,
+              downloadsHistory: false,
+              dnsCache: false,
+              closedTabsHistory: false,
+              closeTabs: false,
+              passwords: false,
+            },
+            kiosk: {
+              cache: true,
+              cookies: true,
+              history: true,
+              downloadsHistory: true,
+              localStorage: true,
+              indexedDB: true,
+              serviceWorkers: true,
+              authCache: true,
+              dnsCache: true,
+              closedTabsHistory: true,
+              closeTabs: true,
+              passwords: false,
+            },
+          };
+
+          const options = cleanPresets[preset] || cleanPresets.quick;
+          const cleanResult = await this.executeClean(options);
+          return {
+            success: cleanResult.success,
+            result: cleanResult,
+            error: cleanResult.error,
+            summary: `🧹 Click & Clean (${preset}): освобождено ${cleanResult.freedFormatted}`,
+          };
+        }
+
+        default: {
+          return {
+            success: false,
+            error: `Неизвестный инструмент: ${toolName}`,
+            summary: `❓ Неизвестное действие: ${toolName}`,
+          };
+        }
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        error: errorMsg,
+        summary: `❌ Ошибка выполнения ${toolName}: ${errorMsg}`,
+      };
+    }
+  }
+
+  async testVoodooKey(key: string): Promise<{ success: boolean; latencyMs?: number; error?: string }> {
+    const settings = this.stores.settings.get();
+    return this.voodooService.testKey(key, settings.voodooBaseUrl, settings.voodooModel);
+  }
+
+  async extractActiveTabChatContext(): Promise<{ text: string; source: string; count: number }> {
+    const activeTab = this.tabs.get(this.activeTabId);
+    if (!activeTab || !activeTab.view || activeTab.view.webContents.isDestroyed() || activeTab.isInternal) {
+      return { text: '', source: 'none', count: 0 };
+    }
+
+    const contents = activeTab.view.webContents;
+    try {
+      const result = await contents.executeJavaScript(`
+        (function() {
+          try {
+            const selection = window.getSelection()?.toString()?.trim();
+            if (selection && selection.length > 5) {
+              return { text: selection, source: 'selection', count: 1 };
+            }
+
+            const hostname = window.location.hostname || '';
+
+            if (hostname.includes('vk.com') || hostname.includes('vk.ru') || hostname.includes('vk.me')) {
+              // a) Determine active peer ID
+              let activePeer = null;
+
+              // 1. Check window.cur && window.cur.peer
+              try {
+                if (window.cur && window.cur.peer) {
+                  activePeer = String(window.cur.peer);
+                }
+              } catch (_) {}
+
+              // 2. Parse 'sel' from URL query
+              if (!activePeer) {
+                try {
+                  const sel = new URLSearchParams(window.location.search).get('sel');
+                  if (sel) {
+                    if (sel.startsWith('c')) {
+                      const chatNum = parseInt(sel.slice(1), 10);
+                      if (!isNaN(chatNum)) activePeer = String(2000000000 + chatNum);
+                    } else if (/^-?\\d+$/.test(sel)) {
+                      activePeer = sel;
+                    }
+                  }
+                } catch (_) {}
+              }
+
+              // 3. Parse URL pathname (/im/convo/12345, /im/c12, etc.)
+              if (!activePeer) {
+                try {
+                  const pathMatch = window.location.pathname.match(/\\/im\\/(?:convo\\/)?([-\\w]+)/);
+                  if (pathMatch && pathMatch[1]) {
+                    const raw = pathMatch[1];
+                    if (raw.startsWith('c')) {
+                      const chatNum = parseInt(raw.slice(1), 10);
+                      if (!isNaN(chatNum)) activePeer = String(2000000000 + chatNum);
+                    } else if (/^-?\\d+$/.test(raw)) {
+                      activePeer = raw;
+                    }
+                  }
+                } catch (_) {}
+              }
+
+              // 4. Find selected dialog in left column
+              if (!activePeer) {
+                const selectedDialog = document.querySelector('._im_dialog_selected, .nim-dialog_selected, [class*="DialogItem--active"]');
+                if (selectedDialog) {
+                  activePeer = selectedDialog.getAttribute('data-peer') || selectedDialog.getAttribute('data-list-id');
+                }
+              }
+
+              // b) Find active chat container
+              let activeContainer = null;
+              if (activePeer) {
+                activeContainer =
+                  document.querySelector('._im_peer_history[data-peer="' + activePeer + '"]') ||
+                  document.querySelector('.im-page--history[data-peer="' + activePeer + '"]') ||
+                  document.querySelector('[data-peer="' + activePeer + '"].im-page--history') ||
+                  document.querySelector('[data-peer="' + activePeer + '"]');
+              }
+
+              if (!activeContainer) {
+                const allCandidates = Array.from(document.querySelectorAll(
+                  '._im_peer_history, .im-page--history, [data-peer].im-page--history, [data-testid="chat-history"], [class*="ChatContent"], [class*="Convo__history"]'
+                ));
+                activeContainer = allCandidates.find(function(el) {
+                  return (
+                    !el.classList.contains('_im_peer_history_hidden') &&
+                    !el.classList.contains('im-page--history_hidden') &&
+                    el.offsetParent !== null &&
+                    el.getBoundingClientRect().height > 50 &&
+                    window.getComputedStyle(el).display !== 'none'
+                  );
+                });
+              }
+
+              if (!activeContainer) {
+                activeContainer =
+                  document.querySelector('.im-page--history.im-page--history_active') ||
+                  document.querySelector('.im-page--chat-body ._im_peer_history:not(._im_peer_history_hidden):not(.im-page--history_hidden)') ||
+                  document.querySelector('.im-page--chat-body');
+              }
+
+              if (activeContainer) {
+                // c) Extract interlocutor / chat title
+                const titleEl = document.querySelector(
+                  '._im_page_peer_name, .im-page--chat-header ._im_page_peer_name, .im-page--title, a.im-page--title-meta, [class*="Header__title"], [data-testid="chat-header-title"]'
+                );
+                const listTitleEl = document.querySelector(
+                  '._im_dialog_selected ._im_dialog_link, .nim-dialog_selected .nim-dialog--name, [class*="DialogItem--active"] [class*="DialogItem__name"]'
+                );
+                const chatPartnerName = (titleEl?.textContent || listTitleEl?.textContent || '').trim() || 'Собеседник';
+
+                // d) Extract messages strictly inside activeContainer
+                const stacks = Array.from(activeContainer.querySelectorAll('._im_mess_stack, .im-mess-stack'));
+                const messages = [];
+
+                if (stacks.length > 0) {
+                  for (const st of stacks.slice(-15)) {
+                    const isOutgoing =
+                      st.classList.contains('im-mess-stack_out') ||
+                      st.classList.contains('_im_mess_out') ||
+                      st.classList.contains('im-mess_out') ||
+                      st.matches('.im-mess-stack_out, [class*="Message--out"], [data-out="1"]');
+
+                    const authorEl = st.querySelector('.im-mess-stack--lnk, ._im_log_author_chat_name, [class*="AuthorName"], a.im-mess-stack--lnk');
+                    let authorName = isOutgoing ? 'Вы' : ((authorEl?.textContent || '').trim() || chatPartnerName);
+
+                    const msgEls = Array.from(st.querySelectorAll('._im_mess_text, .im-mess--text, .im_msg_text, [class*="MessageText"], [class*="Message__text"]'));
+                    for (const m of msgEls) {
+                      const txt = (m.textContent || '').trim();
+                      if (txt) {
+                        messages.push('[' + authorName + ']: ' + txt);
+                      }
+                    }
+                  }
+                }
+
+                if (messages.length === 0) {
+                  const rawMsgNodes = Array.from(activeContainer.querySelectorAll(
+                    '._im_mess_stack, .im-mess-stack, [class*="Message__root"], [class*="ChatMessage"], .im-mess, [data-msgid]'
+                  ));
+                  for (const node of rawMsgNodes.slice(-15)) {
+                    const isOutgoing =
+                      node.classList.contains('im-mess-stack_out') ||
+                      node.classList.contains('_im_mess_out') ||
+                      node.classList.contains('im-mess_out') ||
+                      Boolean(node.closest('.im-mess-stack_out, ._im_mess_out, .im-mess_out, [class*="Message--out"], [data-out="1"]'));
+
+                    const authorEl = node.querySelector('.im-mess-stack--lnk, ._im_log_author_chat_name, [class*="AuthorName"], a.im-mess-stack--lnk');
+                    const authorName = isOutgoing ? 'Вы' : ((authorEl?.textContent || '').trim() || chatPartnerName);
+
+                    const textEl = node.querySelector('._im_mess_text, .im-mess--text, .im_msg_text, [class*="MessageText"], [class*="Message__text"]') || node;
+                    const txt = (textEl.textContent || '').trim();
+                    if (txt && txt.length > 0 && !txt.startsWith('[' + authorName + ']')) {
+                      messages.push('[' + authorName + ']: ' + txt);
+                    }
+                  }
+                }
+
+                if (messages.length > 0) {
+                  const recent = messages.slice(-10);
+                  return {
+                    text: recent.join('\\n'),
+                    source: 'vk_active_dialog (' + chatPartnerName + ')',
+                    count: recent.length,
+                  };
+                }
+              }
+            }
+
+            if (hostname.includes('telegram.org')) {
+              const activeTgContainer =
+                document.querySelector('.chat-content .messages-container') ||
+                document.querySelector('#middle-column .messages-container') ||
+                document.querySelector('.bubbles-group') ||
+                document.querySelector('.MessageList');
+              const container = activeTgContainer || document;
+              const msgEls = Array.from(container.querySelectorAll('.message-content, .bubble-content, .message-item, .Message'));
+              if (msgEls.length > 0) {
+                const messages = [];
+                for (const el of msgEls.slice(-10)) {
+                  const author = el.querySelector('.message-title, .peer-title, .sender-title')?.textContent?.trim() || '';
+                  const body = el.querySelector('.text-content, .message, .bubble-content-text')?.textContent?.trim() || el.textContent?.trim() || '';
+                  if (body) {
+                    messages.push(author ? ('[' + author + ']: ' + body) : body);
+                  }
+                }
+                if (messages.length > 0) {
+                  return { text: messages.join('\\n'), source: 'telegram', count: messages.length };
+                }
+              }
+            }
+
+            if (hostname.includes('whatsapp.com')) {
+              const msgEls = Array.from(document.querySelectorAll('[data-testid="msg-container"], .message-in, .message-out'));
+              if (msgEls.length > 0) {
+                const messages = [];
+                for (const el of msgEls.slice(-10)) {
+                  const isOut = el.classList.contains('message-out') || el.querySelector('[data-icon="msg-dblcheck"]');
+                  const body = el.querySelector('.selectable-text')?.textContent?.trim() || el.textContent?.trim() || '';
+                  if (body) {
+                    messages.push((isOut ? '[Вы]: ' : '[Собеседник]: ') + body);
+                  }
+                }
+                if (messages.length > 0) {
+                  return { text: messages.join('\\n'), source: 'whatsapp', count: messages.length };
+                }
+              }
+            }
+
+            const article = document.querySelector('article, main, [role="main"], #content, .content');
+            if (article) {
+              const text = (article.innerText || article.textContent || '').trim();
+              if (text.length > 30) {
+                return { text: text.slice(0, 3000), source: 'page_article', count: 1 };
+              }
+            }
+
+            const bodyText = (document.body ? (document.body.innerText || '') : '').trim();
+            if (bodyText.length > 30) {
+              return { text: bodyText.slice(0, 2000), source: 'page_body', count: 1 };
+            }
+
+            return { text: '', source: 'empty', count: 0 };
+          } catch {
+            return { text: '', source: 'error', count: 0 };
+          }
+        })()
+      `, true);
+
+      if (result && typeof result.text === 'string') {
+        return result;
+      }
+      return { text: '', source: 'none', count: 0 };
+    } catch {
+      return { text: '', source: 'error', count: 0 };
+    }
+  }
+
+  async insertTextIntoActiveTab(text: string): Promise<boolean> {
+    const activeTab = this.tabs.get(this.activeTabId);
+    if (!activeTab || !activeTab.view || activeTab.view.webContents.isDestroyed() || activeTab.isInternal) {
+      return false;
+    }
+
+    const contents = activeTab.view.webContents;
+    try {
+      contents.focus();
+      const injected = await contents.executeJavaScript(`
+        (function(textToInsert) {
+          try {
+            let target = document.activeElement;
+            const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+
+            if (!isInput) {
+              const vkInput = document.querySelector('div.im-chat-input--text[contenteditable="true"], div[contenteditable="true"].im_editable, div.im_chat_input');
+              const tgInput = document.querySelector('div.input-message-input[contenteditable="true"], div.editable-message-text[contenteditable="true"]');
+              const waInput = document.querySelector('div[contenteditable="true"][data-tab="10"], footer div[contenteditable="true"]');
+              const generalInput = vkInput || tgInput || waInput || document.querySelector('textarea, input[type="text"], [contenteditable="true"]');
+
+              if (generalInput) {
+                target = generalInput;
+                generalInput.focus();
+              }
+            }
+
+            if (target) {
+              target.focus();
+              if (target.isContentEditable) {
+                const selection = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(target);
+                range.collapse(false);
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+                document.execCommand('insertText', false, textToInsert);
+                target.dispatchEvent(new Event('input', { bubbles: true }));
+                return true;
+              } else if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
+                const start = target.selectionStart || 0;
+                const end = target.selectionEnd || 0;
+                const val = target.value;
+                target.value = val.substring(0, start) + textToInsert + val.substring(end);
+                target.selectionStart = target.selectionEnd = start + textToInsert.length;
+                target.dispatchEvent(new Event('input', { bubbles: true }));
+                target.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+              }
+            }
+            return false;
+          } catch {
+            return false;
+          }
+        })(${JSON.stringify(text)})
+      `, true);
+
+      return Boolean(injected);
+    } catch {
+      return false;
+    }
+  }
+
   private dispose(): void {
     if (this.disposed) return;
     this.persistSession();
@@ -3763,6 +5156,7 @@ export class BrowserController {
     this.popupOpeners.clear();
     void this.endPrivateSession();
     if (this.shellView && !this.shellView.webContents.isDestroyed()) this.shellView.webContents.close();
+    if (this.voodooView && !this.voodooView.webContents.isDestroyed()) this.voodooView.webContents.close();
     if (this.metricsTimer) clearInterval(this.metricsTimer);
     this.browsec.destroy();
   }

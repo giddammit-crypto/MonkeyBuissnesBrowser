@@ -100,6 +100,18 @@ describe('Hotkeys and Chromium Shortcuts logic', () => {
       expect(isPrintShortcut({ ctrlOrCmd: true, shiftKey: false, key: 'p' })).toBe(true);
       expect(isPrintShortcut({ ctrlOrCmd: true, shiftKey: true, key: 'p' })).toBe(false);
     });
+
+    function isClickAndCleanShortcut(e: { ctrlOrCmd: boolean; shiftKey: boolean; key: string }): boolean {
+      const key = e.key.toLowerCase();
+      return e.ctrlOrCmd && e.shiftKey && (key === 'delete' || key === 'backspace');
+    }
+
+    it('activates Click & Clean on Ctrl+Shift+Delete or Cmd+Shift+Delete', () => {
+      expect(isClickAndCleanShortcut({ ctrlOrCmd: true, shiftKey: true, key: 'Delete' })).toBe(true);
+      expect(isClickAndCleanShortcut({ ctrlOrCmd: true, shiftKey: true, key: 'Backspace' })).toBe(true);
+      expect(isClickAndCleanShortcut({ ctrlOrCmd: true, shiftKey: false, key: 'Delete' })).toBe(false);
+      expect(isClickAndCleanShortcut({ ctrlOrCmd: false, shiftKey: true, key: 'Delete' })).toBe(false);
+    });
   });
 });
 

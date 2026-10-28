@@ -181,5 +181,70 @@ describe('BrowserController native view lifecycle', () => {
     controller.exitFullScreenIfActive();
     expect(controller.window.setFullScreen).toHaveBeenCalledWith(false);
   });
+
+  it('updates tab zoom factor with Chrome zoom steps on tabAction', async () => {
+    const { controller, page, tab } = fixture();
+    page.webContents.getZoomFactor = vi.fn(() => 1.0);
+    page.webContents.setZoomFactor = vi.fn();
+    controller.emitSnapshot = vi.fn();
+
+    expect(controller.getActiveTab()).toBe(tab);
+
+    // Zoom in from 1.0 -> 1.10
+    await controller.tabAction('page', 'zoom-in');
+    expect(page.webContents.setZoomFactor).toHaveBeenCalledWith(1.10);
+    expect(tab.zoomFactor).toBe(1.10);
+
+    // Zoom in again -> 1.25
+    await controller.tabAction('page', 'zoom-in');
+    expect(page.webContents.setZoomFactor).toHaveBeenCalledWith(1.25);
+    expect(tab.zoomFactor).toBe(1.25);
+
+    // Zoom out -> 1.10
+    await controller.tabAction('page', 'zoom-out');
+    expect(page.webContents.setZoomFactor).toHaveBeenCalledWith(1.10);
+    expect(tab.zoomFactor).toBe(1.10);
+
+    // Zoom reset -> 1.00
+    await controller.tabAction('page', 'zoom-reset');
+    expect(page.webContents.setZoomFactor).toHaveBeenCalledWith(1.00);
+    expect(tab.zoomFactor).toBe(1.00);
+  });
+
+  it('manages credential saving, revealing, filtering and never-save origins', async () => {
+    const { controller, shell } = fixture();
+    const mockPasswords = {
+      save: vi.fn((origin: string, username: string, password: string) => ({ id: 'pass-1', updated: false })),
+      getSecret: vi.fn((id: string) => (id === 'pass-1' ? 'secret-pass' : null)),
+      summaries: vi.fn(() => [
+        { id: 'pass-1', origin: 'https://vk.com', username: 'durov', browser: 'soulm8te', importedAt: 123456 },
+        { id: 'pass-2', origin: 'https://other.com', username: 'alice', browser: 'soulm8te', importedAt: 123456 },
+      ]),
+    };
+    controller.passwords = mockPasswords;
+    controller.neverSaveOrigins = new Set<string>();
+    controller.emitSnapshot = vi.fn();
+
+    // 1. saveCredential
+    const saveRes = await controller.saveCredential('https://vk.com', 'durov', 'secret-pass');
+    expect(saveRes).toEqual({ success: true, id: 'pass-1', updated: false });
+    expect(mockPasswords.save).toHaveBeenCalledWith('https://vk.com', 'durov', 'secret-pass');
+    expect(shell.webContents.send).toHaveBeenCalledWith('browser:event', { type: 'passwords-changed' });
+    expect(controller.emitSnapshot).toHaveBeenCalledOnce();
+
+    // 2. revealSavedPassword
+    const secret = await controller.revealSavedPassword('pass-1');
+    expect(secret).toBe('secret-pass');
+    expect(mockPasswords.getSecret).toHaveBeenCalledWith('pass-1');
+
+    // 3. getSavedCredentialsForOrigin
+    const originCredentials = await controller.getSavedCredentialsForOrigin('https://vk.com');
+    expect(originCredentials).toHaveLength(1);
+    expect(originCredentials[0].id).toBe('pass-1');
+
+    // 4. neverSavePasswordForOrigin
+    await controller.neverSavePasswordForOrigin('https://bank.com');
+    expect(controller.neverSaveOrigins.has('https://bank.com')).toBe(true);
+  });
 });
 
