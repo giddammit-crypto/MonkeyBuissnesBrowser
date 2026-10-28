@@ -225,11 +225,15 @@ function normalizeSettings(value: unknown): BrowserSettings {
     readerSettings: normalizeReaderSettings(raw.readerSettings),
     voodooEnabled: typeof raw.voodooEnabled === 'boolean' ? raw.voodooEnabled : true,
     voodooBubbleVisible: typeof raw.voodooBubbleVisible === 'boolean' ? raw.voodooBubbleVisible : true,
+    voodooBubblePosition: (raw.voodooBubblePosition && typeof raw.voodooBubblePosition === 'object' && finite((raw.voodooBubblePosition as JsonObject).x) && finite((raw.voodooBubblePosition as JsonObject).y))
+      ? { x: Math.round((raw.voodooBubblePosition as JsonObject).x as number), y: Math.round((raw.voodooBubblePosition as JsonObject).y as number) }
+      : undefined,
     voodooKeys: Array.isArray(raw.voodooKeys) && raw.voodooKeys.length > 0
       ? raw.voodooKeys.map((k) => String(k).trim()).filter(Boolean)
       : ['sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0'],
     voodooModel: typeof raw.voodooModel === 'string' && raw.voodooModel.trim() ? raw.voodooModel.trim() : 'qwen/qwen3.8-max:free',
     voodooBaseUrl: typeof raw.voodooBaseUrl === 'string' && raw.voodooBaseUrl.trim() ? raw.voodooBaseUrl.trim() : 'https://api.xkiro.com/v1',
+    voodooSttKey: typeof raw.voodooSttKey === 'string' && raw.voodooSttKey.trim() ? raw.voodooSttKey.trim() : undefined,
   };
 }
 

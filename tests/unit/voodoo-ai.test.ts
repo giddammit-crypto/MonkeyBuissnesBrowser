@@ -157,4 +157,91 @@ describe('VoodooAiService', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('checkAllKeys checks all keys in parallel and reorders working keys to index 0', async () => {
+    const service = new VoodooAiService();
+    const deadKey1 = 'sk-xt-dead-key-invalid';
+    const deadKey2 = 'sk-xt-dead-key-exhausted';
+    const fastWorkingKey = 'sk-xt-working-fast';
+
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, options: any) => {
+      const auth = options.headers?.Authorization || '';
+      if (auth.includes('invalid')) {
+        return {
+          ok: false,
+          status: 401,
+          text: async () => JSON.stringify({ error: { message: 'Invalid API Key' } }),
+        };
+      }
+      if (auth.includes('exhausted')) {
+        return {
+          ok: false,
+          status: 429,
+          text: async () => JSON.stringify({ error: { message: 'Quota exhausted' } }),
+        };
+      }
+      if (auth.includes('working')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ choices: [{ message: { content: '1' } }] }),
+        };
+      }
+      return { ok: false, status: 500, text: async () => 'Server error' };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const result = await service.checkAllKeys([deadKey1, deadKey2, fastWorkingKey]);
+
+      expect(result.healthyKeys).toContain(fastWorkingKey);
+      expect(result.invalidKeys).toContain(deadKey1);
+      expect(result.exhaustedKeys).toContain(deadKey2);
+
+      // The working key MUST be promoted to index 0!
+      expect(result.reorderedKeys[0]).toBe(fastWorkingKey);
+      expect(result.results[0].key).toBe(fastWorkingKey);
+      expect(result.results[0].isPrimary).toBe(true);
+      expect(result.results[0].status).toBe('healthy');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('executeChatCompletion does not mark healthy key as permanently exhausted on timeout', async () => {
+    const service = new VoodooAiService();
+    const timeoutKey = 'sk-xt-timeout-key';
+    const backupKey = 'sk-xt-backup-working-key';
+
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, options: any) => {
+      const auth = options.headers?.Authorization || '';
+      if (auth.includes('timeout-key')) {
+        const timeoutErr = new Error('The operation was aborted due to timeout.');
+        timeoutErr.name = 'TimeoutError';
+        throw timeoutErr;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: 'Ответ от резервного ключа' } }] }),
+      };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const res = await service.chat(
+        [{ id: '1', role: 'user', content: 'Привет', timestamp: Date.now() }],
+        { keys: [timeoutKey, backupKey] }
+      );
+
+      expect(res.reply).toBe('Ответ от резервного ключа');
+
+      // Key status should NOT be 'exhausted'
+      const statuses = service.getKeysStatus([timeoutKey, backupKey]);
+      expect(statuses[0].status).not.toBe('exhausted');
+      expect(statuses[0].lastError).toContain('Тайм-аут');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

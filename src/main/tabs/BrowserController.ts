@@ -59,9 +59,12 @@ import type {
   ReaderArticle,
   ReaderSettings,
   NoteEntry,
+  NoteColor,
   SaveNoteInput,
   VoodooChatMessage,
   VoodooChatResponse,
+  VoodooKeyStatusItem,
+  TranscribeAudioResult,
   CleanTargetOptions,
   StorageMetrics,
   CleanResult,
@@ -189,6 +192,9 @@ export class BrowserController {
   constructor() {
     this.stores = new BrowserStores(app.getPath('userData'));
     const initialSettings = this.stores.settings.get();
+    if (initialSettings.voodooBubblePosition) {
+      this.voodooBubblePosition = { ...initialSettings.voodooBubblePosition };
+    }
     nativeTheme.themeSource = initialSettings.theme === 'graphite' ? 'dark' : (initialSettings.theme || 'system');
     this.downloads = this.stores.downloads.get();
     this.normalizeDownloads();
@@ -288,14 +294,16 @@ export class BrowserController {
     if (!appIcon.isEmpty()) this.window.setIcon(appIcon);
 
     session.defaultSession.setPermissionCheckHandler((contents, permission, origin) => {
-      if (permission === 'media') {
-        return origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId;
+      const isInternal = origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId;
+      if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission)) {
+        return isInternal;
       }
       return permission === 'fullscreen' || permission === 'clipboard-sanitized-write';
     });
     session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
       const origin = details?.requestingUrl || (contents && !contents.isDestroyed() ? contents.getURL() : '') || '';
-      if (permission === 'media' && (origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId)) {
+      const isInternal = origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId;
+      if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission) && isInternal) {
         callback(true);
         return;
       }
@@ -398,6 +406,9 @@ export class BrowserController {
     this.metricsTimer.unref();
     this.window.show();
     this.emitSnapshot();
+
+    // Auto-verify all xkiro keys at startup and select only working ones
+    void this.performStartupVoodooKeysCheck();
   }
 
   isTrustedShell(senderId: number): boolean {
@@ -2599,8 +2610,9 @@ export class BrowserController {
       googleSignInCompatibility: this.stores.settings.get().googleSignInCompatibility,
     }));
     targetSession.setPermissionCheckHandler((contents, permission, origin, details) => {
-      if (permission === 'media') {
-        if (origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId) {
+      const isInternal = origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId;
+      if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission)) {
+        if (isInternal) {
           return true;
         }
       }
@@ -2615,9 +2627,10 @@ export class BrowserController {
     });
     targetSession.setPermissionRequestHandler((contents, permission, callback, details) => {
       if (permission === 'fullscreen' || permission === 'clipboard-sanitized-write') { callback(true); return; }
-      if (permission === 'media') {
-        const reqOrigin = details.requestingUrl || (contents && !contents.isDestroyed() ? contents.getURL() : '') || '';
-        if (reqOrigin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId) {
+      const reqOrigin = details.requestingUrl || (contents && !contents.isDestroyed() ? contents.getURL() : '') || '';
+      const isInternal = reqOrigin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId;
+      if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission)) {
+        if (isInternal) {
           callback(true);
           return;
         }
@@ -4290,12 +4303,13 @@ export class BrowserController {
         y: Math.max(0, Math.min(curY + deltaY, winBounds.height - 100)),
       };
     } else {
-      const curX = this.voodooBubblePosition.x ?? (winBounds.width - 76 - 24);
-      const curY = this.voodooBubblePosition.y ?? (winBounds.height - 76 - 24);
-      this.voodooBubblePosition = {
-        x: Math.max(0, Math.min(curX + deltaX, winBounds.width - 60)),
-        y: Math.max(0, Math.min(curY + deltaY, winBounds.height - 60)),
-      };
+      const curSettings = this.stores.settings.get();
+      const curX = this.voodooBubblePosition.x ?? curSettings.voodooBubblePosition?.x ?? (winBounds.width - 76 - 24);
+      const curY = this.voodooBubblePosition.y ?? curSettings.voodooBubblePosition?.y ?? (winBounds.height - 76 - 24);
+      const newX = Math.max(0, Math.min(curX + deltaX, winBounds.width - 60));
+      const newY = Math.max(0, Math.min(curY + deltaY, winBounds.height - 60));
+      this.voodooBubblePosition = { x: newX, y: newY };
+      this.stores.settings.set({ ...curSettings, voodooBubblePosition: { x: newX, y: newY } });
     }
     this.refreshVoodooBounds();
   }
@@ -4325,6 +4339,12 @@ export class BrowserController {
   resetVoodooPosition(): void {
     this.voodooPosition = {};
     this.voodooBubblePosition = {};
+    const curSettings = this.stores.settings.get();
+    if (curSettings.voodooBubblePosition) {
+      const updated = { ...curSettings };
+      delete updated.voodooBubblePosition;
+      this.stores.settings.set(updated);
+    }
     this.refreshVoodooBounds();
   }
 
@@ -4361,8 +4381,8 @@ export class BrowserController {
       const defaultX = Math.max(10, winBounds.width - size - 24);
       const defaultY = Math.max(10, winBounds.height - size - 24);
 
-      let targetX = this.voodooBubblePosition.x ?? defaultX;
-      let targetY = this.voodooBubblePosition.y ?? defaultY;
+      let targetX = this.voodooBubblePosition.x ?? settings.voodooBubblePosition?.x ?? defaultX;
+      let targetY = this.voodooBubblePosition.y ?? settings.voodooBubblePosition?.y ?? defaultY;
 
       targetX = Math.max(0, Math.min(targetX, winBounds.width - size));
       targetY = Math.max(0, Math.min(targetY, winBounds.height - size));
@@ -4440,11 +4460,18 @@ export class BrowserController {
             return { success: false, error: 'Адрес URL не может быть пустым', summary: '❌ Открытие: URL не указан' };
           }
           const newTab = Boolean(args.new_tab);
-          const searchEngine = this.stores.settings.get().searchEngine;
-          const intent = parseOmniboxInput(rawUrl, searchEngine);
-          let targetUrl = intent.kind === 'url' ? intent.url : rawUrl;
-          if (!/^https?:\/\//i.test(targetUrl) && !/^browser:\/\//i.test(targetUrl)) {
-            targetUrl = `https://${targetUrl}`;
+          let targetUrl = rawUrl;
+          if (targetUrl.startsWith('file://')) {
+            // Already a local file URL
+          } else if (path.isAbsolute(targetUrl) && fs.existsSync(targetUrl)) {
+            targetUrl = `file://${targetUrl}`;
+          } else {
+            const searchEngine = this.stores.settings.get().searchEngine;
+            const intent = parseOmniboxInput(rawUrl, searchEngine);
+            targetUrl = intent.kind === 'url' ? intent.url : rawUrl;
+            if (!/^https?:\/\//i.test(targetUrl) && !/^browser:\/\//i.test(targetUrl) && !/^file:\/\//i.test(targetUrl)) {
+              targetUrl = `https://${targetUrl}`;
+            }
           }
 
           if (newTab) {
@@ -4913,6 +4940,359 @@ export class BrowserController {
           };
         }
 
+        case 'create_file': {
+          let filename = String(args.filename || '').trim();
+          const content = String(args.content ?? '');
+          const folder = String(args.folder || 'downloads');
+          const openInNewTab = Boolean(args.open_in_new_tab);
+
+          if (!filename) {
+            filename = `voodoo-note-${Date.now()}.txt`;
+          }
+          // Sanitize filename against directory traversal
+          filename = path.basename(filename).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+          if (!filename) filename = `file-${Date.now()}.txt`;
+
+          let targetDir = app.getPath('downloads');
+          if (folder === 'desktop') {
+            targetDir = app.getPath('desktop');
+          } else if (folder === 'documents') {
+            targetDir = app.getPath('documents');
+          }
+
+          if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
+          }
+
+          const targetPath = path.join(targetDir, filename);
+          fs.writeFileSync(targetPath, content, 'utf8');
+          const sizeBytes = Buffer.byteLength(content, 'utf8');
+          const sizeKb = (sizeBytes / 1024).toFixed(1);
+
+          let openedInTab = false;
+          const fileUrl = `file://${targetPath}`;
+          if (openInNewTab) {
+            await this.createTab({ url: fileUrl, active: true });
+            openedInTab = true;
+          }
+
+          return {
+            success: true,
+            result: {
+              filePath: targetPath,
+              fileUrl,
+              filename,
+              folder: targetDir,
+              sizeBytes,
+              sizeFormatted: `${sizeKb} КБ`,
+              openedInTab,
+            },
+            summary: openedInTab
+              ? `💾 Создан и открыт в новой вкладке: «${filename}» (${sizeKb} КБ)`
+              : `💾 Файл сохранён на ПК: «${filename}» (${sizeKb} КБ в папке ${folder === 'desktop' ? 'Рабочий стол' : folder === 'documents' ? 'Документы' : 'Загрузки'})`,
+          };
+        }
+
+        case 'create_note_or_list': {
+          const rawTitle = String(args.title || 'Новый список').trim();
+          const items = Array.isArray(args.items) ? args.items.map((it) => String(it).trim()).filter(Boolean) : [];
+          const rawContent = typeof args.content === 'string' ? args.content.trim() : '';
+          const color = (['default', 'yellow', 'pink', 'blue', 'green', 'violet'].includes(String(args.color)) ? args.color : 'default') as NoteColor;
+
+          let body = '';
+          if (items.length > 0) {
+            body = items.map((it) => `- [ ] ${it}`).join('\n');
+            if (rawContent) body += `\n\n${rawContent}`;
+          } else {
+            body = rawContent || 'Пустой список';
+          }
+
+          const note = await this.saveNote({
+            title: rawTitle,
+            content: body,
+            color,
+          });
+
+          return {
+            success: true,
+            result: {
+              noteId: note.id,
+              title: note.title,
+              itemsCount: items.length,
+              color: note.color,
+            },
+            summary: `📝 Создан список в Заметках: «${rawTitle}» (${items.length > 0 ? `${items.length} пунктов` : 'заметка'})`,
+          };
+        }
+
+        case 'analyze_page_data': {
+          const tabId = String(args.tab_id || this.activeTabId || '').trim();
+          const tab = this.tabs.get(tabId);
+          if (!tab || !tab.view || tab.view.webContents.isDestroyed() || tab.isInternal) {
+            return { success: false, error: 'Вкладка недоступна для анализа данных', summary: '❌ Страница недоступна' };
+          }
+          const focus = String(args.focus || 'all');
+
+          const analysis = await tab.view.webContents.executeJavaScript(`
+            (function(focusType) {
+              try {
+                const result = {
+                  title: document.title,
+                  url: location.href,
+                  tables: [],
+                  prices: [],
+                  contacts: { emails: [], phones: [] },
+                  keyFacts: [],
+                  schemaMeta: {},
+                };
+
+                // OpenGraph / Schema metadata
+                const metaTags = document.querySelectorAll('meta[property^="og:"], meta[name="description"]');
+                metaTags.forEach(function(m) {
+                  const key = m.getAttribute('property') || m.getAttribute('name');
+                  const val = m.getAttribute('content');
+                  if (key && val) result.schemaMeta[key] = val.slice(0, 300);
+                });
+
+                // JSON-LD
+                const jsonLd = document.querySelectorAll('script[type="application/ld+json"]');
+                jsonLd.forEach(function(s) {
+                  try {
+                    const parsed = JSON.parse(s.textContent || '{}');
+                    if (parsed.name || parsed.price || parsed['@type']) {
+                      result.schemaMeta['ld+json'] = parsed;
+                    }
+                  } catch (_) {}
+                });
+
+                // Tables
+                if (focusType === 'all' || focusType === 'tables') {
+                  const tables = Array.from(document.querySelectorAll('table')).slice(0, 3);
+                  tables.forEach(function(table) {
+                    const rows = Array.from(table.querySelectorAll('tr')).slice(0, 10).map(function(tr) {
+                      return Array.from(tr.querySelectorAll('th, td')).map(function(cell) {
+                        return (cell.innerText || '').trim().slice(0, 60);
+                      });
+                    }).filter(function(r) { return r.length > 0; });
+                    if (rows.length > 0) result.tables.push(rows);
+                  });
+                }
+
+                // Prices
+                if (focusType === 'all' || focusType === 'prices') {
+                  const bodyText = document.body ? document.body.innerText : '';
+                  const priceRegex = /(\\d[\\d\\s.,]{0,12}\\s?(?:₽|руб|\\$|€|USD|EUR|RUB))/gi;
+                  const matches = Array.from(bodyText.matchAll(priceRegex)).map(function(m) { return m[0].trim(); });
+                  const uniquePrices = Array.from(new Set(matches)).slice(0, 10);
+                  result.prices = uniquePrices;
+                }
+
+                // Contacts
+                if (focusType === 'all' || focusType === 'contacts') {
+                  const text = document.body ? document.body.innerText : '';
+                  const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/g;
+                  const emails = Array.from(new Set(Array.from(text.matchAll(emailRegex)).map(function(m) { return m[0]; }))).slice(0, 6);
+                  const phoneRegex = /(?:\\+7|8)[\\s(-]*\\d{3}[)\\s-]*\\d{3}[\\s-]*\\d{2}[\\s-]*\\d{2}/g;
+                  const phones = Array.from(new Set(Array.from(text.matchAll(phoneRegex)).map(function(m) { return m[0]; }))).slice(0, 6);
+                  result.contacts.emails = emails;
+                  result.contacts.phones = phones;
+                }
+
+                // Key headings / facts
+                const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
+                  .map(function(h) { return (h.innerText || '').trim(); })
+                  .filter(Boolean)
+                  .slice(0, 8);
+                result.keyFacts = headings;
+
+                return result;
+              } catch (e) {
+                return { error: String(e), title: document.title, url: location.href };
+              }
+            })(${JSON.stringify(focus)})
+          `, true);
+
+          return {
+            success: true,
+            result: analysis,
+            summary: `📊 Анализ страницы «${analysis.title || tab.title}»: найдено ${analysis.prices?.length || 0} цен, ${analysis.tables?.length || 0} таблиц, контакты (${analysis.contacts?.emails?.length || 0} e-mail, ${analysis.contacts?.phones?.length || 0} тел.)`,
+          };
+        }
+
+        case 'geo_lookup': {
+          let geoData: Record<string, unknown> = {};
+          try {
+            const resp = await fetch('http://ip-api.com/json/?fields=status,message,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,query', {
+              signal: AbortSignal.timeout(4500),
+            });
+            if (resp.ok) {
+              geoData = await resp.json() as Record<string, unknown>;
+            }
+          } catch (_) {}
+
+          const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Moscow';
+          const nowStr = new Date().toLocaleTimeString('ru-RU', { timeZone: String(geoData.timezone || localTz), hour: '2-digit', minute: '2-digit' });
+          const dateStr = new Date().toLocaleDateString('ru-RU', { timeZone: String(geoData.timezone || localTz), day: 'numeric', month: 'long', year: 'numeric' });
+
+          const city = String(geoData.city || 'Москва');
+          const country = String(geoData.country || 'Россия');
+
+          return {
+            success: true,
+            result: {
+              ...geoData,
+              city,
+              country,
+              timezone: geoData.timezone || localTz,
+              currentTime: nowStr,
+              currentDate: dateStr,
+              yandexMapsUrl: `https://yandex.ru/maps/?text=${encodeURIComponent(city + ', ' + country)}`,
+              googleMapsUrl: `https://www.google.com/maps/search/${encodeURIComponent(city + ', ' + country)}`,
+            },
+            summary: `📍 Геопозиция: ${city}, ${country} (${nowStr}, часовой пояс ${geoData.timezone || localTz})`,
+          };
+        }
+
+        case 'search_places': {
+          const query = String(args.query || '').trim();
+          if (!query) {
+            return { success: false, error: 'Поисковый запрос мест не может быть пустым', summary: '❌ Пустой запрос мест' };
+          }
+          const city = typeof args.city === 'string' && args.city.trim() ? args.city.trim() : '';
+          const fullQuery = city ? `${query} ${city}` : query;
+
+          // Perform lightweight geocoding/places lookup via OpenStreetMap Nominatim
+          let places: Array<Record<string, unknown>> = [];
+          try {
+            const endpoint = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullQuery)}&format=json&addressdetails=1&limit=5`;
+            const resp = await fetch(endpoint, {
+              headers: { 'User-Agent': 'soulm8te-browser/1.0' },
+              signal: AbortSignal.timeout(4500),
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              if (Array.isArray(data)) {
+                places = data.map((item: any) => ({
+                  name: item.display_name?.split(',')?.[0]?.trim() || item.name || query,
+                  address: item.display_name || '',
+                  lat: item.lat,
+                  lon: item.lon,
+                  type: item.type || item.class,
+                  yandexMapsUrl: `https://yandex.ru/maps/?text=${encodeURIComponent(item.display_name || fullQuery)}`,
+                  twoGisUrl: `https://2gis.ru/search/${encodeURIComponent(item.display_name || fullQuery)}`,
+                  googleMapsUrl: `https://www.google.com/maps/search/${encodeURIComponent(item.display_name || fullQuery)}`,
+                }));
+              }
+            }
+          } catch (_) {}
+
+          const yandexMapsUrl = `https://yandex.ru/maps/?text=${encodeURIComponent(fullQuery)}`;
+          const twoGisUrl = `https://2gis.ru/search/${encodeURIComponent(fullQuery)}`;
+          const googleMapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(fullQuery)}`;
+
+          return {
+            success: true,
+            result: {
+              query,
+              city,
+              foundPlaces: places,
+              links: {
+                yandexMaps: yandexMapsUrl,
+                twoGis: twoGisUrl,
+                googleMaps: googleMapsUrl,
+              },
+            },
+            summary: `🗺️ Поиск мест «${query}»${city ? ` в «${city}»` : ''}: открыты интерактивные карты (Яндекс Карты, 2ГИС, Google)`,
+          };
+        }
+
+        case 'get_weather_and_time': {
+          const city = String(args.city || 'Москва').trim();
+          let weatherData: Record<string, unknown> = {};
+
+          try {
+            const resp = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`, {
+              signal: AbortSignal.timeout(5000),
+            });
+            if (resp.ok) {
+              const raw = await resp.json() as any;
+              const cur = raw?.current_condition?.[0];
+              const nearest = raw?.nearest_area?.[0];
+              if (cur) {
+                const tempC = cur.temp_C;
+                const feelsLikeC = cur.FeelsLikeC;
+                const weatherDesc = cur.lang_ru?.[0]?.value || cur.weatherDesc?.[0]?.value || 'Ясно';
+                const humidity = cur.humidity;
+                const windKmph = cur.windspeedKmph;
+                const windDir = cur.winddir16Point;
+                const pressure = cur.pressure;
+                const cityName = nearest?.areaName?.[0]?.value || city;
+                const country = nearest?.country?.[0]?.value || '';
+
+                weatherData = {
+                  city: cityName,
+                  country,
+                  temperatureC: tempC,
+                  feelsLikeC,
+                  description: weatherDesc,
+                  humidityPercent: humidity,
+                  windSpeedKmH: windKmph,
+                  windDirection: windDir,
+                  pressureMm: Math.round(Number(pressure) * 0.750062),
+                  forecastNextDays: raw.weather?.slice(0, 3)?.map((w: any) => ({
+                    date: w.date,
+                    maxTempC: w.maxtempC,
+                    minTempC: w.mintempC,
+                    condition: w.hourly?.[4]?.lang_ru?.[0]?.value || w.hourly?.[4]?.weatherDesc?.[0]?.value || '',
+                  })),
+                };
+              }
+            }
+          } catch (_) {}
+
+          return {
+            success: true,
+            result: {
+              city,
+              ...weatherData,
+              mapsWeatherUrl: `https://yandex.ru/pogoda/${encodeURIComponent(city)}`,
+            },
+            summary: `🌤️ Погода в «${city}»: ${weatherData.temperatureC !== undefined ? `${weatherData.temperatureC}°C (${weatherData.description}), ощущается как ${weatherData.feelsLikeC}°C` : 'данные подготовлены'}`,
+          };
+        }
+
+        case 'get_route_info': {
+          const from = String(args.from || '').trim();
+          const to = String(args.to || '').trim();
+          if (!from || !to) {
+            return { success: false, error: 'Начальная и конечная точки обязательны для маршрута', summary: '❌ Не указан маршрут' };
+          }
+          const mode = String(args.mode || 'auto');
+
+          const yandexRtt = mode === 'transit' ? 'mt' : mode === 'pedestrian' ? 'pd' : mode === 'bicycle' ? 'bc' : 'auto';
+          const googleMode = mode === 'transit' ? 'transit' : mode === 'pedestrian' ? 'walking' : mode === 'bicycle' ? 'bicycling' : 'driving';
+          const modeLabel = mode === 'transit' ? 'общественный транспорт' : mode === 'pedestrian' ? 'пешком' : mode === 'bicycle' ? 'велосипед' : 'автомобиль';
+
+          const yandexUrl = `https://yandex.ru/maps/?rtext=${encodeURIComponent(from)}~${encodeURIComponent(to)}&rtt=${yandexRtt}`;
+          const googleUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(from)}&destination=${encodeURIComponent(to)}&travelmode=${googleMode}`;
+          const twoGisUrl = `https://2gis.ru/directions/points/${encodeURIComponent(from)}%7C${encodeURIComponent(to)}`;
+
+          return {
+            success: true,
+            result: {
+              from,
+              to,
+              mode: modeLabel,
+              links: {
+                yandexMaps: yandexUrl,
+                googleMaps: googleUrl,
+                twoGis: twoGisUrl,
+              },
+            },
+            summary: `🧭 Маршрут «${from}» ➔ «${to}» (${modeLabel}) готов для навигаторов Яндекс / Google / 2ГИС`,
+          };
+        }
+
         default: {
           return {
             success: false,
@@ -4931,9 +5311,164 @@ export class BrowserController {
     }
   }
 
+  getVoodooKeysStatus(): VoodooKeyStatusItem[] {
+    const settings = this.stores.settings.get();
+    return this.voodooService.getKeysStatus(settings.voodooKeys || []);
+  }
+
+  async transcribeAudio(audioBase64: string, mimeType?: string): Promise<TranscribeAudioResult> {
+    const cleanB64 = String(audioBase64 || '').trim();
+    if (!cleanB64) {
+      return { success: false, error: 'Аудиоданные не получены' };
+    }
+
+    const settings = this.stores.settings.get();
+    const sttKey = (settings.voodooSttKey || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+
+    if (!sttKey) {
+      return {
+        success: false,
+        error: 'NO_STT_KEY',
+      };
+    }
+
+    try {
+      const buffer = Buffer.from(cleanB64, 'base64');
+      const isWav = mimeType?.includes('wav');
+      const isOgg = mimeType?.includes('ogg');
+      const ext = isWav ? 'wav' : isOgg ? 'ogg' : 'webm';
+      const actualMime = mimeType || (isWav ? 'audio/wav' : isOgg ? 'audio/ogg' : 'audio/webm');
+
+      const formData = new FormData();
+      const audioBlob = new Blob([buffer], { type: actualMime });
+      formData.append('file', audioBlob, `speech.${ext}`);
+      formData.append('model', 'whisper-large-v3-turbo');
+      formData.append('language', 'ru');
+
+      const endpoint = (settings as any).voodooSttEndpoint || 'https://api.groq.com/openai/v1/audio/transcriptions';
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sttKey}`,
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        return { success: false, error: `Ошибка STT (${response.status}): ${errText.slice(0, 150)}` };
+      }
+
+      const data = await response.json() as { text?: string };
+      const recognized = String(data.text || '').trim();
+      return {
+        success: true,
+        text: recognized,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg };
+    }
+  }
+
+  async openPath(targetPath: string): Promise<string> {
+    const clean = String(targetPath || '').trim();
+    if (!clean) return 'Пустой путь';
+    return shell.openPath(clean);
+  }
+
   async testVoodooKey(key: string): Promise<{ success: boolean; latencyMs?: number; error?: string }> {
     const settings = this.stores.settings.get();
     return this.voodooService.testKey(key, settings.voodooBaseUrl, settings.voodooModel);
+  }
+
+  async performStartupVoodooKeysCheck(): Promise<void> {
+    const settings = this.stores.settings.get();
+    const rawKeys = settings.voodooKeys || [];
+    const keys = rawKeys.map((k) => String(k).trim()).filter(Boolean);
+
+    if (keys.length === 0) return;
+
+    try {
+      console.log(`[Voodoo AI] Auto-checking ${keys.length} xkiro key(s) on browser launch...`);
+      const checkResult = await this.voodooService.checkAllKeys(
+        keys,
+        settings.voodooBaseUrl,
+        settings.voodooModel
+      );
+
+      const { healthyKeys, reorderedKeys } = checkResult;
+      console.log(
+        `[Voodoo AI] Startup key check finished: ${healthyKeys.length}/${keys.length} healthy. Active working key:`,
+        reorderedKeys[0] ? VoodooAiService.maskKey(reorderedKeys[0]) : 'none'
+      );
+
+      if (healthyKeys.length > 0) {
+        const orderChanged = reorderedKeys.some((k, i) => k !== keys[i]);
+        if (orderChanged) {
+          console.log('[Voodoo AI] Reordering keys to ensure healthy working keys are used first.');
+          this.stores.settings.set({
+            ...settings,
+            voodooKeys: reorderedKeys,
+          });
+        }
+      }
+
+      this.emitSnapshot();
+      const eventData = {
+        type: 'voodoo-keys-checked',
+        data: {
+          healthyCount: healthyKeys.length,
+          totalCount: keys.length,
+          primaryKey: reorderedKeys[0] ? VoodooAiService.maskKey(reorderedKeys[0]) : null,
+        },
+      };
+      this.voodooView?.webContents.send('browser:event', eventData);
+      this.shellView?.webContents.send('browser:event', eventData);
+    } catch (err) {
+      console.warn('[Voodoo AI] Startup keys check error:', err);
+    }
+  }
+
+  async checkAllVoodooKeys(): Promise<{
+    results: VoodooKeyStatusItem[];
+    healthyCount: number;
+    reorderedKeys: string[];
+  }> {
+    const settings = this.stores.settings.get();
+    const keys = (settings.voodooKeys || []).map((k) => String(k).trim()).filter(Boolean);
+    const checkResult = await this.voodooService.checkAllKeys(
+      keys,
+      settings.voodooBaseUrl,
+      settings.voodooModel
+    );
+
+    if (checkResult.healthyKeys.length > 0) {
+      const orderChanged = checkResult.reorderedKeys.some((k, i) => k !== keys[i]);
+      if (orderChanged) {
+        this.stores.settings.set({
+          ...settings,
+          voodooKeys: checkResult.reorderedKeys,
+        });
+      }
+    }
+    this.emitSnapshot();
+    const eventData = {
+      type: 'voodoo-keys-checked',
+      data: {
+        healthyCount: checkResult.healthyKeys.length,
+        totalCount: keys.length,
+        primaryKey: checkResult.reorderedKeys[0] ? VoodooAiService.maskKey(checkResult.reorderedKeys[0]) : null,
+      },
+    };
+    this.voodooView?.webContents.send('browser:event', eventData);
+    this.shellView?.webContents.send('browser:event', eventData);
+
+    return {
+      results: checkResult.results,
+      healthyCount: checkResult.healthyKeys.length,
+      reorderedKeys: checkResult.reorderedKeys,
+    };
   }
 
   async extractActiveTabChatContext(): Promise<{ text: string; source: string; count: number }> {

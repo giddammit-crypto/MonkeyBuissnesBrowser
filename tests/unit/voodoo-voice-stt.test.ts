@@ -122,4 +122,68 @@ describe('Voodoo Voice Commands & STT Subsystem', () => {
     expect(checkMediaPermission('about:blank', 10)).toBe(true);
     expect(checkMediaPermission('https://malicious.com', 99)).toBe(false);
   });
+
+  it('handles transcribeAudio with Whisper and returns NO_STT_KEY when key is not configured', async () => {
+    const controller = {
+      stores: {
+        settings: {
+          get: () => ({ voodooSttKey: '' }),
+        },
+      },
+      transcribeAudio: async (audioBase64: string) => {
+        if (!audioBase64) return { success: false, error: 'Аудиоданные не получены' };
+        return { success: false, error: 'NO_STT_KEY' };
+      },
+    };
+
+    const emptyRes = await controller.transcribeAudio('');
+    expect(emptyRes.success).toBe(false);
+    expect(emptyRes.error).toBe('Аудиоданные не получены');
+
+    const noKeyRes = await controller.transcribeAudio('dGVzdA==');
+    expect(noKeyRes.success).toBe(false);
+    expect(noKeyRes.error).toBe('NO_STT_KEY');
+  });
+
+  it('transcribes audio via Whisper endpoint when API key is provided', async () => {
+    let calledUrl = '';
+    let authHeader = '';
+    const mockFetch = vi.fn().mockImplementation(async (url: string, opts: any) => {
+      calledUrl = url;
+      authHeader = opts.headers.Authorization;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ text: 'подбери мне 5 вариантов шапки на вайлдберис' }),
+      };
+    });
+
+    vi.stubGlobal('fetch', mockFetch);
+
+    try {
+      const transcribe = async (base64: string, key: string) => {
+        const formData = new FormData();
+        const buf = Buffer.from(base64, 'base64');
+        formData.append('file', new Blob([buf]), 'audio.webm');
+        formData.append('model', 'whisper-large-v3-turbo');
+        formData.append('language', 'ru');
+
+        const resp = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${key}` },
+          body: formData,
+        });
+        const data = await resp.json();
+        return { success: true, text: data.text };
+      };
+
+      const result = await transcribe('dGVzdA==', 'gsk_test_key_12345');
+      expect(result.success).toBe(true);
+      expect(result.text).toContain('вайлдберис');
+      expect(calledUrl).toContain('groq.com');
+      expect(authHeader).toBe('Bearer gsk_test_key_12345');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

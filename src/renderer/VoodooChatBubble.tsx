@@ -23,6 +23,12 @@ import {
   MicOff,
   Square,
   AlertCircle,
+  MapPin,
+  Compass,
+  CloudSun,
+  Navigation,
+  FilePlus,
+  ListChecks,
 } from 'lucide-react';
 import type { TabSnapshot, VoodooChatMessage } from '../shared/types';
 import MarkdownView from './MarkdownView';
@@ -56,6 +62,20 @@ function getActionToolIcon(tool: string): React.JSX.Element {
       return <MessageSquare size={12} className="voodoo-action-type-icon" />;
     case 'clean_browser':
       return <Sparkles size={12} className="voodoo-action-type-icon" />;
+    case 'create_file':
+      return <FilePlus size={12} className="voodoo-action-type-icon" />;
+    case 'create_note_or_list':
+      return <ListChecks size={12} className="voodoo-action-type-icon" />;
+    case 'analyze_page_data':
+      return <Search size={12} className="voodoo-action-type-icon" />;
+    case 'geo_lookup':
+      return <Compass size={12} className="voodoo-action-type-icon" />;
+    case 'search_places':
+      return <MapPin size={12} className="voodoo-action-type-icon" />;
+    case 'get_weather_and_time':
+      return <CloudSun size={12} className="voodoo-action-type-icon" />;
+    case 'get_route_info':
+      return <Navigation size={12} className="voodoo-action-type-icon" />;
     default:
       return <Sparkles size={12} className="voodoo-action-type-icon" />;
   }
@@ -144,15 +164,21 @@ export default function VoodooChatBubble({
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [insertedKey, setInsertedKey] = useState<string | null>(null);
 
   // Voice Command (STT) state
   const [isListening, setIsListening] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
   const [voiceError, setVoiceError] = useState<string | null>(null);
 
   const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
   const latestTranscriptRef = useRef<string>('');
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -214,6 +240,42 @@ export default function VoodooChatBubble({
     } catch {}
   }, [messages]);
 
+  const handleCopyMessage = useCallback((text: string, id: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        void navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedMessageId(id);
+      setTimeout(() => setCopiedMessageId(null), 2000);
+    } catch (e) {
+      console.warn('Failed to copy message:', e);
+    }
+  }, []);
+
+  const handleStopRequest = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setLoading(false);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `voodoo-stopped-${Date.now()}`,
+        role: 'assistant',
+        content: '⏹️ [Запрос остановлен пользователем]',
+        timestamp: Date.now(),
+      },
+    ]);
+  }, []);
+
   const handleSendMessage = useCallback(async (
     textToSend?: string,
     contextOverride?: { url?: string; title?: string; chatText?: string }
@@ -235,13 +297,21 @@ export default function VoodooChatBubble({
     if (!textToSend) setInput('');
     setLoading(true);
 
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     try {
       const tabContext = contextOverride || (currentTab ? {
         url: currentTab.url,
         title: currentTab.title,
       } : undefined);
 
-      const response = await window.browserApi.sendVoodooMessage([...messages, userMessage], tabContext);
+      const requestPromise = window.browserApi.sendVoodooMessage([...messages, userMessage], tabContext);
+      const abortPromise = new Promise<never>((_, reject) => {
+        abortController.signal.addEventListener('abort', () => reject(new Error('REQUEST_ABORTED')));
+      });
+
+      const response = await Promise.race([requestPromise, abortPromise]);
 
       const assistantMessage: VoodooChatMessage = {
         id: `voodoo-${Date.now()}`,
@@ -254,7 +324,10 @@ export default function VoodooChatBubble({
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.message === 'REQUEST_ABORTED') {
+        return;
+      }
       const errorMsg = err instanceof Error ? err.message : 'Ошибка при обращении к Вуду';
       setMessages((prev) => [
         ...prev,
@@ -267,6 +340,9 @@ export default function VoodooChatBubble({
         },
       ]);
     } finally {
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
       setLoading(false);
     }
   }, [input, loading, messages, currentTab]);
@@ -376,17 +452,145 @@ export default function VoodooChatBubble({
   const cancelListening = useCallback(() => {
     latestTranscriptRef.current = '';
     setInterimTranscript('');
+    setIsTranscribing(false);
     if (recognitionRef.current) {
       try {
         recognitionRef.current.abort();
       } catch {}
       recognitionRef.current = null;
     }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+      mediaRecorderRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      try {
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      } catch {}
+      mediaStreamRef.current = null;
+    }
+    audioChunksRef.current = [];
     setIsListening(false);
     playVoiceChime('cancel');
   }, []);
 
-  const stopListening = useCallback(() => {
+  const startMediaRecorderFallback = useCallback(async () => {
+    try {
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+        mediaStreamRef.current = null;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+
+      audioChunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+
+      const mr = new MediaRecorder(stream, { mimeType });
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mr.onstart = () => {
+        setIsListening(true);
+        setInterimTranscript('Запись голоса... Говорите (нажмите на микрофон для отправки)');
+        playVoiceChime('start');
+      };
+
+      mr.onerror = (e) => {
+        console.warn('MediaRecorder voice capture error:', e);
+        setIsListening(false);
+        playVoiceChime('cancel');
+      };
+
+      mediaRecorderRef.current = mr;
+      mr.start(200);
+    } catch (err) {
+      console.error('Failed to start MediaRecorder audio capture:', err);
+      setIsListening(false);
+      setVoiceError('Доступ к микрофону заблокирован');
+      setTimeout(() => setVoiceError(null), 4000);
+    }
+  }, []);
+
+  const stopListening = useCallback(async () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      const mr = mediaRecorderRef.current;
+      mediaRecorderRef.current = null;
+
+      mr.onstop = async () => {
+        setIsListening(false);
+        playVoiceChime('stop');
+
+        if (mediaStreamRef.current) {
+          mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+          mediaStreamRef.current = null;
+        }
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' });
+        audioChunksRef.current = [];
+
+        if (audioBlob.size < 500) {
+          setInterimTranscript('');
+          return;
+        }
+
+        setIsTranscribing(true);
+        setInterimTranscript('Расшифровка голоса...');
+
+        try {
+          const reader = new FileReader();
+          reader.readAsDataURL(audioBlob);
+          reader.onloadend = async () => {
+            const dataUrl = reader.result as string;
+            const base64 = dataUrl.split(',')[1] || '';
+            const res = await window.browserApi.transcribeAudio(base64, audioBlob.type);
+            setIsTranscribing(false);
+            setInterimTranscript('');
+
+            if (res.success && res.text) {
+              void handleSendMessage(res.text);
+            } else if (res.error === 'NO_STT_KEY') {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: `voodoo-stt-guide-${Date.now()}`,
+                  role: 'assistant',
+                  content: `🎙️ **Голос записан!**\n\nВ среде Electron на Linux встроенное облако Google Speech отключено Chromium. Чтобы расшифровывать голос в текст через Whisper AI:\n• Укажите бесплатный ключ **Groq** (\`gsk_...\`) в Настройках браузера (раздел «AI-Ассистент Вуду»).\n\n*Или выберите готовую команду из вариантов ниже:*`,
+                  suggestedReplies: [
+                    'Подбери мне 5 вариантов шапки зимней мужской на вайлдберис, создай html фаил с твоим подбором, описанием, фото и активными ссылками-кнопками на эти товары. И открой этот фаил в новой вкладке',
+                    'Какая погода в моём городе?',
+                    'Найди последние новости технологий',
+                    'Сохрани план задач на день в Заметки',
+                    'Проанализируй открытую страницу',
+                  ],
+                  timestamp: Date.now(),
+                },
+              ]);
+            } else {
+              setVoiceError(res.error || 'Не удалось распознать речь');
+              setTimeout(() => setVoiceError(null), 4000);
+            }
+          };
+        } catch (e) {
+          setIsTranscribing(false);
+          setInterimTranscript('');
+          console.error('Audio transcription error:', e);
+        }
+      };
+
+      try {
+        mr.stop();
+      } catch {}
+      return;
+    }
+
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -407,8 +611,7 @@ export default function VoodooChatBubble({
       || (window as unknown as { SpeechRecognition?: any; webkitSpeechRecognition?: any }).webkitSpeechRecognition;
 
     if (!SpeechRecognitionConstructor) {
-      setVoiceError('Распознавание речи не поддерживается в данной системе');
-      setTimeout(() => setVoiceError(null), 4000);
+      void startMediaRecorderFallback();
       return;
     }
 
@@ -458,14 +661,22 @@ export default function VoodooChatBubble({
 
       recognition.onerror = (event: any) => {
         console.warn('Voodoo voice recognition error:', event?.error);
+        if (event?.error === 'network') {
+          // Chromium lacks Google Cloud Speech keys in Electron; seamlessly fallback to MediaRecorder audio capture!
+          try {
+            recognition.abort();
+          } catch {}
+          recognitionRef.current = null;
+          void startMediaRecorderFallback();
+          return;
+        }
+
         setIsListening(false);
         playVoiceChime('cancel');
         if (event?.error === 'not-allowed') {
           setVoiceError('Доступ к микрофону заблокирован');
         } else if (event?.error === 'no-speech') {
           setVoiceError('Голос не обнаружен');
-        } else if (event?.error === 'network') {
-          setVoiceError('Служба распознавания речи временно недоступна');
         } else if (event?.error !== 'aborted') {
           setVoiceError(`Ошибка распознавания: ${event?.error || 'сбой'}`);
         }
@@ -473,6 +684,10 @@ export default function VoodooChatBubble({
       };
 
       recognition.onend = () => {
+        // If MediaRecorder took over, do not finalize here
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          return;
+        }
         setIsListening(false);
         const command = latestTranscriptRef.current.trim();
         if (command) {
@@ -486,12 +701,10 @@ export default function VoodooChatBubble({
       recognitionRef.current = recognition;
       recognition.start();
     } catch (err) {
-      console.error('Failed to start speech recognition:', err);
-      setIsListening(false);
-      setVoiceError('Не удалось запустить микрофон');
-      setTimeout(() => setVoiceError(null), 4000);
+      console.warn('SpeechRecognition failed to start, falling back to MediaRecorder:', err);
+      void startMediaRecorderFallback();
     }
-  }, [handleSendMessage]);
+  }, [handleSendMessage, startMediaRecorderFallback]);
 
   useEffect(() => {
     return () => {
@@ -898,7 +1111,18 @@ export default function VoodooChatBubble({
                     )}
                   </div>
 
-                  <span className="voodoo-message-time">{timeString}</span>
+                  <div className="voodoo-message-footer">
+                    <span className="voodoo-message-time">{timeString}</span>
+                    <button
+                      type="button"
+                      className={`voodoo-message-copy-btn ${copiedMessageId === msg.id ? 'copied' : ''}`}
+                      onClick={() => handleCopyMessage(msg.content, msg.id)}
+                      title="Скопировать текст сообщения"
+                    >
+                      {copiedMessageId === msg.id ? <Check size={11} /> : <Copy size={11} />}
+                      <span>{copiedMessageId === msg.id ? 'Скопировано' : 'Копировать'}</span>
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -915,10 +1139,10 @@ export default function VoodooChatBubble({
           </div>
 
           {/* Voice Status Indicator (STT) */}
-          {isListening && (
+          {(isListening || isTranscribing) && (
             <div className="voodoo-voice-status-bar">
               <div className="voodoo-voice-indicator">
-                <span className="voodoo-voice-dot" />
+                <span className={`voodoo-voice-dot ${isTranscribing ? 'transcribing' : ''}`} />
                 <div className="voodoo-voice-waves">
                   <span />
                   <span />
@@ -927,7 +1151,9 @@ export default function VoodooChatBubble({
                 </div>
               </div>
               <div className="voodoo-voice-text" title={interimTranscript}>
-                {interimTranscript ? (
+                {isTranscribing ? (
+                  <span className="voodoo-voice-preview">🎙️ Расшифровка голоса (Whisper AI)...</span>
+                ) : interimTranscript ? (
                   <span className="voodoo-voice-preview">«{interimTranscript}»</span>
                 ) : (
                   <span className="voodoo-voice-prompt">Слушаю... Скажите голосовую команду</span>
@@ -957,7 +1183,7 @@ export default function VoodooChatBubble({
               <textarea
                 ref={textareaRef}
                 className="voodoo-textarea"
-                rows={1}
+                rows={2}
                 placeholder={isListening ? "Слушаю ваш голос..." : "Спроси Вуду или скажи команду..."}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -965,29 +1191,43 @@ export default function VoodooChatBubble({
                 disabled={loading}
               />
             </div>
-            <button
-              type="button"
-              className={`voodoo-mic-btn ${isListening ? 'listening' : ''}`}
-              onClick={isListening ? stopListening : startListening}
-              disabled={loading}
-              title={isListening ? "Остановить запись и отправить команду" : "Голосовая команда STT (нажмите и говорите)"}
-            >
-              {isListening ? (
-                <Square size={13} className="voodoo-mic-stop-icon" />
-              ) : (
-                <Mic size={14} />
-              )}
-              {isListening && <span className="voodoo-mic-ping-ring" />}
-            </button>
-            <button
-              type="button"
-              className="voodoo-send-btn"
-              onClick={() => handleSendMessage()}
-              disabled={!input.trim() || loading}
-              title="Отправить (Enter)"
-            >
-              <Send size={14} />
-            </button>
+            {loading ? (
+              <button
+                type="button"
+                className="voodoo-stop-btn"
+                onClick={handleStopRequest}
+                title="Остановить генерацию ответа"
+              >
+                <Square size={13} fill="currentColor" />
+                <span>Остановить</span>
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className={`voodoo-mic-btn ${(isListening || isTranscribing) ? 'listening' : ''}`}
+                  onClick={isListening ? stopListening : startListening}
+                  disabled={loading || isTranscribing}
+                  title={isListening ? "Остановить запись и отправить команду" : "Голосовая команда STT (нажмите и говорите)"}
+                >
+                  {isListening ? (
+                    <Square size={13} className="voodoo-mic-stop-icon" />
+                  ) : (
+                    <Mic size={14} />
+                  )}
+                  {(isListening || isTranscribing) && <span className="voodoo-mic-ping-ring" />}
+                </button>
+                <button
+                  type="button"
+                  className="voodoo-send-btn"
+                  onClick={() => handleSendMessage()}
+                  disabled={!input.trim() || loading}
+                  title="Отправить (Enter)"
+                >
+                  <Send size={14} />
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

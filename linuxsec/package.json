@@ -1,0 +1,47 @@
+{
+  "name": "linuxsec",
+  "version": "1.0.0",
+  "description": "Linuxsec — Advanced Native VPN Client for Linux (WireGuard & OpenVPN)",
+  "main": "dist/main/main/main.js",
+  "author": {
+    "name": "Linuxsec Team",
+    "email": "security@linuxsec.invalid"
+  },
+  "homepage": "https://linuxsec.invalid",
+  "desktopName": "linuxsec",
+  "license": "GPL-3.0",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:daemon && npm run build:main && npm run build:renderer",
+    "build:daemon": "go build -ldflags=\"-s -w\" -o dist/daemon/linuxsecd ./daemon/cmd",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "dev": "npm run build:main && electron --no-sandbox .",
+    "start": "electron --no-sandbox .",
+    "lint": "npm run typecheck",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "package": "npm run build && electron-builder --dir --publish never",
+    "dist:deb": "npm run build && electron-builder --linux deb --publish never",
+    "dist:rpm": "npm run build && electron-builder --linux rpm --publish never",
+    "dist:appimage": "npm run build && electron-builder --linux AppImage --publish never",
+    "dist:linux": "npm run build && electron-builder --linux deb AppImage rpm --publish never"
+  },
+  "dependencies": {
+    "lucide-react": "1.61.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.8",
+    "@types/react-dom": "19.2.3",
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}

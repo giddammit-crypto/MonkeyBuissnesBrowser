@@ -248,6 +248,10 @@ function registerIpc(): void {
   ipcMain.handle('browser:create-note-from-tab', (event, tabId: string, textSnippet?: string) => requireShell(event).createNoteFromTab(tabId, textSnippet));
   ipcMain.handle('browser:voodoo-message', (event, messages, tabContext) => requireShell(event).sendVoodooMessage(messages, tabContext));
   ipcMain.handle('browser:voodoo-test-key', (event, key: string) => requireShell(event).testVoodooKey(key));
+  ipcMain.handle('browser:voodoo-check-all-keys', (event) => requireShell(event).checkAllVoodooKeys());
+  ipcMain.handle('browser:voodoo-get-keys-status', (event) => requireShell(event).getVoodooKeysStatus());
+  ipcMain.handle('browser:transcribe-audio', (event, audioBase64: string, mimeType?: string) => requireShell(event).transcribeAudio(audioBase64, mimeType));
+  ipcMain.handle('browser:open-path', (event, targetPath: string) => requireShell(event).openPath(targetPath));
   ipcMain.handle('browser:voodoo-extract-chat', (event) => requireShell(event).extractActiveTabChatContext());
   ipcMain.handle('browser:voodoo-insert-text', (event, text: string) => requireShell(event).insertTextIntoActiveTab(text));
   ipcMain.handle('browser:set-voodoo-open', (event, open: boolean) => requireShell(event).setVoodooOpen(open));

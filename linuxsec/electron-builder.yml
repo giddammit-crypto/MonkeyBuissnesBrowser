@@ -1,0 +1,39 @@
+appId: org.linuxsec.vpn
+productName: Linuxsec
+asar: true
+directories:
+  output: release
+  buildResources: packaging
+files:
+  - dist/**/*
+  - packaging/**/*
+  - package.json
+extraFiles:
+  - from: dist/daemon/linuxsecd
+    to: linuxsecd
+linux:
+  target:
+    - deb
+    - rpm
+    - AppImage
+  category: Network
+  maintainer: Linuxsec Team <security@linuxsec.invalid>
+  icon: packaging/icons
+  executableName: linuxsec
+  desktop:
+    entry:
+      StartupWMClass: linuxsec
+      GenericName: VPN Client
+      Comment: Native, secure WireGuard and OpenVPN client for Linux
+deb:
+  afterInstall: packaging/debian/postinst
+  afterRemove: packaging/debian/prerm
+  depends:
+    - wireguard-tools
+    - network-manager
+    - iptables | nftables
+rpm:
+  depends:
+    - wireguard-tools
+    - NetworkManager
+    - iptables

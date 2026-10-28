@@ -1,0 +1,26 @@
+[Unit]
+Description=Linuxsec VPN Privileged Helper Daemon
+Documentation=https://linuxsec.invalid
+After=network.target network-online.target NetworkManager.service
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/linuxsec/linuxsecd
+Restart=on-failure
+RestartSec=3s
+RuntimeDirectory=linuxsec
+RuntimeDirectoryMode=0755
+KillMode=process
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/linuxsec /proc/sys/net
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

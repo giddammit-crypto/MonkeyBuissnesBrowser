@@ -167,16 +167,130 @@ export const VOODOO_BROWSER_TOOLS: VoodooToolDefinition[] = [
       },
     },
   },
+  {
+    name: 'create_file',
+    description: 'Создание файла на компьютере пользователя (текстовые документы, Markdown, JSON, HTML, CSV, скрипты, списки) в папке Загрузок или на Рабочем столе.',
+    parameters: {
+      type: 'object',
+      properties: {
+        filename: { type: 'string', description: 'Имя файла с расширением (например: "shopping-list.md", "places-moscow.txt", "data.json", "plan.csv")' },
+        content: { type: 'string', description: 'Полное текстовое содержимое сохраняемого файла' },
+        folder: {
+          type: 'string',
+          description: 'Целевая папка для сохранения (downloads по умолчанию, desktop, documents)',
+          enum: ['downloads', 'desktop', 'documents'],
+        },
+        open_in_new_tab: {
+          type: 'boolean',
+          description: 'Автоматически открыть созданный файл (особенно для .html, .svg, .txt файлов) в новой вкладке браузера сразу после сохранения',
+        },
+      },
+      required: ['filename', 'content'],
+    },
+  },
+  {
+    name: 'create_note_or_list',
+    description: 'Создание структурированного списка, чек-листа, плана или быстрой заметки с сохранением во встроенные Заметки браузера.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Заголовок списка или заметки' },
+        items: {
+          type: 'array',
+          description: 'Пункты списка или чек-листа (если формируется список)',
+          items: { type: 'string' },
+        },
+        content: { type: 'string', description: 'Дополнительный текст, описание или комментарии к списку' },
+        color: {
+          type: 'string',
+          description: 'Цвет карточки заметки',
+          enum: ['default', 'yellow', 'pink', 'blue', 'green', 'violet'],
+        },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'analyze_page_data',
+    description: 'Глубокий анализ содержимого открытой веб-страницы: извлечение цен, таблиц, характеристик, контактов (email, телефон, адрес), отзывов и структуры.',
+    parameters: {
+      type: 'object',
+      properties: {
+        focus: {
+          type: 'string',
+          description: 'Фокус извлечения данных',
+          enum: ['all', 'prices', 'tables', 'contacts', 'reviews', 'summary'],
+        },
+        tab_id: { type: 'string', description: 'Идентификатор вкладки (по умолчанию текущая)' },
+      },
+    },
+  },
+  {
+    name: 'geo_lookup',
+    description: 'Определение текущей геопозиции (город, страна, регион, координаты, часовой пояс, IP) пользователя.',
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'search_places',
+    description: 'Поиск мест, заведений (рестораны, кафе, отели, аптеки, достопримечательности, магазины) в городе или локации с интерактивными ссылками на Яндекс Карты, 2ГИС и Google Maps.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Что искать (например: "уютная кофейня", "итальянский ресторан", "круглосуточная аптека", "музеи")' },
+        city: { type: 'string', description: 'Город или район поиска (например: "Москва", "Санкт-Петербург", "Казань")' },
+        category: { type: 'string', description: 'Категория заведения' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'get_weather_and_time',
+    description: 'Получение точной погоды, температуры, прогноза, местного времени и часового пояса для любого города или населенного пункта мира.',
+    parameters: {
+      type: 'object',
+      properties: {
+        city: { type: 'string', description: 'Название города (например: "Москва", "Сочи", "Владивосток", "Париж", "Токио", "Дубай")' },
+      },
+      required: ['city'],
+    },
+  },
+  {
+    name: 'get_route_info',
+    description: 'Построение маршрута между двумя точками (откуда и куда) со ссылками на Яндекс Карты, Google Карты и 2ГИС.',
+    parameters: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'Начальная точка или адрес (например: "Красная площадь, Москва")' },
+        to: { type: 'string', description: 'Конечная точка или адрес (например: "Парк Горького, Москва")' },
+        mode: {
+          type: 'string',
+          description: 'Способ передвижения',
+          enum: ['auto', 'transit', 'pedestrian', 'bicycle'],
+        },
+      },
+      required: ['from', 'to'],
+    },
+  },
 ];
 
 export const VOODOO_SYSTEM_PROMPT = `Ты — Вуду (Voodoo AI), умный, тактичный и харизматичный автономный AI-ассистент и агент браузера soulm8te. Твой аватар — обаятельная кукла вуду с пуговичными глазами, стежками и красными булавками.
-Ты обладаешь полным контролем над браузером, вкладками и веб-страницами, а также мастерски разбираешься в человеческом общении, психологии, флирте, этикете, деловой и дружеской переписке в соцсетях (ВКонтакте, Telegram и др.).
+Ты обладаешь полным контролем над браузером, вкладками и веб-страницами, умеешь работать с файлами на ПК пользователя, создавать списки и заметки, анализировать веб-сайты и обладаешь мощнейшим гео-функционалом (погода, навигация, карты Яндекс/2ГИС/Google, поиск заведений и маршрутов), а также мастерски разбираешься в человеческом общении, психологии, флирте, этикете, деловой и дружеской переписке в соцсетях (ВКонтакте, Telegram и др.).
 
 УПРАВЛЕНИЕ БРАУЗЕРОМ И ИНСТРУМЕНТЫ (BROWSER AGENT):
-Когда пользователь просит что-то найти, открыть сайт, прочитать страницу, кликнуть по элементу, заполнить поле, закрыть или переключить вкладку, очистить данные браузера — ты ОБЯЗАН вызвать соответствующий инструмент!
+Когда пользователь просит что-то найти, открыть сайт, прочитать страницу, создать файл, список или заметку, узнать гео/погоду/маршрут, кликнуть по элементу, заполнить поле, закрыть или переключить вкладку, очистить данные браузера — ты ОБЯЗАН вызвать соответствующий инструмент!
 Доступные инструменты:
-- search_web(query, new_tab?): поиск в поисковой системе интернета.
+- search_web(query, new_tab?): умный поиск в поисковой системе интернета.
 - open_url(url, new_tab?): переход по любому URL или сайту.
+- create_file(filename, content, folder?): создание и сохранение файла на компьютере пользователя (.txt, .md, .csv, .json, .html, .py, .js и др.).
+- create_note_or_list(title, items?, content?, color?): создание структурированного списка, чек-листа, плана или быстрой заметки с сохранением в Заметки браузера.
+- analyze_page_data(focus?, tab_id?): глубокий анализ содержимого страницы (цены, таблицы, контакты, характеристики, отзывы).
+- geo_lookup(): определение текущей геопозиции (город, страна, регион, координаты, часовой пояс, IP).
+- search_places(query, city?, category?): поиск заведений, отелей, ресторанов, мест со ссылками на Яндекс.Карты, 2ГИС и Google Maps.
+- get_weather_and_time(city): точный прогноз погоды, температура, осадки, местное время и часовой пояс для любого города мира.
+- get_route_info(from, to, mode?): построение маршрута между точками со ссылками на навигаторы Яндекс.Карт, Google Maps и 2ГИС.
 - list_tabs(): получение списка всех открытых вкладок.
 - switch_tab(tab_id): переключение на конкретную вкладку по её ID.
 - close_tab(tab_id?): закрытие вкладки (по умолчанию текущей).
@@ -200,6 +314,12 @@ export const VOODOO_SYSTEM_PROMPT = `Ты — Вуду (Voodoo AI), умный, 
 Пользователь может отправлять голосовые команды через встроенный микрофон и систему распознавания речи (Speech-to-Text).
 Голосовые команды звучат естественно и разговорно:
 - «Найди в интернете новости...», «Поищи рецепт...» -> вызови search_web(query: ...)
+- «Сохрани этот список в файл на рабочий стол...» -> вызови create_file(...)
+- «Сделай список покупок / чек-лист дел» -> вызови create_note_or_list(...)
+- «Какая погода в Сочи?», «Сколько сейчас времени в Токио?» -> вызови get_weather_and_time(...)
+- «Где поужинать в центре Москвы?», «Найди кофейню рядом» -> вызови search_places(...)
+- «Как доехать от вокзала до Красной площади?» -> вызови get_route_info(...)
+- «Проанализируй цены на этой странице» -> вызови analyze_page_data(focus: 'prices')
 - «Открой Ютуб», «Перейди на сайт Википедии» -> вызови open_url(...) или search_web(...)
 - «Прочитай страницу», «О чём эта статья?» -> вызови read_page()
 - «Закрой эту вкладку», «Переключись на вкладку...» -> вызови close_tab() или switch_tab(...)
@@ -207,20 +327,29 @@ export const VOODOO_SYSTEM_PROMPT = `Ты — Вуду (Voodoo AI), умный, 
 - «Что ответить собеседнику в чате?» -> вызови get_active_dialog()
 Всегда оперативно распознавай намерения пользователя, немедленно выполняй действие через нужные инструменты и давай чёткий, понятный и живой ответ!
 
-АНАЛИЗ ДИАЛОГОВ И ПЕРЕПИСКИ:
-Когда пользователь просит проанализировать диалог или текст:
-1. Кратко (в 1-3 предложениях) опиши суть ситуации, настроение собеседника и скрытый подтекст.
-2. Сформулируй 3-4 готовых, живых варианта ответа в разных тональностях:
-   • [С юмором / Остроумный] — лёгкий, остроумный или с ноткой доброй иронии / флирта (если уместно).
-   • [Дружеский / Тёплый] — естественный, открытый и поддерживающий диалог.
-   • [Чёткий / По делу] — лаконичный, уверенный и конкретный.
-   • [Вежливый / Дипломатичный] — мягкий и тактичный ответ.
-3. Форматируй список строго с маркером «• [Название] «Текст»», чтобы пользователь мог легко скопировать нужный вариант в один клик.
+СЛОЖНЫЕ СОСТАВНЫЕ И АВТОНОМНЫЕ ЗАДАЧИ (COMPLEX AGENT WORKFLOWS):
+Ты обладаешь высшим уровнем автономности и мастерски выполняешь сложные многоэтапные поручения «под ключ»!
+Пример сложного запроса: «Подбери мне 5 вариантов шапки зимней мужской на вайлдберис, создай html файл с твоим подбором, описанием, фото и активными ссылками-кнопками на эти товары. И открой этот файл в новой вкладке».
+В подобных запросах ВСЕГДА действуй решительно и самостоятельно:
+1. Подбор контента: Сформируй подборку из 5 качественных, реальных и востребованных товаров (названия брендов/моделей, реалистичные цены со скидкой, рейтинг покупателей 4.7-4.9 со звездами, ключевые преимущества (состав: меринос, флис, кашемир, ветрозащита), привлекательные изображения товаров и прямые рабочие ссылки на каталог маркетплейса, например: https://www.wildberries.ru/catalog/0/search.aspx?search=шапка+зимняя+мужская или https://www.wildberries.ru/catalog/...).
+2. Генерация премиального HTML-файла: Сгенерируй полноценный, автономный, валидный HTML5-файл со стильным современным дизайном:
+   - Адаптивная сетка карточек (CSS Grid/Flexbox), тёмная элегантная тема (Glassmorphism, градиенты, тени), шрифты без засечек (Inter / sans-serif);
+   - Картинки товаров (<img> с аккуратными скруглениями, object-fit: cover, fallback фоном);
+   - Ценники (актуальная цена крупно, зачёркнутая старая цена, бейдж скидки -30%/-40%);
+   - Рейтинг со звёздами и количество отзывов;
+   - Подробные карточки с описанием материалов, температурного режима и посадки;
+   - Крупные, заметные интерактивные кнопки-ссылки: <a href="..." target="_blank" class="buy-button">Купить на Wildberries</a>.
+3. Сохранение и автоматическое открытие:
+   Вызови инструмент create_file с параметром open_in_new_tab: true:
+   create_file(filename: "wildberries_mens_winter_hats.html", content: "...", open_in_new_tab: true)
+   Файл моментально сохранится на диск пользователя и СРАЗУ ЖЕ откроется в новой вкладке браузера!
+4. Итоговый ответ в чате:
+   Презентуй пользователю лучшие варианты из подборки в живом стиле Вуду, выдели главные фишки каждой модели и радостно сообщи, что готовая интерактивная витрина сохранена и уже открыта в новой вкладке!
 
 Если пользователь задаёт обычный вопрос или общается на любую другую тему — отвечай живо, ёмко, интересно, с лёгким дружелюбным характером Вуду, без шаблонности и канцелярита. Всегда отвечай на русском языке.`;
 
 export interface VoodooKeyHealth {
-  status: 'healthy' | 'exhausted' | 'invalid';
+  status: 'healthy' | 'exhausted' | 'invalid' | 'unknown';
   lastError?: string;
   lastChecked?: number;
   latencyMs?: number;
@@ -272,6 +401,22 @@ export function formatDefaultActionSummary(tool: string, args: Record<string, un
       return `💬 Извлечение активного диалога`;
     case 'clean_browser':
       return `🧹 Экспресс-очистка (${String(args.preset || 'quick')})`;
+    case 'create_file':
+      return args.open_in_new_tab
+        ? `💾 Создан и открыт в новой вкладке: «${String(args.filename || '')}»`
+        : `💾 Создание файла: «${String(args.filename || '')}»`;
+    case 'create_note_or_list':
+      return `📝 Список/Заметка: «${String(args.title || '')}»`;
+    case 'analyze_page_data':
+      return `📊 Анализ данных страницы (${String(args.focus || 'all')})`;
+    case 'geo_lookup':
+      return `📍 Определение геопозиции`;
+    case 'search_places':
+      return `🗺️ Поиск мест: «${String(args.query || '')}»${args.city ? ` (${String(args.city)})` : ''}`;
+    case 'get_weather_and_time':
+      return `🌤️ Погода и время: ${String(args.city || '')}`;
+    case 'get_route_info':
+      return `🧭 Маршрут: «${String(args.from || '')}» ➔ «${String(args.to || '')}»`;
     default:
       return `${icon} Действие: ${tool}`;
   }
@@ -377,11 +522,22 @@ export class VoodooAiService {
       const isCoolingDown = health?.cooldownUntil ? health.cooldownUntil > now : false;
       const cooldownRemainingMs = isCoolingDown && health?.cooldownUntil ? health.cooldownUntil - now : undefined;
 
+      let reportedStatus: 'healthy' | 'exhausted' | 'invalid' | 'unknown' = 'unknown';
+      if (health) {
+        if (health.status === 'invalid') {
+          reportedStatus = 'invalid';
+        } else if (health.status === 'exhausted') {
+          reportedStatus = isCoolingDown ? 'exhausted' : 'unknown';
+        } else {
+          reportedStatus = health.status;
+        }
+      }
+
       return {
         key,
         maskedKey: VoodooAiService.maskKey(key),
         isPrimary: idx === 0,
-        status: health ? (isCoolingDown ? 'exhausted' : health.status) : 'unknown',
+        status: reportedStatus,
         lastError: health?.lastError,
         lastChecked: health?.lastChecked,
         latencyMs: health?.latencyMs,
@@ -404,7 +560,7 @@ export class VoodooAiService {
     const start = Date.now();
     try {
       const endpoint = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
-      const response = await fetch(endpoint, {
+      let response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -412,11 +568,28 @@ export class VoodooAiService {
         },
         body: JSON.stringify({
           model,
-          messages: [{ role: 'user', content: 'Привет' }],
-          max_tokens: 10,
+          messages: [{ role: 'user', content: '1' }],
+          max_tokens: 3,
         }),
         signal: AbortSignal.timeout(12000),
       });
+
+      // If server returns 500 on primary model, test fallback model before concluding failure
+      if (!response.ok && response.status >= 500 && model !== 'qwen/qwen3.7-plus:free') {
+        response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${cleanKey}`,
+          },
+          body: JSON.stringify({
+            model: 'qwen/qwen3.7-plus:free',
+            messages: [{ role: 'user', content: '1' }],
+            max_tokens: 3,
+          }),
+          signal: AbortSignal.timeout(12000),
+        });
+      }
 
       const latencyMs = Date.now() - start;
       if (response.ok) {
@@ -424,6 +597,8 @@ export class VoodooAiService {
           status: 'healthy',
           latencyMs,
           lastChecked: Date.now(),
+          cooldownUntil: undefined,
+          lastError: undefined,
         });
         return { success: true, latencyMs };
       }
@@ -438,36 +613,134 @@ export class VoodooAiService {
       const isQuotaOrLimit =
         response.status === 429 ||
         response.status === 402 ||
-        response.status === 403 ||
         /quota|limit|rate|balance|credit/i.test(errorDetail);
 
-      const isInvalid = response.status === 401 || /invalid|disabled|unauthorized/i.test(errorDetail);
+      const isInvalid = response.status === 401 || response.status === 403 || /invalid|disabled|unauthorized/i.test(errorDetail);
+      const isServerError = response.status >= 500 && response.status < 600;
+
+      const cooldownMs = isQuotaOrLimit
+        ? 5 * 60 * 1000
+        : isInvalid
+        ? 15 * 60 * 1000
+        : isServerError
+        ? 10 * 1000
+        : 30 * 1000;
 
       this.keyHealthMap.set(cleanKey, {
         status: isQuotaOrLimit ? 'exhausted' : isInvalid ? 'invalid' : 'exhausted',
         lastError: errorDetail,
         lastChecked: Date.now(),
         latencyMs,
-        cooldownUntil: isQuotaOrLimit ? Date.now() + 5 * 60 * 1000 : undefined,
+        cooldownUntil: Date.now() + cooldownMs,
       });
 
       return { success: false, latencyMs, error: errorDetail };
     } catch (err) {
       const latencyMs = Date.now() - start;
-      const errorMsg = err instanceof Error ? err.message : 'Ошибка соединения с xkiro';
+      const isTimeout = err instanceof Error && (
+        err.name === 'TimeoutError' ||
+        /timeout|aborted/i.test(err.message)
+      );
+      const errorMsg = isTimeout
+        ? 'Тайм-аут ожидания ответа (сервер xkiro не ответил вовремя)'
+        : (err instanceof Error ? err.message : 'Ошибка соединения с xkiro');
+
       this.keyHealthMap.set(cleanKey, {
-        status: 'exhausted',
+        status: isTimeout ? 'unknown' : 'exhausted',
         lastError: errorMsg,
         lastChecked: Date.now(),
         latencyMs,
-        cooldownUntil: Date.now() + 60 * 1000,
+        cooldownUntil: isTimeout ? Date.now() + 5000 : Date.now() + 30 * 1000,
       });
+
       return {
         success: false,
         latencyMs,
         error: errorMsg,
       };
     }
+  }
+
+  /**
+   * Concurrently checks all configured API keys on startup or on demand,
+   * categorizing them into healthy, exhausted, invalid, and returning an
+   * optimized key list with verified working keys placed first.
+   */
+  async checkAllKeys(
+    keys: string[],
+    baseUrl = DEFAULT_VOODOO_BASE_URL,
+    model = DEFAULT_VOODOO_MODEL
+  ): Promise<{
+    results: VoodooKeyStatusItem[];
+    healthyKeys: string[];
+    exhaustedKeys: string[];
+    invalidKeys: string[];
+    unknownKeys: string[];
+    reorderedKeys: string[];
+    recommendedActiveIndex: number;
+  }> {
+    const cleanKeys = Array.from(new Set(keys.map((k) => k.trim()).filter(Boolean)));
+    if (cleanKeys.length === 0) {
+      return {
+        results: [],
+        healthyKeys: [],
+        exhaustedKeys: [],
+        invalidKeys: [],
+        unknownKeys: [],
+        reorderedKeys: [],
+        recommendedActiveIndex: 0,
+      };
+    }
+
+    const testPromises = cleanKeys.map(async (key) => {
+      const res = await this.testKey(key, baseUrl, model);
+      return { key, res };
+    });
+
+    const settled = await Promise.all(testPromises);
+
+    const healthyKeys: string[] = [];
+    const exhaustedKeys: string[] = [];
+    const invalidKeys: string[] = [];
+    const unknownKeys: string[] = [];
+    const latencyMap = new Map<string, number>();
+
+    for (const item of settled) {
+      const health = this.keyHealthMap.get(item.key);
+      const st = health?.status || (item.res.success ? 'healthy' : 'unknown');
+      if (item.res.success || st === 'healthy') {
+        healthyKeys.push(item.key);
+        latencyMap.set(item.key, item.res.latencyMs ?? 9999);
+      } else if (st === 'invalid') {
+        invalidKeys.push(item.key);
+      } else if (st === 'exhausted') {
+        exhaustedKeys.push(item.key);
+      } else {
+        unknownKeys.push(item.key);
+      }
+    }
+
+    // Sort healthy keys by lowest latency
+    healthyKeys.sort((a, b) => (latencyMap.get(a) ?? 9999) - (latencyMap.get(b) ?? 9999));
+
+    // Priority ordering: healthy -> unknown -> exhausted -> invalid
+    const reorderedKeys = [...healthyKeys, ...unknownKeys, ...exhaustedKeys, ...invalidKeys];
+
+    if (healthyKeys.length > 0) {
+      this.activeKeyIndex = 0;
+    }
+
+    const results = this.getKeysStatus(reorderedKeys);
+
+    return {
+      results,
+      healthyKeys,
+      exhaustedKeys,
+      invalidKeys,
+      unknownKeys,
+      reorderedKeys,
+      recommendedActiveIndex: 0,
+    };
   }
 
   /**
@@ -500,26 +773,62 @@ export class VoodooAiService {
     const totalKeys = configuredKeys.length;
     const now = Date.now();
 
-    const availableKeyIndices: number[] = [];
+    // Priority tiers for choosing which key to try:
+    // Tier 1: Verified 'healthy' keys ready to use
+    // Tier 2: 'unknown' keys (not yet tested) ready to use
+    // Tier 3: 'exhausted' keys whose cooldown has expired
+    // Tier 4: 'healthy' or 'unknown' keys currently in transient cooldown
+    // Tier 5: 'exhausted' keys still in cooldown
+    // Tier 6: 'invalid' keys (401/403)
+    const tier1Healthy: number[] = [];
+    const tier2Unknown: number[] = [];
+    const tier3ExhaustedExpired: number[] = [];
+    const tier4TransientCooldown: number[] = [];
+    const tier5ExhaustedCooldown: number[] = [];
+    const tier6Invalid: number[] = [];
+
     for (let i = 0; i < configuredKeys.length; i++) {
       const k = configuredKeys[i];
       const h = this.keyHealthMap.get(k);
-      if (!h || !h.cooldownUntil || h.cooldownUntil <= now) {
-        availableKeyIndices.push(i);
+      const isCooldown = Boolean(h?.cooldownUntil && h.cooldownUntil > now);
+
+      if (h?.status === 'invalid') {
+        tier6Invalid.push(i);
+      } else if (!isCooldown) {
+        if (h?.status === 'healthy') {
+          tier1Healthy.push(i);
+        } else if (h?.status === 'exhausted') {
+          tier3ExhaustedExpired.push(i);
+        } else {
+          tier2Unknown.push(i);
+        }
+      } else {
+        if (h?.status === 'healthy' || !h?.status) {
+          tier4TransientCooldown.push(i);
+        } else {
+          tier5ExhaustedCooldown.push(i);
+        }
       }
     }
 
-    const indicesToTry = availableKeyIndices.length > 0
-      ? availableKeyIndices
-      : configuredKeys.map((_, i) => i);
-
-    const sortedIndices = [...indicesToTry].sort((a, b) => {
+    const sortFromActive = (arr: number[]) => [...arr].sort((a, b) => {
       const distA = (a - this.activeKeyIndex + totalKeys) % totalKeys;
       const distB = (b - this.activeKeyIndex + totalKeys) % totalKeys;
       return distA - distB;
     });
 
+    const sortedIndices = [
+      ...sortFromActive(tier1Healthy),
+      ...sortFromActive(tier2Unknown),
+      ...sortFromActive(tier3ExhaustedExpired),
+      ...sortFromActive(tier4TransientCooldown),
+      ...sortFromActive(tier5ExhaustedCooldown),
+      ...sortFromActive(tier6Invalid),
+    ];
+
     let lastError = '';
+    // 45 seconds gives ample time for LLM reasoning and generating complex multi-step payloads
+    const keyTimeoutMs = 45000;
 
     for (const keyIndex of sortedIndices) {
       const currentKey = configuredKeys[keyIndex];
@@ -553,7 +862,7 @@ export class VoodooAiService {
             'Authorization': `Bearer ${currentKey}`,
           },
           body: JSON.stringify(requestBody),
-          signal: AbortSignal.timeout(30000),
+          signal: AbortSignal.timeout(keyTimeoutMs),
         });
 
         // If endpoint rejects tools parameter (some models or proxies return 400 for tools)
@@ -569,9 +878,24 @@ export class VoodooAiService {
                 'Authorization': `Bearer ${currentKey}`,
               },
               body: JSON.stringify(requestBody),
-              signal: AbortSignal.timeout(30000),
+              signal: AbortSignal.timeout(keyTimeoutMs),
             });
           }
+        }
+
+        // If server returns 500-599 internal error on current model, try with fallback model
+        if (!response.ok && response.status >= 500 && response.status < 600 && model !== 'qwen/qwen3.7-plus:free') {
+          console.warn(`[Voodoo AI] Model ${model} returned HTTP ${response.status}. Retrying key #${keyIndex + 1} with fallback model qwen/qwen3.7-plus:free...`);
+          const fallbackBody = { ...requestBody, model: 'qwen/qwen3.7-plus:free' };
+          response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${currentKey}`,
+            },
+            body: JSON.stringify(fallbackBody),
+            signal: AbortSignal.timeout(keyTimeoutMs),
+          });
         }
 
         if (response.ok) {
@@ -583,6 +907,8 @@ export class VoodooAiService {
           this.keyHealthMap.set(currentKey, {
             status: 'healthy',
             lastChecked: Date.now(),
+            cooldownUntil: undefined,
+            lastError: undefined,
           });
 
           return {
@@ -602,32 +928,58 @@ export class VoodooAiService {
 
         lastError = errorMsg;
 
-        const isQuotaOrLimitError =
+        const isQuota =
           response.status === 429 ||
-          response.status === 401 ||
           response.status === 402 ||
+          /quota|limit|token|rate|balance|credit/i.test(errorMsg);
+
+        const isInvalid =
+          response.status === 401 ||
           response.status === 403 ||
-          /quota|limit|token|rate|balance|credit|unauthorized|disabled/i.test(errorMsg);
+          /invalid|unauthorized|disabled/i.test(errorMsg);
+
+        const isServerError = response.status >= 500 && response.status < 600;
+
+        const cooldownMs = isQuota
+          ? 5 * 60 * 1000 // 5 minutes
+          : isInvalid
+          ? 15 * 60 * 1000 // 15 minutes
+          : isServerError
+          ? 10 * 1000 // 10 seconds transient
+          : 30 * 1000;
 
         this.keyHealthMap.set(currentKey, {
-          status: isQuotaOrLimitError ? 'exhausted' : 'invalid',
+          status: isQuota ? 'exhausted' : isInvalid ? 'invalid' : isServerError ? 'unknown' : 'exhausted',
           lastError: errorMsg,
           lastChecked: Date.now(),
-          cooldownUntil: isQuotaOrLimitError ? Date.now() + 5 * 60 * 1000 : undefined,
+          cooldownUntil: Date.now() + cooldownMs,
         });
 
-        if (isQuotaOrLimitError && totalKeys > 1) {
-          console.warn(`[Voodoo AI] Key #${keyIndex + 1} (${masked}) hit quota/limit (${errorMsg}). Transparently switching to next key...`);
+        if (totalKeys > 1) {
+          console.warn(`[Voodoo AI] Key #${keyIndex + 1} (${masked}) error (${errorMsg}). Seamlessly switching to next key...`);
           continue;
         }
       } catch (networkErr) {
-        lastError = networkErr instanceof Error ? networkErr.message : 'Сетевая ошибка';
+        const isTimeout = networkErr instanceof Error && (
+          networkErr.name === 'TimeoutError' ||
+          /timeout|aborted/i.test(networkErr.message)
+        );
+        const rawMsg = networkErr instanceof Error ? networkErr.message : 'Сетевая ошибка';
+        lastError = isTimeout ? `Тайм-аут ожидания ответа (${Math.round(keyTimeoutMs / 1000)}с)` : rawMsg;
+
+        // Do NOT mark key as exhausted on timeout! Timeout is a transient network/load issue.
+        const prev = this.keyHealthMap.get(currentKey);
         this.keyHealthMap.set(currentKey, {
-          status: 'exhausted',
+          status: isTimeout ? (prev?.status === 'healthy' ? 'healthy' : 'unknown') : 'exhausted',
           lastError,
           lastChecked: Date.now(),
-          cooldownUntil: Date.now() + 60 * 1000,
+          cooldownUntil: Date.now() + (isTimeout ? 5000 : 30 * 1000),
         });
+
+        if (totalKeys > 1) {
+          console.warn(`[Voodoo AI] Key #${keyIndex + 1} (${masked}) ${isTimeout ? 'timed out' : 'network error'}: ${lastError}. Trying next key...`);
+          continue;
+        }
       }
     }
 
@@ -713,8 +1065,14 @@ export class VoodooAiService {
             activeKeyMasked: lastActiveKeyMasked,
           };
         }
+
+        const isTimeout = /timeout|aborted|тайм-аут/i.test(completion.error || '');
+        const errorDesc = isTimeout
+          ? 'Время ожидания ответа от сервера нейросети истекло (тайм-аут). Сервер xkiro сейчас перегружен или обрабатывает сложный запрос. Попробуйте повторить запрос.'
+          : `Все настроенные ключи (${configuredKeys.length}) временно исчерпали квоту или недоступны: ${completion.error}.\nВы можете добавить резервный ключ xkiro в Настройках браузера.`;
+
         return {
-          reply: `Не удалось получить ответ от Вуду. Все настроенные ключи (${configuredKeys.length}) временно исчерпали квоту или недоступны: ${completion.error}.\nВы можете добавить резервный ключ xkiro в Настройках браузера.`,
+          reply: `Не удалось получить ответ от Вуду. ${errorDesc}`,
           error: completion.error,
         };
       }

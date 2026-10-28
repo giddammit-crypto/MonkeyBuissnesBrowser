@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  remove|upgrade|deconfigure)
+    # Stop and disable systemd service
+    if systemctl is-active --quiet linuxsecd.service 2>/dev/null; then
+      systemctl stop linuxsecd.service || true
+    fi
+    if systemctl is-enabled --quiet linuxsecd.service 2>/dev/null; then
+      systemctl disable linuxsecd.service || true
+    fi
+    rm -f /etc/systemd/system/linuxsecd.service || true
+    rm -f /usr/share/polkit-1/actions/org.linuxsec.policy || true
+    systemctl daemon-reload || true
+    ;;
+esac
+
+exit 0

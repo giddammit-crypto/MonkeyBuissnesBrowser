@@ -24,7 +24,7 @@ import {
 } from '../../src/main/services/VoodooAiService';
 
 describe('Voodoo Browser Agent Tools', () => {
-  it('defines all 13 browser agent tools with valid schema', () => {
+  it('defines all 20 browser agent tools with valid schema', () => {
     const requiredTools = [
       'search_web',
       'open_url',
@@ -39,9 +39,16 @@ describe('Voodoo Browser Agent Tools', () => {
       'execute_script',
       'get_active_dialog',
       'clean_browser',
+      'create_file',
+      'create_note_or_list',
+      'analyze_page_data',
+      'geo_lookup',
+      'search_places',
+      'get_weather_and_time',
+      'get_route_info',
     ];
 
-    expect(VOODOO_BROWSER_TOOLS.length).toBe(13);
+    expect(VOODOO_BROWSER_TOOLS.length).toBe(20);
     for (const toolName of requiredTools) {
       const toolDef = VOODOO_BROWSER_TOOLS.find((t) => t.name === toolName);
       expect(toolDef, `Tool definition for ${toolName} should exist`).toBeDefined();

@@ -4045,8 +4045,46 @@ function SettingsPanel({
   const [newVoodooKey, setNewVoodooKey] = useState("");
   const [testingKey, setTestingKey] = useState<string | null>(null);
   const [keyTestFeedback, setKeyTestFeedback] = useState<{ text: string; isError: boolean } | null>(null);
-  const [keyStatuses, setKeyStatuses] = useState<Record<string, { status: 'healthy' | 'exhausted' | 'invalid'; latencyMs?: number; error?: string }>>({});
+  const [keyStatuses, setKeyStatuses] = useState<Record<string, { status: 'healthy' | 'exhausted' | 'invalid' | 'unknown'; latencyMs?: number; error?: string }>>({});
+  const [isCheckingAllKeys, setIsCheckingAllKeys] = useState(false);
   const [installedExtensions, setInstalledExtensions] = useState<Array<{ id: string; name: string; version: string; directory: string }>>([]);
+
+  useEffect(() => {
+    window.browserApi.getVoodooKeysStatus?.().then((statuses) => {
+      if (Array.isArray(statuses)) {
+        const map: Record<string, any> = {};
+        for (const s of statuses) {
+          if (s.status !== 'unknown' || s.lastChecked) {
+            map[s.key] = {
+              status: s.status,
+              latencyMs: s.latencyMs,
+              error: s.lastError,
+            };
+          }
+        }
+        setKeyStatuses(map);
+      }
+    }).catch(() => undefined);
+
+    const unsub = window.browserApi.onTabEvent?.((event) => {
+      if (event?.type === 'voodoo-keys-checked') {
+        window.browserApi.getVoodooKeysStatus?.().then((statuses) => {
+          if (Array.isArray(statuses)) {
+            const map: Record<string, any> = {};
+            for (const s of statuses) {
+              map[s.key] = {
+                status: s.status,
+                latencyMs: s.latencyMs,
+                error: s.lastError,
+              };
+            }
+            setKeyStatuses(map);
+          }
+        }).catch(() => undefined);
+      }
+    });
+    return () => unsub?.();
+  }, []);
   const [extensionError, setExtensionError] = useState("");
   const refreshExtensions = useCallback(async () => {
     setInstalledExtensions(await window.browserApi.listLocalExtensions());
@@ -4163,6 +4201,36 @@ function SettingsPanel({
       });
     } finally {
       setTestingKey(null);
+    }
+  };
+
+  const handleCheckAllVoodooKeys = async () => {
+    setIsCheckingAllKeys(true);
+    setKeyTestFeedback({ text: "Проверяем все ключи xkiro на доступность...", isError: false });
+    try {
+      const res = await window.browserApi.checkAllVoodooKeys?.();
+      if (res) {
+        const nextStatus: Record<string, any> = {};
+        for (const item of res.results) {
+          nextStatus[item.key] = {
+            status: item.status,
+            latencyMs: item.latencyMs,
+            error: item.lastError,
+          };
+        }
+        setKeyStatuses(nextStatus);
+        setKeyTestFeedback({
+          text: `Готово: ${res.healthyCount} из ${res.results.length} ключей проверены и готовы к работе. Рабочие ключи автоматически активированы.`,
+          isError: res.healthyCount === 0,
+        });
+      }
+    } catch (e) {
+      setKeyTestFeedback({
+        text: `Ошибка при проверке ключей: ${e instanceof Error ? e.message : String(e)}`,
+        isError: true,
+      });
+    } finally {
+      setIsCheckingAllKeys(false);
     }
   };
   const [customWallpaper, saveCustomWallpaper] = useCustomWallpaper();
@@ -4786,6 +4854,15 @@ function SettingsPanel({
               >
                 <Plus size={15} /> Добавить
               </button>
+              <button
+                className="plain-button"
+                onClick={handleCheckAllVoodooKeys}
+                disabled={isCheckingAllKeys}
+                title="Автоматически протестировать все ключи xkiro и выбрать только рабочие"
+                style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+              >
+                <Zap size={14} /> {isCheckingAllKeys ? "Проверка..." : "Проверить все"}
+              </button>
             </div>
 
             {keyTestFeedback && (
@@ -4882,6 +4959,26 @@ function SettingsPanel({
                   </div>
                 );
               })}
+            </div>
+
+            {/* Voice Recognition (Whisper STT) Key */}
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                🎙️ Распознавание речи (Whisper STT)
+              </label>
+              <p className="description" style={{ fontSize: 11, marginBottom: 8, color: "var(--text-muted)" }}>
+                Бесплатный ключ Groq (gsk_...) или OpenAI Whisper для моментальной расшифровки голоса в текст в Electron на Linux/Windows.
+              </p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  type="password"
+                  placeholder="gsk_... или sk-..."
+                  className="input-field"
+                  style={{ flex: 1, fontSize: 12, padding: "6px 10px" }}
+                  value={settings.voodooSttKey || ""}
+                  onChange={(e) => update({ voodooSttKey: e.target.value.trim() || undefined })}
+                />
+              </div>
             </div>
           </div>
         </div>

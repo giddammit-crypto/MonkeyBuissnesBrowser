@@ -1,0 +1,25 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  configure)
+    # Install PolicyKit policy if not present
+    if [ -d /usr/share/polkit-1/actions ] && [ -f /opt/Linuxsec/resources/packaging/polkit/org.linuxsec.policy ]; then
+      cp /opt/Linuxsec/resources/packaging/polkit/org.linuxsec.policy /usr/share/polkit-1/actions/
+    fi
+
+    # Install systemd unit
+    if [ -d /etc/systemd/system ] && [ -f /opt/Linuxsec/resources/packaging/systemd/linuxsecd.service ]; then
+      cp /opt/Linuxsec/resources/packaging/systemd/linuxsecd.service /etc/systemd/system/
+      systemctl daemon-reload || true
+      systemctl enable linuxsecd.service || true
+      systemctl start linuxsecd.service || true
+    fi
+
+    # Update desktop database and icon caches
+    update-desktop-database -q || true
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+    ;;
+esac
+
+exit 0

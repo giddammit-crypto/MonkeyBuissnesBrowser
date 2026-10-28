@@ -1,0 +1,21 @@
+[Desktop Entry]
+Name=Linuxsec
+GenericName=VPN Client
+Comment=Advanced Native WireGuard and OpenVPN Client for Linux
+Exec=linuxsec %U
+Icon=linuxsec
+Terminal=false
+Type=Application
+Categories=Network;Security;
+StartupNotify=true
+StartupWMClass=linuxsec
+Keywords=vpn;wireguard;openvpn;security;privacy;network;
+Actions=Connect;Disconnect;
+
+[Desktop Action Connect]
+Name=Quick Connect
+Exec=linuxsec --connect
+
+[Desktop Action Disconnect]
+Name=Disconnect
+Exec=linuxsec --disconnect

@@ -140,10 +140,18 @@ export interface BrowserSettings {
   readerSettings?: ReaderSettings;
   voodooEnabled?: boolean;
   voodooBubbleVisible?: boolean;
+  voodooBubblePosition?: { x: number; y: number };
   voodooKeys?: string[];
   voodooModel?: string;
   voodooBaseUrl?: string;
+  voodooSttKey?: string;
   neverSavePasswordOrigins?: string[];
+}
+
+export interface TranscribeAudioResult {
+  success: boolean;
+  text?: string;
+  error?: string;
 }
 
 export type NotificationPermissionDecision = 'allow' | 'deny';
@@ -401,12 +409,19 @@ export interface VoodooActionExecution {
   summary: string;
 }
 
+export interface VoodooToolProperty {
+  type: string;
+  description: string;
+  enum?: string[];
+  items?: { type: string };
+}
+
 export interface VoodooToolDefinition {
   name: string;
   description: string;
   parameters: {
     type: 'object';
-    properties: Record<string, { type: string; description: string; enum?: string[] }>;
+    properties: Record<string, VoodooToolProperty>;
     required?: string[];
   };
 }
@@ -429,6 +444,17 @@ export interface VoodooChatResponse {
   keyIndexUsed?: number;
   activeKeyMasked?: string;
   executedActions?: VoodooActionExecution[];
+}
+
+export interface VoodooKeyStatusItem {
+  key: string;
+  maskedKey: string;
+  isPrimary: boolean;
+  status: 'healthy' | 'exhausted' | 'invalid' | 'unknown';
+  lastError?: string;
+  lastChecked?: number;
+  latencyMs?: number;
+  cooldownRemainingMs?: number;
 }
 
 export type CleanPresetId = 'quick' | 'post-payment' | 'kiosk' | 'custom';

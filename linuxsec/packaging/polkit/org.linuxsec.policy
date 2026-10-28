@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Linuxsec VPN</vendor>
+  <vendor_url>https://linuxsec.invalid</vendor_url>
+  <icon_name>linuxsec</icon_name>
+
+  <action id="org.linuxsec.manage-vpn">
+    <description>Manage Linuxsec VPN connections and firewall killswitch</description>
+    <message>Authentication is required to configure Linuxsec VPN security features</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/linuxsec/linuxsecd</annotate>
+  </action>
+</policyconfig>
