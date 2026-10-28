@@ -17,6 +17,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run build
+      - run: npm run test:e2e:voodoo
       - run: npm run test:e2e:smoke
         env:
           SOUL_EVIDENCE_DIR: artifacts/ui-audit

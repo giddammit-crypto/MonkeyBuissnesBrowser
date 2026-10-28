@@ -141,6 +141,7 @@ export interface BrowserApi {
   deleteNote(id: string): Promise<boolean>;
   togglePinNote(id: string): Promise<NoteEntry | null>;
   createNoteFromTab(tabId: string, textSnippet?: string): Promise<NoteEntry>;
+  cancelVoodooRequest(): Promise<void>;
   sendVoodooMessage(messages: VoodooChatMessage[], tabContext?: { url?: string; title?: string; chatText?: string }): Promise<VoodooChatResponse>;
   testVoodooKey(key: string): Promise<{ success: boolean; latencyMs?: number; error?: string }>;
   checkAllVoodooKeys(): Promise<VoodooCheckAllKeysResult>;

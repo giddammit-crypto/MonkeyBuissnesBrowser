@@ -3,12 +3,12 @@ import { VoodooAiService, DEFAULT_VOODOO_KEYS, DEFAULT_VOODOO_MODEL, VOODOO_SYST
 
 describe('VoodooAiService', () => {
   it('correctly masks API keys for privacy and UI display', () => {
-    const key = 'sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0';
+    const key = 'sk-xt-FAKE0123456789abcdefghijklmn0000';
     const masked = VoodooAiService.maskKey(key);
-    expect(masked.startsWith('sk-xt-632c')).toBe(true);
-    expect(masked.endsWith('dca0')).toBe(true);
+    expect(masked.startsWith('sk-xt-FAKE')).toBe(true);
+    expect(masked.endsWith('0000')).toBe(true);
     expect(masked.includes('•')).toBe(true);
-    expect(masked).not.toContain('df73e5cc');
+    expect(masked).not.toContain('abcdefghijklmn');
 
     expect(VoodooAiService.maskKey('')).toBe('••••••••');
     expect(VoodooAiService.maskKey('short')).toBe('••••••••');

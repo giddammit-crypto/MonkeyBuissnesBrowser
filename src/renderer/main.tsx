@@ -1,3 +1,4 @@
+import { normalizeVoodooKeys } from '../shared/voodooKeys';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -4113,12 +4114,8 @@ function SettingsPanel({
   const handleAddVoodooKey = () => {
     const raw = newVoodooKey.trim();
     if (!raw) return;
-    const extracted = raw
-      .split(/[\r\n,;\s]+/)
-      .map((k) => k.trim())
-      .filter((k) => k.length >= 10);
-    const toAdd = extracted.length > 0 ? extracted : [raw];
-    const currentKeys = settings.voodooKeys ?? ['sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0'];
+    const toAdd = normalizeVoodooKeys([raw]);
+    const currentKeys = settings.voodooKeys ?? [];
 
     const addedList: string[] = [];
     const nextKeys = [...currentKeys];
@@ -4133,7 +4130,7 @@ function SettingsPanel({
       update({ voodooKeys: nextKeys });
       setKeyTestFeedback({
         text: addedList.length === 1
-          ? `Ключ ${addedList[0].slice(0, 10)}… добавлен в список ротации.`
+          ? `Ключ добавлен в список ротации.`
           : `Добавлено ${addedList.length} новых ключей без дубликатов.`,
         isError: false,
       });
@@ -4148,18 +4145,19 @@ function SettingsPanel({
 
   const handleMakePrimaryKey = (index: number) => {
     if (index <= 0) return;
-    const currentKeys = settings.voodooKeys ?? ['sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0'];
+    const currentKeys = settings.voodooKeys ?? [];
     const key = currentKeys[index];
+    if (!key) return;
     const nextKeys = [key, ...currentKeys.filter((_, idx) => idx !== index)];
     update({ voodooKeys: nextKeys });
     setKeyTestFeedback({
-      text: `Ключ ${key.slice(0, 10)}… установлен как основной (приоритетный).`,
+      text: `Ключ установлен как основной (приоритетный).`,
       isError: false,
     });
   };
 
   const handleRemoveVoodooKey = (indexToRemove: number) => {
-    const currentKeys = settings.voodooKeys ?? ['sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0'];
+    const currentKeys = settings.voodooKeys ?? [];
     const updated = currentKeys.filter((_, idx) => idx !== indexToRemove);
     update({ voodooKeys: updated });
   };
@@ -4891,10 +4889,10 @@ function SettingsPanel({
             )}
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {(settings.voodooKeys ?? ['sk-xt-632ce38b37c38453a54bdf73e5ccb707b6a3ef29e192dca0']).map((key, idx) => {
+              {(settings.voodooKeys ?? []).map((key, idx) => {
                 const masked = key.length > 14
                   ? `${key.slice(0, 10)}${"•".repeat(Math.max(4, key.length - 14))}${key.slice(-4)}`
-                  : key;
+                  : "•".repeat(8);
                 const statusInfo = keyStatuses[key];
                 const isPrimary = idx === 0;
 

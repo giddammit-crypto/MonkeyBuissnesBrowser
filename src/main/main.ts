@@ -246,6 +246,7 @@ function registerIpc(): void {
   ipcMain.handle('browser:delete-note', (event, id: string) => requireShell(event).deleteNote(id));
   ipcMain.handle('browser:toggle-pin-note', (event, id: string) => requireShell(event).togglePinNote(id));
   ipcMain.handle('browser:create-note-from-tab', (event, tabId: string, textSnippet?: string) => requireShell(event).createNoteFromTab(tabId, textSnippet));
+  ipcMain.handle('browser:voodoo-cancel', (event) => requireShell(event).cancelVoodooRequest());
   ipcMain.handle('browser:voodoo-message', (event, messages, tabContext) => requireShell(event).sendVoodooMessage(messages, tabContext));
   ipcMain.handle('browser:voodoo-test-key', (event, key: string) => requireShell(event).testVoodooKey(key));
   ipcMain.handle('browser:voodoo-check-all-keys', (event) => requireShell(event).checkAllVoodooKeys());

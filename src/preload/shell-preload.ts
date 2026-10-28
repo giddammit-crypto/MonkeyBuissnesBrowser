@@ -99,6 +99,7 @@ const api: BrowserApi = {
   deleteNote: (id) => ipcRenderer.invoke('browser:delete-note', id),
   togglePinNote: (id) => ipcRenderer.invoke('browser:toggle-pin-note', id),
   createNoteFromTab: (tabId, textSnippet) => ipcRenderer.invoke('browser:create-note-from-tab', tabId, textSnippet),
+  cancelVoodooRequest: () => ipcRenderer.invoke('browser:voodoo-cancel'),
   sendVoodooMessage: (messages, tabContext) => ipcRenderer.invoke('browser:voodoo-message', messages, tabContext),
   testVoodooKey: (key) => ipcRenderer.invoke('browser:voodoo-test-key', key),
   checkAllVoodooKeys: () => ipcRenderer.invoke('browser:voodoo-check-all-keys'),

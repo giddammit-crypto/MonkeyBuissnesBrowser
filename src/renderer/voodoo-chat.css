@@ -1282,3 +1282,74 @@ body.voodoo-standalone #root {
   font-weight: 500;
 }
 
+
+/* Keep long model names and tool progress readable in the compact agent panel. */
+.voodoo-header-title {
+  min-width: 0;
+}
+
+.voodoo-model-badge {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voodoo-typing-indicator {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.voodoo-typing-indicator .voodoo-dot {
+  flex-shrink: 0;
+}
+
+.voodoo-action-step {
+  font-weight: 600;
+}
+
+.voodoo-action-error {
+  display: block;
+  margin-top: 4px;
+  color: #fecaca;
+}
+
+.voodoo-request-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 7px;
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.1);
+  overflow-wrap: anywhere;
+}
+
+.voodoo-request-error svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.voodoo-chat-window button:focus-visible,
+.voodoo-floating-bubble:focus-visible {
+  outline: 2px solid var(--accent, #00d2ff);
+  outline-offset: 3px;
+}
+
+.voodoo-stop-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voodoo-chat-window *,
+  .voodoo-floating-bubble,
+  .voodoo-floating-bubble * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

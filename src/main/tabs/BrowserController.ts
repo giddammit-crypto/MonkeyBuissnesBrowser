@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import { VoodooFileService } from '../services/VoodooFileService';
 import dns from 'node:dns';
 import { isIP } from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -152,6 +153,7 @@ export class BrowserController {
   voodooView?: WebContentsView;
   voodooContentsId?: number;
   private voodooOpen = false;
+  private voodooAbortController?: AbortController;
   private voodooDimensions = { width: 395, height: 555 };
   private voodooPosition: { x?: number; y?: number } = {};
   private voodooBubblePosition: { x?: number; y?: number } = {};
@@ -2788,20 +2790,9 @@ export class BrowserController {
     this.sessionDownloadHandlers.set(targetSession, onDownload);
     targetSession.on('will-download', onDownload);
 
-    // Support Russian Trusted Root CA (Минцифры / Госуслуги / VK / Сбер) securely without spurious SSL cert errors
-    targetSession.setCertificateVerifyProc((request, callback) => {
-      const { errorCode, certificate } = request;
-      if (errorCode === 0) {
-        callback(0);
-        return;
-      }
-      const issuer = `${certificate?.issuerName || ''} ${certificate?.subjectName || ''}`;
-      if (issuer.includes('Russian Trusted') || issuer.includes('Минцифры') || issuer.includes('Ministry of Digital Development')) {
-        callback(0);
-        return;
-      }
-      callback(errorCode);
-    });
+    // Certificate names are untrusted metadata; keep Chromium's full chain,
+    // hostname and expiry validation for every issuer.
+    targetSession.setCertificateVerifyProc((_request, callback) => callback(-3));
   }
 
   private attachWebContents(tab: TabRecord, initialUrl: string, popupOptions?: Electron.BrowserWindowConstructorOptions): Electron.WebContents | undefined {
@@ -4412,21 +4403,66 @@ export class BrowserController {
     messages: VoodooChatMessage[],
     tabContext?: { url?: string; title?: string; chatText?: string }
   ): Promise<VoodooChatResponse> {
+    this.cancelVoodooRequest();
+    const requestController = new AbortController();
+    this.voodooAbortController = requestController;
     const settings = this.stores.settings.get();
-    return this.voodooService.chat(messages, {
-      keys: settings.voodooKeys,
-      model: settings.voodooModel,
-      baseUrl: settings.voodooBaseUrl,
-      tabContext,
-      toolExecutor: (name, args) => this.executeVoodooTool(name, args),
-    });
+    try {
+      return await this.voodooService.chat(messages, {
+        keys: settings.voodooKeys,
+        model: settings.voodooModel,
+        baseUrl: settings.voodooBaseUrl,
+        tabContext,
+        signal: requestController.signal,
+        onProgress: (message) => {
+          if (requestController.signal.aborted) return;
+          for (const view of [this.voodooView, this.shellView]) {
+            if (view && !view.webContents.isDestroyed()) {
+              try { view.webContents.send('browser:event', { type: 'voodoo-agent-progress', message }); } catch {}
+            }
+          }
+        },
+        toolExecutor: (name, args) => {
+          requestController.signal.throwIfAborted();
+          return this.executeVoodooTool(name, args, requestController.signal);
+        },
+      });
+    } finally {
+      if (this.voodooAbortController === requestController) this.voodooAbortController = undefined;
+    }
+  }
+
+  cancelVoodooRequest(): void {
+    this.voodooAbortController?.abort();
+    this.voodooAbortController = undefined;
+  }
+
+  private async waitForVoodooPage(tabId: string, timeoutMs = 10000, signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      signal?.throwIfAborted();
+      const contents = this.tabs.get(tabId)?.view?.webContents;
+      if (!contents || contents.isDestroyed()) throw new Error('Вкладка закрыта или недоступна');
+      if (!contents.isLoadingMainFrame?.()) return;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error('Страница ещё загружается. Повторите чтение или дождитесь элемента.');
   }
 
   async executeVoodooTool(
     toolName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<{ success: boolean; result?: unknown; error?: string; summary?: string }> {
     try {
+      signal?.throwIfAborted();
+      const pageTools = ['read_page', 'get_page_elements', 'click_element', 'fill_input', 'scroll_page', 'execute_script', 'press_key', 'wait_for_element', 'navigate_history', 'analyze_page_data'];
+      if (pageTools.includes(toolName)) {
+        const tabId = String(args.tab_id || this.activeTabId || '').trim();
+        const tab = this.tabs.get(tabId);
+        if (tab?.lifecycle === 'hibernated') await this.wakeTab(tabId);
+        if (tab && !tab.isInternal) await this.waitForVoodooPage(tabId, 10000, signal);
+      }
       switch (toolName) {
         case 'search_web': {
           const query = String(args.query || '').trim();
@@ -4461,18 +4497,14 @@ export class BrowserController {
             return { success: false, error: 'Адрес URL не может быть пустым', summary: '❌ Открытие: URL не указан' };
           }
           const newTab = Boolean(args.new_tab);
-          let targetUrl = rawUrl;
-          if (targetUrl.startsWith('file://')) {
-            // Already a local file URL
-          } else if (path.isAbsolute(targetUrl) && fs.existsSync(targetUrl)) {
-            targetUrl = `file://${targetUrl}`;
-          } else {
-            const searchEngine = this.stores.settings.get().searchEngine;
-            const intent = parseOmniboxInput(rawUrl, searchEngine);
-            targetUrl = intent.kind === 'url' ? intent.url : rawUrl;
-            if (!/^https?:\/\//i.test(targetUrl) && !/^browser:\/\//i.test(targetUrl) && !/^file:\/\//i.test(targetUrl)) {
-              targetUrl = `https://${targetUrl}`;
-            }
+          if (/^file:/i.test(rawUrl) || path.isAbsolute(rawUrl)) {
+            return { success: false, error: 'Локальные файлы читайте инструментом read_file. Вкладки поддерживают HTTP и HTTPS.', summary: '❌ Локальный файл нельзя открыть как веб-страницу' };
+          }
+          const searchEngine = this.stores.settings.get().searchEngine;
+          const intent = parseOmniboxInput(rawUrl, searchEngine);
+          const targetUrl = rawUrl === NEW_TAB_URL ? NEW_TAB_URL : intent.kind === 'url' ? intent.url : '';
+          if (!targetUrl || (targetUrl !== NEW_TAB_URL && !isSafeWebUrl(targetUrl))) {
+            return { success: false, error: 'Нужен корректный HTTP или HTTPS адрес', summary: '❌ Некорректный адрес' };
           }
 
           if (newTab) {
@@ -4529,7 +4561,7 @@ export class BrowserController {
           }
           const targetTab = this.tabs.get(tabId)!;
           const title = targetTab.title || targetTab.url || tabId;
-          this.closeTab(tabId);
+          await this.closeTab(tabId);
           return {
             success: true,
             result: { closedTabId: tabId, title },
@@ -4551,7 +4583,7 @@ export class BrowserController {
             };
           }
 
-          const maxLength = typeof args.max_length === 'number' && args.max_length > 0 ? args.max_length : 4000;
+          const maxLength = typeof args.max_length === 'number' && Number.isFinite(args.max_length) && args.max_length > 0 ? Math.min(50000, Math.floor(args.max_length)) : 4000;
           const pageData = await tab.view.webContents.executeJavaScript(`
             (function(maxChars) {
               try {
@@ -4608,9 +4640,21 @@ export class BrowserController {
               try {
                 const results = [];
                 const isVisible = function(el) {
-                  if (!el.offsetParent && el.tagName !== 'BODY') return false;
                   const r = el.getBoundingClientRect();
-                  return r.width > 0 && r.height > 0 && window.getComputedStyle(el).visibility !== 'hidden';
+                  const style = window.getComputedStyle(el);
+                  return r.width > 0 && r.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+                };
+                // Every returned selector must identify exactly the observed element.
+                const selectorFor = function(el) {
+                  if (el.id && document.querySelectorAll('#' + CSS.escape(el.id)).length === 1) return '#' + CSS.escape(el.id);
+                  const parts = [];
+                  while (el && el.nodeType === 1) {
+                    const tag = el.tagName.toLowerCase();
+                    const siblings = el.parentElement ? Array.from(el.parentElement.children).filter(n => n.tagName === el.tagName) : [];
+                    parts.unshift(tag + (siblings.length > 1 ? ':nth-of-type(' + (siblings.indexOf(el) + 1) + ')' : ''));
+                    el = el.parentElement;
+                  }
+                  return parts.join(' > ');
                 };
 
                 if (type === 'all' || type === 'buttons') {
@@ -4624,7 +4668,8 @@ export class BrowserController {
                       category: 'button',
                       tag: b.tagName.toLowerCase(),
                       text: text.slice(0, 60),
-                      selector: id || (cls ? b.tagName.toLowerCase() + cls : b.tagName.toLowerCase()),
+                      selector: selectorFor(b),
+                      disabled: Boolean(b.disabled || b.getAttribute('aria-disabled') === 'true'),
                       id: b.id || undefined,
                     });
                     if (results.length >= 30) break;
@@ -4643,7 +4688,7 @@ export class BrowserController {
                       tag: 'a',
                       text: (text || a.title || '').slice(0, 60),
                       href: a.href,
-                      selector: id || 'a[href="' + a.getAttribute('href') + '"]',
+                      selector: selectorFor(a),
                     });
                     if (results.length >= 30) break;
                   }
@@ -4662,8 +4707,9 @@ export class BrowserController {
                       type: inp.type || 'text',
                       placeholder: ph,
                       name: inp.name || undefined,
-                      selector: id || name || inp.tagName.toLowerCase(),
-                      currentValue: (inp.value || inp.innerText || '').slice(0, 30),
+                      selector: selectorFor(inp),
+                      disabled: Boolean(inp.disabled || inp.readOnly),
+                      currentValue: inp.type === 'password' ? '[скрыто]' : (inp.value || inp.innerText || '').slice(0, 30),
                     });
                     if (results.length >= 30) break;
                   }
@@ -4707,7 +4753,8 @@ export class BrowserController {
                   const candidates = Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"], [role="button"], span, div, p'));
                   target = candidates.find(function(el) {
                     const content = (el.innerText || el.value || el.getAttribute('aria-label') || '').toLowerCase().trim();
-                    return content === lower || (content.includes(lower) && content.length < lower.length + 30);
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== 'hidden' && !el.disabled && el.getAttribute('aria-disabled') !== 'true' && (content === lower || (content.includes(lower) && content.length < lower.length + 30));
                   });
                 }
 
@@ -4715,7 +4762,10 @@ export class BrowserController {
                   return { success: false, error: 'Элемент не найден на странице' };
                 }
 
-                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                if (target.disabled || target.getAttribute('aria-disabled') === 'true') return { success: false, error: 'Элемент отключён' };
+                const rect = target.getBoundingClientRect();
+                if (!rect.width || !rect.height || getComputedStyle(target).visibility === 'hidden') return { success: false, error: 'Элемент скрыт' };
+                target.scrollIntoView({ behavior: 'instant', block: 'center' });
                 if (typeof target.focus === 'function') target.focus();
                 target.click();
 
@@ -4761,27 +4811,33 @@ export class BrowserController {
               try {
                 let target = null;
                 if (sel) target = document.querySelector(sel);
+                if (sel && !target) return { success: false, error: 'Поле по указанному селектору не найдено' };
                 if (!target && ph) {
                   const lowerPh = ph.toLowerCase();
                   target = Array.from(document.querySelectorAll('input, textarea')).find(function(el) {
                     return (el.placeholder || el.getAttribute('aria-label') || '').toLowerCase().includes(lowerPh);
                   });
                 }
+                if (ph && !target) return { success: false, error: 'Поле с указанной подсказкой не найдено' };
                 if (!target) {
-                  target = document.querySelector('input:not([type="hidden"]):not([type="button"]):not([type="submit"]), textarea, [contenteditable="true"]');
+                  target = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="button"]):not([type="submit"]), textarea, [contenteditable="true"]')).find(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !el.disabled && !el.readOnly; });
                 }
 
                 if (!target) {
                   return { success: false, error: 'Поле ввода не найдено' };
                 }
 
+                const targetRect = target.getBoundingClientRect();
+                if (!targetRect.width || !targetRect.height || getComputedStyle(target).visibility === 'hidden') return { success: false, error: 'Поле скрыто' };
+                if (target.disabled || target.readOnly) return { success: false, error: 'Поле недоступно для редактирования' };
+                if (!target.isContentEditable && !['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return { success: false, error: 'Выбранный элемент не является полем ввода' };
                 target.focus();
                 if (target.isContentEditable) {
                   target.innerText = val;
                   target.dispatchEvent(new Event('input', { bubbles: true }));
                 } else {
-                  const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
-                    || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+                  const prototype = target.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : target.tagName === 'SELECT' ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype;
+                  const nativeSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
                   if (nativeSetter) {
                     nativeSetter.call(target, val);
                   } else {
@@ -4794,10 +4850,13 @@ export class BrowserController {
                 if (doSubmit) {
                   const form = target.form || target.closest('form');
                   if (form) {
-                    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+                    if (typeof form.requestSubmit === 'function') form.requestSubmit();
+                    else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
                   }
-                  target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
-                  target.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true }));
+                  else {
+                    target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+                    target.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', keyCode: 13, bubbles: true }));
+                  }
                 }
 
                 return {
@@ -4834,7 +4893,8 @@ export class BrowserController {
             return { success: false, error: 'Вкладка недоступна для прокрутки', summary: '❌ Вкладка недоступна' };
           }
           const direction = String(args.direction || 'down');
-          const amount = typeof args.amount === 'number' && args.amount > 0 ? args.amount : 500;
+          if (!['up', 'down', 'top', 'bottom'].includes(direction)) return { success: false, error: 'Неизвестное направление прокрутки' };
+          const amount = typeof args.amount === 'number' && Number.isFinite(args.amount) && args.amount > 0 ? Math.min(100000, args.amount) : 500;
 
           await tab.view.webContents.executeJavaScript(`
             (function(dir, px) {
@@ -4866,7 +4926,23 @@ export class BrowserController {
             return { success: false, error: 'Код скрипта не может быть пустым', summary: '❌ Пустой скрипт' };
           }
 
-          const scriptResult = await tab.view.webContents.executeJavaScript(code, true);
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          let abortHandler: (() => void) | undefined;
+          let scriptResult: unknown;
+          try {
+            scriptResult = await Promise.race([
+              tab.view.webContents.executeJavaScript(code, true),
+              new Promise<never>((_resolve, reject) => {
+                timer = setTimeout(() => reject(new Error('Скрипт не завершился за 15 секунд')), 15000);
+                abortHandler = () => reject(new Error('Выполнение отменено'));
+                if (signal?.aborted) abortHandler();
+                else signal?.addEventListener('abort', abortHandler, { once: true });
+              }),
+            ]);
+          } finally {
+            if (timer) clearTimeout(timer);
+            if (abortHandler) signal?.removeEventListener('abort', abortHandler);
+          }
           const codeSnippet = code.slice(0, 30).replace(/\s+/g, ' ');
           return {
             success: true,
@@ -4882,6 +4958,62 @@ export class BrowserController {
             result: dialogCtx,
             summary: `💬 Извлечён диалог (${dialogCtx.source || 'чат'}, сообщений: ${dialogCtx.count})`,
           };
+        }
+
+        case 'navigate_history': {
+          const tabId = String(args.tab_id || this.activeTabId || '').trim();
+          const tab = this.tabs.get(tabId);
+          const contents = tab?.view?.webContents;
+          if (!contents || contents.isDestroyed() || tab?.isInternal) return { success: false, error: 'Вкладка недоступна для навигации' };
+          const direction = String(args.direction || '');
+          if (direction === 'back') {
+            if (!contents.navigationHistory.canGoBack()) return { success: false, error: 'Нет предыдущей страницы' };
+            contents.navigationHistory.goBack();
+          } else if (direction === 'forward') {
+            if (!contents.navigationHistory.canGoForward()) return { success: false, error: 'Нет следующей страницы' };
+            contents.navigationHistory.goForward();
+          } else if (direction === 'reload') contents.reload();
+          else return { success: false, error: 'Неизвестное направление навигации' };
+          await this.waitForVoodooPage(tabId, 10000, signal);
+          return { success: true, result: { tabId, direction, url: contents.getURL() }, summary: '🌐 Навигация: ' + direction };
+        }
+
+        case 'press_key': {
+          const tabId = String(args.tab_id || this.activeTabId || '').trim();
+          const tab = this.tabs.get(tabId);
+          const contents = tab?.view?.webContents;
+          if (!contents || contents.isDestroyed() || tab?.isInternal) return { success: false, error: 'Вкладка недоступна для клавиатуры' };
+          const key = String(args.key || '').trim();
+          const allowedKeys = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Home', 'End', 'PageUp', 'PageDown'];
+          if (!allowedKeys.includes(key)) return { success: false, error: 'Допустимые клавиши: ' + allowedKeys.join(', ') };
+          const keyCode = ({ ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right' } as Record<string, string>)[key] || key;
+          contents.sendInputEvent({ type: 'keyDown', keyCode });
+          contents.sendInputEvent({ type: 'keyUp', keyCode });
+          return { success: true, result: { tabId, key }, summary: '⌨️ Нажата клавиша: ' + key };
+        }
+
+        case 'wait_for_element': {
+          const tabId = String(args.tab_id || this.activeTabId || '').trim();
+          const selector = typeof args.selector === 'string' ? args.selector.trim() : '';
+          if (!selector) return { success: false, error: 'Не указан селектор' };
+          const timeout = typeof args.timeout_ms === 'number' && Number.isFinite(args.timeout_ms) ? Math.max(0, Math.min(10000, args.timeout_ms)) : 5000;
+          const deadline = Date.now() + timeout;
+          do {
+            signal?.throwIfAborted();
+            const tab = this.tabs.get(tabId);
+            const contents = tab?.view?.webContents;
+            if (!contents || contents.isDestroyed() || tab?.isInternal) return { success: false, error: 'Вкладка недоступна' };
+            const found = await contents.executeJavaScript(`(() => {
+              const el = document.querySelector(${JSON.stringify(selector)});
+              if (!el) return false;
+              const rect = el.getBoundingClientRect();
+              return rect.width > 0 && rect.height > 0 && getComputedStyle(el).visibility !== 'hidden';
+            })()`);
+            if (found) return { success: true, result: { tabId, selector }, summary: '🔍 Элемент появился: ' + selector };
+            if (Date.now() >= deadline) break;
+            await new Promise(resolve => setTimeout(resolve, 150));
+          } while (Date.now() <= deadline);
+          return { success: false, error: 'Элемент не появился за отведённое время: ' + selector };
         }
 
         case 'clean_browser': {
@@ -4941,56 +5073,32 @@ export class BrowserController {
           };
         }
 
-        case 'create_file': {
-          let filename = String(args.filename || '').trim();
-          const content = String(args.content ?? '');
-          const folder = String(args.folder || 'downloads');
-          const openInNewTab = Boolean(args.open_in_new_tab);
-
-          if (!filename) {
-            filename = `voodoo-note-${Date.now()}.txt`;
+        case 'create_file':
+        case 'read_file':
+        case 'list_files': {
+          const files = new VoodooFileService({
+            downloads: app.getPath('downloads'),
+            desktop: app.getPath('desktop'),
+            documents: app.getPath('documents'),
+          });
+          if (toolName === 'read_file') {
+            const result = files.read(args);
+            return { success: true, result, summary: `📄 Прочитан файл: «${result.filename}»${result.truncated ? ' (текст сокращён)' : ''}` };
           }
-          // Sanitize filename against directory traversal
-          filename = path.basename(filename).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
-          if (!filename) filename = `file-${Date.now()}.txt`;
-
-          let targetDir = app.getPath('downloads');
-          if (folder === 'desktop') {
-            targetDir = app.getPath('desktop');
-          } else if (folder === 'documents') {
-            targetDir = app.getPath('documents');
+          if (toolName === 'list_files') {
+            const result = files.list(args);
+            return { success: true, result, summary: `📁 Найдено файлов: ${result.files.length}${result.truncated ? ' (список сокращён)' : ''}` };
           }
-
-          if (!fs.existsSync(targetDir)) {
-            fs.mkdirSync(targetDir, { recursive: true });
-          }
-
-          const targetPath = path.join(targetDir, filename);
-          fs.writeFileSync(targetPath, content, 'utf8');
-          const sizeBytes = Buffer.byteLength(content, 'utf8');
-          const sizeKb = (sizeBytes / 1024).toFixed(1);
-
+          const result = files.write(args);
           let openedInTab = false;
-          const fileUrl = `file://${targetPath}`;
-          if (openInNewTab) {
-            await this.createTab({ url: fileUrl, active: true });
-            openedInTab = true;
+          let openError: string | undefined;
+          if (args.open_in_new_tab === true) {
+            openError = 'Файл сохранён; просмотр локального файла во вкладке недоступен. Используйте read_file';
           }
-
           return {
             success: true,
-            result: {
-              filePath: targetPath,
-              fileUrl,
-              filename,
-              folder: targetDir,
-              sizeBytes,
-              sizeFormatted: `${sizeKb} КБ`,
-              openedInTab,
-            },
-            summary: openedInTab
-              ? `💾 Создан и открыт в новой вкладке: «${filename}» (${sizeKb} КБ)`
-              : `💾 Файл сохранён на ПК: «${filename}» (${sizeKb} КБ в папке ${folder === 'desktop' ? 'Рабочий стол' : folder === 'documents' ? 'Документы' : 'Загрузки'})`,
+            result: { ...result, openedInTab, ...(openError ? { openError } : {}) },
+            summary: `💾 Файл сохранён: «${result.filename}» (${result.sizeBytes} байт)${openedInTab ? ' и открыт в новой вкладке' : openError ? '; вкладку открыть не удалось' : ''}`,
           };
         }
 
@@ -5135,8 +5243,11 @@ export class BrowserController {
           const nowStr = new Date().toLocaleTimeString('ru-RU', { timeZone: String(geoData.timezone || localTz), hour: '2-digit', minute: '2-digit' });
           const dateStr = new Date().toLocaleDateString('ru-RU', { timeZone: String(geoData.timezone || localTz), day: 'numeric', month: 'long', year: 'numeric' });
 
-          const city = String(geoData.city || 'Москва');
-          const country = String(geoData.country || 'Россия');
+          if (geoData.status !== 'success' || !geoData.city) {
+            return { success: false, error: 'Сервис геопозиции недоступен или не вернул местоположение', result: { timezone: localTz, currentTime: nowStr, currentDate: dateStr }, summary: '📍 Местоположение определить не удалось' };
+          }
+          const city = String(geoData.city);
+          const country = String(geoData.country || '');
 
           return {
             success: true,
@@ -5203,7 +5314,7 @@ export class BrowserController {
                 googleMaps: googleMapsUrl,
               },
             },
-            summary: `🗺️ Поиск мест «${query}»${city ? ` в «${city}»` : ''}: открыты интерактивные карты (Яндекс Карты, 2ГИС, Google)`,
+            summary: `🗺️ Поиск мест «${query}»${city ? ` в «${city}»` : ''}: найдено ${places.length}, подготовлены ссылки на карты`,
           };
         }
 
@@ -5251,14 +5362,16 @@ export class BrowserController {
             }
           } catch (_) {}
 
+          const available = weatherData.temperatureC !== undefined;
           return {
-            success: true,
+            success: available,
+            error: available ? undefined : 'Сервис погоды не вернул актуальные данные',
             result: {
               city,
               ...weatherData,
               mapsWeatherUrl: `https://yandex.ru/pogoda/${encodeURIComponent(city)}`,
             },
-            summary: `🌤️ Погода в «${city}»: ${weatherData.temperatureC !== undefined ? `${weatherData.temperatureC}°C (${weatherData.description}), ощущается как ${weatherData.feelsLikeC}°C` : 'данные подготовлены'}`,
+            summary: `🌤️ Погода в «${city}»: ${weatherData.temperatureC !== undefined ? `${weatherData.temperatureC}°C (${weatherData.description}), ощущается как ${weatherData.feelsLikeC}°C` : 'актуальные данные недоступны'}`,
           };
         }
 
@@ -5801,6 +5914,7 @@ export class BrowserController {
     if (this.disposed) return;
     this.persistSession();
     this.disposed = true;
+    this.cancelVoodooRequest();
     if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
     if (this.sessionPersistTimer) clearTimeout(this.sessionPersistTimer);
     if (this.downloadPersistTimer) clearTimeout(this.downloadPersistTimer);

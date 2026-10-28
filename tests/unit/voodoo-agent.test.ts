@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { runInNewContext } from 'node:vm';
 
 vi.mock('electron', () => ({
   app: { getAppPath: () => '/mock/path', on: vi.fn(), whenReady: vi.fn() },
@@ -24,7 +25,7 @@ import {
 } from '../../src/main/services/VoodooAiService';
 
 describe('Voodoo Browser Agent Tools', () => {
-  it('defines all 20 browser agent tools with valid schema', () => {
+  it('defines browser agent tools with valid schema', () => {
     const requiredTools = [
       'search_web',
       'open_url',
@@ -48,7 +49,7 @@ describe('Voodoo Browser Agent Tools', () => {
       'get_route_info',
     ];
 
-    expect(VOODOO_BROWSER_TOOLS.length).toBe(20);
+    expect(VOODOO_BROWSER_TOOLS.length).toBeGreaterThanOrEqual(20);
     for (const toolName of requiredTools) {
       const toolDef = VOODOO_BROWSER_TOOLS.find((t) => t.name === toolName);
       expect(toolDef, `Tool definition for ${toolName} should exist`).toBeDefined();
@@ -278,7 +279,7 @@ describe('Voodoo Browser Agent Tools', () => {
     }
   });
 
-  it('stops agent loop after maximum 5 steps if model continuously calls tools', async () => {
+  it('returns truthful partial results when the configured step budget is exhausted', async () => {
     const service = new VoodooAiService();
     const mockToolExecutor = vi.fn().mockResolvedValue({
       success: true,
@@ -325,11 +326,11 @@ describe('Voodoo Browser Agent Tools', () => {
         }
       );
 
-      // Max steps should be capped at 5
-      expect(fetchCalls).toBe(5);
-      expect(mockToolExecutor).toHaveBeenCalledTimes(5);
-      expect(response.executedActions?.length).toBe(5);
-      expect(response.reply).toContain('Я выполнил запрошенные действия в браузере:');
+      expect(fetchCalls).toBe(12);
+      expect(mockToolExecutor).toHaveBeenCalledTimes(12);
+      expect(response.executedActions?.length).toBe(12);
+      expect(response.error).toBe('agent_limit');
+      expect(response.reply).not.toContain('Я выполнил запрошенные действия в браузере:');
     } finally {
       vi.unstubAllGlobals();
     }
@@ -596,4 +597,149 @@ describe('BrowserController.executeVoodooTool', () => {
     expect(stores.settings.get().voodooBubbleVisible).toBe(true);
     expect(typeof (controller as any).ensureVoodooOnTop).toBe('function');
   });
+
+  function runDomTool(controller: any, webContents: any, tool: string, args: Record<string, unknown>, document: any, extras: Record<string, unknown> = {}) {
+    const getComputedStyle = () => ({ visibility: 'visible', display: 'block' });
+    webContents.executeJavaScript.mockImplementation(async (code: string) => runInNewContext(code, {
+      document, window: { getComputedStyle, ...extras }, getComputedStyle,
+      Event: class { constructor(public type: string) {} },
+      KeyboardEvent: class { constructor(public type: string) {} },
+      CSS: { escape: (value: string) => value.replace(/:/g, '\\:') },
+    }));
+    return controller.executeVoodooTool(tool, args);
+  }
+
+  it('does not overwrite an unrelated input when an explicit target is missing', async () => {
+    const { controller, webContents } = createTestController();
+    const input = { value: 'keep me', focus: vi.fn() };
+    const querySelectorAll = vi.fn().mockReturnValue([input]);
+    const result = await runDomTool(controller, webContents, 'fill_input', { selector: '#missing', text: 'overwrite' }, {
+      querySelector: () => null, querySelectorAll,
+    });
+    expect(result.success).toBe(false);
+    expect(input.value).toBe('keep me');
+    expect(input.focus).not.toHaveBeenCalled();
+    expect(querySelectorAll).not.toHaveBeenCalled();
+  });
+
+  it('uses the textarea setter and submits its native form exactly once', async () => {
+    const { controller, webContents } = createTestController();
+    const requestSubmit = vi.fn();
+    const dispatchEvent = vi.fn();
+    class Input {
+      set value(_: string) { throw new Error('Illegal invocation: input setter used for textarea'); }
+    }
+    class Textarea {
+      tagName = 'TEXTAREA';
+      disabled = false;
+      readOnly = false;
+      isContentEditable = false;
+      stored = '';
+      getBoundingClientRect = () => ({ width: 100, height: 20 });
+      form = { requestSubmit };
+      focus = vi.fn();
+      dispatchEvent = dispatchEvent;
+      set value(text: string) { this.stored = text; }
+    }
+    const textarea = new Textarea();
+    const result = await runDomTool(controller, webContents, 'fill_input', { selector: '#message', text: 'Привет', submit: true }, {
+      querySelector: () => textarea,
+    }, { HTMLTextAreaElement: Textarea, HTMLInputElement: Input });
+    expect(result.success).toBe(true);
+    expect(textarea.stored).toBe('Привет');
+    expect(requestSubmit).toHaveBeenCalledTimes(1);
+    expect(dispatchEvent.mock.calls.map(([event]) => event.type)).toEqual(['input', 'change']);
+  });
+
+  it('refuses to edit read-only controls', async () => {
+    const { controller, webContents } = createTestController();
+    const target = { tagName: 'INPUT', readOnly: true, value: 'original', focus: vi.fn() };
+    const result = await runDomTool(controller, webContents, 'fill_input', { selector: '#readonly', text: 'changed' }, {
+      querySelector: () => target,
+    });
+    expect(result.success).toBe(false);
+    expect(target.value).toBe('original');
+    expect(target.focus).not.toHaveBeenCalled();
+  });
+
+  it('does not click disabled controls', async () => {
+    const { controller, webContents } = createTestController();
+    const target = { disabled: true, click: vi.fn() };
+    const result = await runDomTool(controller, webContents, 'click_element', { selector: '#disabled' }, {
+      querySelector: () => target,
+    });
+    expect(result.success).toBe(false);
+    expect(target.click).not.toHaveBeenCalled();
+  });
+
+  it('redacts password values in observed page elements and escapes selectors', async () => {
+    const { controller, webContents } = createTestController();
+    const input = {
+      id: 'login:password', tagName: 'INPUT', type: 'password', value: 'never-expose-this',
+      name: 'password', placeholder: 'Password',
+      getBoundingClientRect: () => ({ width: 100, height: 20 }),
+      getAttribute: () => null,
+    };
+    const result = await runDomTool(controller, webContents, 'get_page_elements', { type: 'inputs' }, {
+      querySelectorAll: () => [input],
+    });
+    expect(result.success).toBe(true);
+    expect(result.result.elements).toHaveLength(1);
+    expect(result.result.elements[0].currentValue).toBe('[скрыто]');
+    expect(result.result.elements[0].selector).toBe('#login\\:password');
+    expect(JSON.stringify(result)).not.toContain('never-expose-this');
+  });
+
+  it.each(['file:///etc/passwd', '/etc/passwd', 'javascript:alert(1)', 'definitely not a URL'])('rejects unsupported navigation target %s without opening a tab', async (url) => {
+    const { controller } = createTestController();
+    const result = await controller.executeVoodooTool('open_url', { url, new_tab: true });
+    expect(result.success).toBe(false);
+    expect(controller.createTab).not.toHaveBeenCalled();
+    expect(controller.navigate).not.toHaveBeenCalled();
+  });
+
+  it('reports location lookup failure without substituting a fabricated city', async () => {
+    const { controller } = createTestController();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+    try {
+      const result = await controller.executeVoodooTool('geo_lookup', {});
+      expect(result.success).toBe(false);
+      expect(result.result.city).toBeUndefined();
+      expect(result.summary).not.toContain('Москва');
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('reports weather lookup failure without inventing current conditions', async () => {
+    const { controller } = createTestController();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }));
+    try {
+      const result = await controller.executeVoodooTool('get_weather_and_time', { city: 'Владимир' });
+      expect(result.success).toBe(false);
+      expect(result.error).toBeTruthy();
+      expect(result.result.temperatureC).toBeUndefined();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('keeps Chromium certificate verification for issuers claiming to be trusted brands', () => {
+    const { controller } = createTestController();
+    const setCertificateVerifyProc = vi.fn();
+    const targetSession = {
+      setUserAgent: vi.fn(), setPermissionCheckHandler: vi.fn(), setPermissionRequestHandler: vi.fn(),
+      setCertificateVerifyProc, on: vi.fn(),
+      webRequest: { onBeforeRequest: vi.fn(), onBeforeSendHeaders: vi.fn(), onHeadersReceived: vi.fn() },
+    };
+    Object.assign(controller, {
+      adBlock: { engine: { setEnabled: vi.fn() } },
+      browsec: { applyWebRtcPolicyToSession: vi.fn() },
+      notificationPermissions: new Map(), sessionDownloadHandlers: new Map(),
+    });
+    controller.configureSession(targetSession);
+    const verify = setCertificateVerifyProc.mock.calls[0][0];
+    for (const issuerName of ['Google Trust Services', 'Cloudflare', 'Amazon', 'Untrusted CA']) {
+      const callback = vi.fn();
+      verify({ hostname: 'attacker.example', verificationResult: 'net::ERR_CERT_AUTHORITY_INVALID', certificate: { issuerName } }, callback);
+      expect(callback).toHaveBeenCalledWith(-3);
+    }
+  });
+
 });

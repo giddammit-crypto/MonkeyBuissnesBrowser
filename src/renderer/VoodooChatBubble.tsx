@@ -169,6 +169,9 @@ export default function VoodooChatBubble({
 
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [agentProgress, setAgentProgress] = useState('');
+  const [modelLabel, setModelLabel] = useState('ИИ агент');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [insertedKey, setInsertedKey] = useState<string | null>(null);
@@ -187,6 +190,7 @@ export default function VoodooChatBubble({
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const followMessagesRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Dragging state
@@ -227,17 +231,34 @@ export default function VoodooChatBubble({
     }
   }, [standalone, propsOnHideBubble]);
 
-  // Auto-scroll on new messages
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    messagesEndRef.current?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth' });
   }, []);
 
+  // Focus only when opening; incoming progress must not steal keyboard focus.
   useEffect(() => {
-    if (isOpen) {
-      scrollToBottom();
-      setTimeout(() => textareaRef.current?.focus(), 80);
-    }
-  }, [isOpen, messages, scrollToBottom]);
+    if (!isOpen) return;
+    followMessagesRef.current = true;
+    scrollToBottom();
+    const timer = setTimeout(() => textareaRef.current?.focus(), 80);
+    return () => clearTimeout(timer);
+  }, [isOpen, scrollToBottom]);
+
+  useEffect(() => {
+    if (isOpen && followMessagesRef.current) scrollToBottom();
+  }, [isOpen, messages, loading, agentProgress, scrollToBottom]);
+
+  useEffect(() => {
+    let active = true;
+    void window.browserApi.getSnapshot().then((snapshot) => {
+      if (active) setModelLabel(snapshot.settings.voodooModel || 'ИИ агент');
+    }).catch(() => {});
+    const unsubscribe = window.browserApi.onSnapshotChanged((snapshot) => {
+      setModelLabel(snapshot.settings.voodooModel || 'ИИ агент');
+    });
+    return () => { active = false; unsubscribe(); };
+  }, []);
 
   // Persist history to sessionStorage
   useEffect(() => {
@@ -281,29 +302,38 @@ export default function VoodooChatBubble({
     }
   }, []);
 
-  const handleStopRequest = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
+  const handleStopRequest = useCallback(async () => {
+    const controller = abortControllerRef.current;
+    if (!controller || stopping) return;
+    setStopping(true);
+    setAgentProgress('Останавливаю дальнейшие действия…');
+    try {
+      await window.browserApi.cancelVoodooRequest();
+      if (abortControllerRef.current !== controller) return;
+      controller.abort();
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateId('voodoo-stopped'),
+          role: 'assistant',
+          content: 'Запрос остановлен. Уже начатое действие могло завершиться; проверь результат перед повторным запуском.',
+          timestamp: Date.now(),
+        },
+      ]);
+    } catch {
+      setAgentProgress('Не удалось остановить запрос. Попробуй ещё раз.');
+    } finally {
+      setStopping(false);
     }
-    setLoading(false);
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: generateId('voodoo-stopped'),
-        role: 'assistant',
-        content: '⏹️ [Запрос остановлен пользователем]',
-        timestamp: Date.now(),
-      },
-    ]);
-  }, []);
+  }, [stopping]);
 
   const handleSendMessage = useCallback(async (
     textToSend?: string,
     contextOverride?: { url?: string; title?: string; chatText?: string }
   ) => {
     const prompt = (textToSend || input).trim();
-    if (!prompt || loading) return;
+    if (!prompt || loading || abortControllerRef.current) return;
+    followMessagesRef.current = true;
 
     const userMessage: VoodooChatMessage = {
       id: generateId('user'),
@@ -318,6 +348,7 @@ export default function VoodooChatBubble({
     setMessages((prev) => [...prev, userMessage]);
     if (!textToSend) setInput('');
     setLoading(true);
+    setAgentProgress('Планирую шаги и выбираю инструменты…');
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
@@ -335,6 +366,7 @@ export default function VoodooChatBubble({
 
       const response = await Promise.race([requestPromise, abortPromise]);
 
+      if (abortController.signal.aborted || abortControllerRef.current !== abortController) return;
       const assistantMessage: VoodooChatMessage = {
         id: generateId('voodoo'),
         role: 'assistant',
@@ -356,7 +388,7 @@ export default function VoodooChatBubble({
         {
           id: generateId('voodoo-err'),
           role: 'assistant',
-          content: `Произошла ошибка: ${errorMsg}. Пожалуйста, проверьте API-ключ xkiro в Настройках браузера.`,
+          content: `Не удалось завершить запрос: ${errorMsg}. Подробности ниже. Если часть действий уже выполнена, проверь результат перед повтором.`,
           timestamp: Date.now(),
           error: errorMsg,
         },
@@ -364,8 +396,9 @@ export default function VoodooChatBubble({
     } finally {
       if (abortControllerRef.current === abortController) {
         abortControllerRef.current = null;
+        setLoading(false);
+        setAgentProgress('');
       }
-      setLoading(false);
     }
   }, [input, loading, messages, currentTab]);
 
@@ -381,7 +414,9 @@ export default function VoodooChatBubble({
   // Listen to IPC events from main process (context menu "Анализировать с ВуДу", hotkey, etc.)
   useEffect(() => {
     const removeListener = window.browserApi?.onTabEvent?.((event) => {
-      if (event.type === 'voodoo-analyze-text' && event.message) {
+      if (event.type === 'voodoo-agent-progress' && abortControllerRef.current) {
+        setAgentProgress(event.message || 'Выполняю следующий шаг…');
+      } else if (event.type === 'voodoo-analyze-text' && event.message) {
         if (!isOpen) {
           if (standalone) {
             setIsOpenState(true);
@@ -490,8 +525,9 @@ export default function VoodooChatBubble({
   };
 
   const handleClearHistory = () => {
+    if (abortControllerRef.current) return;
     setMessages([INITIAL_MESSAGE]);
-    sessionStorage.removeItem('voodoo_chat_history');
+    try { sessionStorage.removeItem('voodoo_chat_history'); } catch {}
   };
 
   const cancelListening = useCallback(() => {
@@ -791,7 +827,7 @@ export default function VoodooChatBubble({
       }
       return;
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       if (isListening) {
         stopListening();
@@ -929,6 +965,7 @@ export default function VoodooChatBubble({
           title="Вуду AI · Зажмите для перетаскивания / Кликните для открытия (Ctrl+Shift+V)"
           aria-label="Вуду AI"
           onMouseDown={onMouseDownBubble}
+          onClick={(event) => { if (event.detail === 0) void toggleOpen(); }}
         >
           <img src={voodooAvatar} alt="Вуду AI" className="voodoo-bubble-avatar" />
           <span className="voodoo-bubble-status-badge" />
@@ -992,11 +1029,11 @@ export default function VoodooChatBubble({
               <div className="voodoo-header-info">
                 <div className="voodoo-header-title">
                   <span>Вуду AI</span>
-                  <span className="voodoo-model-badge">Qwen 3.8 Max</span>
+                  <span className="voodoo-model-badge" title={modelLabel}>{modelLabel}</span>
                 </div>
                 <div className="voodoo-header-status">
                   <span className="voodoo-status-dot" />
-                  <span>В сети</span>
+                  <span>{loading ? 'Выполняю запрос' : 'Готов к запросу'}</span>
                 </div>
               </div>
             </div>
@@ -1005,6 +1042,7 @@ export default function VoodooChatBubble({
               <button
                 className="voodoo-header-btn"
                 title="Сбросить позицию в правый нижний угол"
+                aria-label="Сбросить позицию окна Вуду"
                 onClick={() => void window.browserApi.resetVoodooPosition()}
               >
                 <Move size={14} />
@@ -1012,6 +1050,7 @@ export default function VoodooChatBubble({
               <button
                 className="voodoo-header-btn"
                 title="Свернуть в кружок"
+                aria-label="Свернуть чат Вуду"
                 onClick={() => void closeWindow()}
               >
                 <Minus size={14} />
@@ -1019,6 +1058,7 @@ export default function VoodooChatBubble({
               <button
                 className="voodoo-header-btn"
                 title="Закрыть (свернуть в кружок)"
+                aria-label="Закрыть чат Вуду"
                 onClick={() => void closeWindow()}
               >
                 <X size={14} />
@@ -1082,6 +1122,7 @@ export default function VoodooChatBubble({
             <button
               className="voodoo-pill"
               onClick={handleClearHistory}
+              disabled={loading}
               title="Очистить историю диалога с Вуду"
             >
               <RotateCcw size={12} />
@@ -1090,7 +1131,12 @@ export default function VoodooChatBubble({
           </div>
 
           {/* Scrollable Messages Container with Markdown */}
-          <div className="voodoo-messages-container">
+          <div className="voodoo-messages-container" role="log" aria-label="История диалога с Вуду" aria-live="polite" aria-relevant="additions"
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              followMessagesRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+            }}
+          >
             {messages.map((msg, msgIndex) => {
               const timeString = new Date(msg.timestamp).toLocaleTimeString([], {
                 hour: '2-digit',
@@ -1111,7 +1157,7 @@ export default function VoodooChatBubble({
                       <div className="voodoo-agent-actions">
                         <div className="voodoo-agent-actions-title">
                           <Sparkles size={11} />
-                          <span>Действия агента:</span>
+                          <span>Действия агента: {msg.executedActions.length}</span>
                         </div>
                         <div className="voodoo-action-pills-list">
                           {msg.executedActions.map((action, aIdx) => {
@@ -1126,7 +1172,11 @@ export default function VoodooChatBubble({
                                   {isSuccess ? <Check size={9} /> : <X size={9} />}
                                 </span>
                                 {getActionToolIcon(action.tool)}
-                                <span className="voodoo-action-summary">{action.summary}</span>
+                                <span className="voodoo-action-summary">
+                                  <span className="voodoo-action-step">Шаг {aIdx + 1}. {isSuccess ? 'Выполнено' : 'Ошибка'}: </span>
+                                  {action.summary}
+                                  {action.error && <span className="voodoo-action-error">{action.error}</span>}
+                                </span>
                               </div>
                             );
                           })}
@@ -1138,6 +1188,13 @@ export default function VoodooChatBubble({
                       <MarkdownView content={msg.content} />
                     ) : (
                       msg.content
+                    )}
+
+                    {msg.error && (
+                      <div className="voodoo-request-error" role="status">
+                        <AlertCircle size={14} aria-hidden="true" />
+                        <span>{msg.error}</span>
+                      </div>
                     )}
 
                     {/* Suggested reply action cards */}
@@ -1193,11 +1250,11 @@ export default function VoodooChatBubble({
             })}
 
             {loading && (
-              <div className="voodoo-typing-indicator">
+              <div className="voodoo-typing-indicator" role="status" aria-atomic="true">
                 <span className="voodoo-dot" />
                 <span className="voodoo-dot" />
                 <span className="voodoo-dot" />
-                <span>Вуду думает…</span>
+                <span>{agentProgress || 'Выполняю запрос…'}</span>
               </div>
             )}
             <div ref={messagesEndRef} />
@@ -1229,6 +1286,7 @@ export default function VoodooChatBubble({
                 className="voodoo-voice-cancel-btn"
                 onClick={cancelListening}
                 title="Отменить голосовой ввод (Esc)"
+                aria-label="Отменить голосовой ввод"
               >
                 <X size={12} />
               </button>
@@ -1236,7 +1294,7 @@ export default function VoodooChatBubble({
           )}
 
           {voiceError && (
-            <div className="voodoo-voice-error-bar">
+            <div className="voodoo-voice-error-bar" role="alert">
               <AlertCircle size={12} />
               <span>{voiceError}</span>
             </div>
@@ -1249,6 +1307,7 @@ export default function VoodooChatBubble({
                 ref={textareaRef}
                 className="voodoo-textarea"
                 rows={2}
+                aria-label="Запрос для Вуду"
                 placeholder={isListening ? "Слушаю ваш голос..." : "Спроси Вуду или скажи команду..."}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -1260,11 +1319,12 @@ export default function VoodooChatBubble({
               <button
                 type="button"
                 className="voodoo-stop-btn"
-                onClick={handleStopRequest}
-                title="Остановить генерацию ответа"
+                onClick={() => void handleStopRequest()}
+                disabled={stopping}
+                title="Остановить запрос и дальнейшие действия агента"
               >
                 <Square size={13} fill="currentColor" />
-                <span>Остановить</span>
+                <span>{stopping ? 'Останавливаю…' : 'Остановить'}</span>
               </button>
             ) : (
               <>
@@ -1274,6 +1334,8 @@ export default function VoodooChatBubble({
                   onClick={isListening ? stopListening : startListening}
                   disabled={loading || isTranscribing}
                   title={isListening ? "Остановить запись и отправить команду" : "Голосовая команда STT (нажмите и говорите)"}
+                  aria-label={isListening ? "Отправить голосовую команду" : "Записать голосовую команду"}
+                  aria-pressed={isListening}
                 >
                   {isListening ? (
                     <Square size={13} className="voodoo-mic-stop-icon" />
@@ -1288,6 +1350,7 @@ export default function VoodooChatBubble({
                   onClick={() => handleSendMessage()}
                   disabled={!input.trim() || loading}
                   title="Отправить (Enter)"
+                  aria-label="Отправить запрос Вуду"
                 >
                   <Send size={14} />
                 </button>
