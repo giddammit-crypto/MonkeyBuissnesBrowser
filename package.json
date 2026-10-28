@@ -85,7 +85,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "assets/icons/ico/SOUL-M8TE.ico"
+      "icon": "assets/icons/png/app-icon-512.png"
     },
     "mac": {
       "target": [

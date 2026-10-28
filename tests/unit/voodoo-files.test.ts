@@ -48,4 +48,29 @@ describe('Voodoo bounded file tools', () => {
     service.write({ filename: 'a.txt', content: 'one' });
     expect(service.list({ limit: 1 })).toMatchObject({ files: [{ filename: 'a.txt' }], truncated: true });
   });
+  it('reads a UTF8 file in consecutive character pages without skipping or duplicating text', () => {
+    const content = 'Первая строка\nВторая строка\nТретья строка. Конец.';
+    service.write({ filename: 'страницы.txt', content, folder: 'documents' });
+    const fragments: string[] = [];
+    let start = 0;
+    for (let pageNumber = 0; pageNumber < 20; pageNumber++) {
+      const page = service.read({ filename: 'страницы.txt', folder: 'documents', start, max_length: 7 });
+      expect(page.start).toBe(start);
+      expect(page.totalLength).toBe(content.length);
+      expect(page.sizeBytes).toBe(Buffer.byteLength(content, 'utf8'));
+      fragments.push(page.content);
+      if (page.next_start === null) {
+        expect(page.truncated).toBe(false);
+        break;
+      }
+      expect(page.truncated).toBe(true);
+      expect(page.next_start).toBe(start + page.content.length);
+      start = page.next_start;
+    }
+    expect(fragments.join('')).toBe(content);
+    expect(service.read({ filename: 'страницы.txt', folder: 'documents', start: 99999 })).toMatchObject({
+      start: content.length, content: '', next_start: null, truncated: false,
+    });
+  });
+
 });

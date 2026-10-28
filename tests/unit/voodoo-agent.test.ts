@@ -323,6 +323,7 @@ describe('Voodoo Browser Agent Tools', () => {
         {
           keys: ['sk-xt-test-key-1234567890'],
           toolExecutor: mockToolExecutor,
+          maxSteps: 12,
         }
       );
 

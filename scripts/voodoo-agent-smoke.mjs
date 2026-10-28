@@ -12,12 +12,16 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'voodoo-smoke-'));
 let app;
 let round = 0;
 let cancelling = false;
+let workflowRound = 0;
+let workflow = false;
 let started;
 let tabId;
 const tool = (name, args) => ({ id: `call_${round}`, type: 'function', function: { name, arguments: JSON.stringify(args) } });
 const server = http.createServer(async (req, res) => {
   if (req.method !== 'POST') {
     res.writeHead(200, { 'content-type': 'text/html' });
+    if (req.url === '/source-a') { res.end('<title>Источник A</title><article>A=12; ' + 'Подтвержденные данные. '.repeat(30) + 'END_A</article>'); return; }
+    if (req.url === '/source-b') { res.end('<title>Источник B</title><article>B=18; END_B</article>'); return; }
     res.end('<title>Agent fixture</title><textarea id="draft"></textarea><button id="go" onclick="document.querySelector(\'#result\').textContent=document.querySelector(\'#draft\').value">Apply</button><p id="result"></p>');
     return;
   }
@@ -26,6 +30,45 @@ const server = http.createServer(async (req, res) => {
   const body = JSON.parse(raw);
   if (body.max_tokens === 3) { res.end(JSON.stringify({ choices: [{ message: { content: '1' } }] })); return; }
   if (cancelling) { started?.(); return; }
+  if (workflow) {
+    workflowRound++;
+    const steps = ['Прочитать два источника полностью', 'Сравнить и сохранить отчёт', 'Проверить сохранённый файл'];
+    const plan = completed => tool('update_plan', { steps, completed_steps: completed });
+    const output = (name, args = {}) => ({ tool_calls: [tool(name, args)] });
+    let message;
+    switch (workflowRound) {
+      case 1: message = { tool_calls: [plan(0)] }; break;
+      case 2: message = { content: 'Сейчас подготовлю сравнение.' }; break;
+      case 3: message = output('open_url', { url: `${base}/source-a`, new_tab: true }); break;
+      case 4: message = output('read_page', { max_length: 32 }); break;
+      case 5: {
+        const observation = [...body.messages].reverse().find(item => item.role === 'tool' && item.name === 'read_page');
+        const page = JSON.parse(observation.content).result;
+        assert.equal(page.next_start, 32);
+        message = output('read_page', { start: page.next_start });
+        break;
+      }
+      case 6:
+        assert.match(JSON.stringify(body.messages), /END_A/);
+        message = output('open_url', { url: `${base}/source-b`, new_tab: true }); break;
+      case 7: message = output('read_page'); break;
+      case 8:
+        assert.match(JSON.stringify(body.messages), /END_B/);
+        message = { tool_calls: [plan(1)] }; break;
+      case 9: message = output('create_file', { filename: 'comparison.md', folder: 'documents', content: '# Сравнение\nA=12; B=18; разница=6\nИсточники: ' + base + '/source-a, ' + base + '/source-b' }); break;
+      case 10: message = { tool_calls: [plan(2)] }; break;
+      case 11: message = output('read_file', { filename: 'comparison.md', folder: 'documents' }); break;
+      case 12:
+        assert.match(JSON.stringify(body.messages), /разница=6/);
+        message = output('list_tabs'); break;
+      case 13: message = { tool_calls: [plan(3)] }; break;
+      case 14: message = { content: 'Два источника сравнены. Отчёт сохранён и прочитан для проверки.' }; break;
+      default: throw new Error('Workflow failed to finish within expected rounds');
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message, finish_reason: message.tool_calls ? 'tool_calls' : 'stop' }] }));
+    return;
+  }
   round++;
   let message;
   if (round === 1) message = { tool_calls: [tool('fill_input', { tab_id: tabId, selector: '#draft', text: 'Многошаговый агент' })] };
@@ -59,6 +102,18 @@ try {
   const text = await app.evaluate(({ webContents }, base) => webContents.getAllWebContents().find(c => c.getURL() === `${base}/`).executeJavaScript('document.querySelector("#result").textContent'), base);
   assert.equal(text, 'Многошаговый агент');
   console.log('PASS real IPC → multi-round provider → textarea → click → read');
+  const documentsPath = path.join(profile, 'documents');
+  fs.mkdirSync(documentsPath);
+  await app.evaluate(({ app }, folder) => app.setPath('documents', folder), documentsPath);
+  workflow = true;
+  const complex = await invoke('sendVoodooMessage', [{ role: 'user', content: 'Прочитай два источника, сравни числа и сохрани отчёт. Проверь файл.' }]);
+  assert.equal(complex.error, undefined);
+  assert.equal(workflowRound, 14);
+  assert.ok(complex.executedActions.some(action => action.tool === 'update_plan'));
+  assert.match(fs.readFileSync(path.join(documentsPath, 'comparison.md'), 'utf8'), /A=12; B=18; разница=6/);
+  assert.ok(complex.executedActions.some(action => action.tool === 'read_file' && !action.error));
+  console.log('PASS 14-round plan → premature reply recovery → two sources → pagination → comparison file → read-back');
+  workflow = false;
   cancelling = true;
   const observed = new Promise(resolve => { started = resolve; });
   const pending = invoke('sendVoodooMessage', [{ role: 'user', content: 'Долгая задача' }]);

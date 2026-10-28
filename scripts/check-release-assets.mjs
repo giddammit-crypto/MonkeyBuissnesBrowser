@@ -26,4 +26,7 @@ if (pkg.version !== lock.version || pkg.version !== lock.packages?.['']?.version
   throw new Error('package.json and package-lock.json versions differ');
 if (pkg.build?.linux?.icon !== 'assets/icons/png')
   throw new Error('Unexpected Linux icon packaging path');
+const winIcon = requireFile(pkg.build?.win?.icon || 'missing-windows-icon');
+if (!winIcon.subarray(0, 8).equals(pngHeader) || winIcon.readUInt32BE(16) < 256 || winIcon.readUInt32BE(20) < 256)
+  throw new Error('Windows packaging must use a PNG source of at least 256x256 pixels');
 console.log(`soulm8te ${pkg.version}: icons, wallpapers and version metadata verified`);

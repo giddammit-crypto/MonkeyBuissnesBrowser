@@ -68,7 +68,10 @@ export class VoodooFileService {
       if (content.includes('\0')) throw new Error('Файл не является текстовым');
       const limit = typeof args.max_length === 'number' && Number.isFinite(args.max_length)
         ? Math.max(1, Math.min(100000, Math.floor(args.max_length))) : 20000;
-      return { filename: path.basename(target), content: content.slice(0, limit), sizeBytes: bytesRead, truncated: content.length > limit };
+      const requestedStart = typeof args.start === 'number' && Number.isFinite(args.start) ? Math.max(0, Math.floor(args.start)) : 0;
+      const start = Math.min(requestedStart, content.length);
+      const end = Math.min(start + limit, content.length);
+      return { filename: path.basename(target), content: content.slice(start, end), sizeBytes: bytesRead, totalLength: content.length, start, next_start: end < content.length ? end : null, truncated: end < content.length };
     } finally { fs.closeSync(descriptor); }
   }
 

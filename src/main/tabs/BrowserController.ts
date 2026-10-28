@@ -4583,17 +4583,18 @@ export class BrowserController {
             };
           }
 
-          const maxLength = typeof args.max_length === 'number' && Number.isFinite(args.max_length) && args.max_length > 0 ? Math.min(50000, Math.floor(args.max_length)) : 4000;
+          const maxLength = typeof args.max_length === 'number' && Number.isFinite(args.max_length) && args.max_length > 0 ? Math.max(1, Math.min(50000, Math.floor(args.max_length))) : 4000;
+          const start = typeof args.start === 'number' && Number.isFinite(args.start) ? Math.max(0, Math.floor(args.start)) : 0;
           const pageData = await tab.view.webContents.executeJavaScript(`
-            (function(maxChars) {
+            (function(maxChars, requestedStart) {
               try {
                 const clone = document.body ? document.body.cloneNode(true) : null;
-                if (!clone) return { title: document.title, url: location.href, text: '' };
-
-                const removeSelectors = ['script', 'style', 'noscript', 'header', 'footer', 'nav', 'svg', 'iframe'];
-                for (const sel of removeSelectors) {
-                  const elements = clone.querySelectorAll(sel);
-                  elements.forEach((el) => el.remove());
+                if (clone) {
+                  const removeSelectors = ['script', 'style', 'noscript', 'header', 'footer', 'nav', 'svg', 'iframe', 'input', 'textarea', 'select', '[contenteditable="true"]'];
+                  for (const sel of removeSelectors) {
+                    const elements = clone.querySelectorAll(sel);
+                    elements.forEach((el) => el.remove());
+                  }
                 }
 
                 const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
@@ -4601,30 +4602,54 @@ export class BrowserController {
                   .filter(Boolean)
                   .slice(0, 8);
 
-                let text = (clone.innerText || clone.textContent || '')
+                const fullText = clone ? (clone.innerText || clone.textContent || '')
                   .replace(/\\s+/g, ' ')
-                  .trim();
-
-                if (text.length > maxChars) {
-                  text = text.slice(0, maxChars) + '... [содержимое сокращено]';
+                  .trim() : '';
+                const totalLength = fullText.length;
+                const start = Math.min(requestedStart, totalLength);
+                const end = Math.min(start + maxChars, totalLength);
+                const links = [];
+                const seen = new Set();
+                for (const link of document.querySelectorAll('a[href]')) {
+                  let href;
+                  try {
+                    const url = new URL(link.getAttribute('href'), document.baseURI || location.href);
+                    if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
+                    href = url.href;
+                  } catch (_) { continue; }
+                  if (seen.has(href)) continue;
+                  seen.add(href);
+                  links.push({
+                    title: (link.innerText || link.textContent || link.getAttribute('aria-label') || link.title || '').replace(/\\s+/g, ' ').trim().slice(0, 160),
+                    href,
+                  });
+                  if (links.length >= 40) break;
                 }
 
                 return {
                   title: document.title,
                   url: location.href,
                   headings,
-                  text,
+                  text: fullText.slice(start, end),
+                  totalLength,
+                  start,
+                  next_start: end < totalLength ? end : null,
+                  truncated: end < totalLength,
+                  links,
                 };
               } catch (e) {
                 return { title: document.title, url: location.href, text: '', error: String(e) };
               }
-            })(${JSON.stringify(maxLength)})
+            })(${JSON.stringify(maxLength)}, ${JSON.stringify(start)})
           `, true);
 
+          if (pageData.error) {
+            return { success: false, error: String(pageData.error), result: pageData, summary: '❌ Не удалось прочитать страницу' };
+          }
           return {
             success: true,
             result: pageData,
-            summary: `📄 Прочитана страница «${pageData.title || tab.title}» (${pageData.text?.length || 0} симв.)`,
+            summary: `📄 Прочитана страница «${pageData.title || tab.title}» (${pageData.text?.length || 0} симв., начало ${pageData.start ?? 0}${pageData.truncated ? ', есть продолжение' : ''})`,
           };
         }
 
