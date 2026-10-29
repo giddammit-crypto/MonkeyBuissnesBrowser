@@ -2063,7 +2063,18 @@ export class BrowserController {
     return this.passwords.getSecret(passwordId);
   }
 
+  getPageAutofillCredentials(senderId: number, data: { origin: string; hostname?: string }): { id: string; username: string; password: string; exactOrigin?: boolean }[] {
+    if (!this.isTrustedPage(senderId)) return [];
+    const tab = Array.from(this.tabs.values()).find((t) => t.webContentsId === senderId);
+    if (!tab || tab.isPrivate || tab.isInternal) return [];
+    if (!data || !data.origin || typeof data.origin !== 'string') return [];
+    return this.passwords.getCredentialsForAutofill(data.origin, data.hostname);
+  }
+
   async getSavedCredentialsForOrigin(origin: string): Promise<ImportedPasswordSummary[]> {
+    if (typeof (this.passwords as any)?.getSummariesForOrigin === 'function') {
+      return this.passwords.getSummariesForOrigin(origin);
+    }
     return this.passwords.summaries().filter((s) => s.origin === origin);
   }
 

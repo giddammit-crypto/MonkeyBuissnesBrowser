@@ -146,6 +146,10 @@ function registerIpc(): void {
     if (event.senderFrame !== event.sender.mainFrame || !controller?.isTrustedPage(event.sender.id)) return false;
     return controller.getPageAdBlockPolicy(event.sender.id);
   });
+  ipcMain.handle('page:get-autofill-credentials', (event, data: { origin: string; hostname?: string }) => {
+    if (event.senderFrame !== event.sender.mainFrame || !controller?.isTrustedPage(event.sender.id)) return [];
+    return controller.getPageAutofillCredentials(event.sender.id, data);
+  });
   ipcMain.on('page:form-state', (event, dirty: unknown) => {
     if (event.senderFrame === event.sender.mainFrame && typeof dirty === 'boolean') controller?.markFormState(event.sender.id, dirty);
   });

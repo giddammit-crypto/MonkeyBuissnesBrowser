@@ -177,10 +177,78 @@ try {
 }
 
 // No bridge is exposed to websites. A dirty form conservatively prevents discarding
+// No bridge is exposed to websites. A dirty form conservatively prevents discarding
 // unsaved input; a completed main-frame navigation resets this in the controller.
 let dirty = false;
+
+const isInput = (el: unknown): el is HTMLInputElement => {
+  if (!el || typeof el !== 'object') return false;
+  if (typeof HTMLInputElement !== 'undefined' && el instanceof HTMLInputElement) return true;
+  return 'type' in el && 'value' in el;
+};
+
+const isTextualInput = (el: Element): el is HTMLInputElement => {
+  if (!isInput(el)) return false;
+  if (
+    el.type === 'password' ||
+    el.type === 'hidden' ||
+    el.type === 'submit' ||
+    el.type === 'button' ||
+    el.type === 'reset' ||
+    el.type === 'checkbox' ||
+    el.type === 'radio' ||
+    el.type === 'file' ||
+    el.type === 'image'
+  ) {
+    return false;
+  }
+  const rawType = (typeof el.getAttribute === 'function' ? el.getAttribute('type') : (el as any).type) || '';
+  const lower = rawType.toLowerCase();
+  return !lower || lower === 'text' || lower === 'email' || lower === 'tel';
+};
+
+const matchesUsernameHeuristics = (input: HTMLInputElement): boolean => {
+  const autocomplete = (typeof input.getAttribute === 'function' ? input.getAttribute('autocomplete') : '') || '';
+  const autoLower = autocomplete.toLowerCase();
+  if (autoLower === 'username' || autoLower === 'email') {
+    return true;
+  }
+  const name = (typeof input.getAttribute === 'function' ? input.getAttribute('name') : (input as any).name) || '';
+  const id = (typeof input.getAttribute === 'function' ? input.getAttribute('id') : (input as any).id) || '';
+  const placeholder = (typeof input.getAttribute === 'function' ? input.getAttribute('placeholder') : '') || '';
+  const ariaLabel = (typeof input.getAttribute === 'function' ? input.getAttribute('aria-label') : '') || '';
+
+  const str = `${name} ${id} ${placeholder} ${ariaLabel}`.toLowerCase();
+  const keywords = ['user', 'login', 'email', 'телефон', 'логин', 'phone', 'account'];
+  return keywords.some(k => str.includes(k));
+};
+
+// Состояние пользовательского ввода (для двухэтапной авторизации и SPA)
+let lastTypedUsername = '';
+let lastTypedPassword = '';
+let lastSubmitAttemptTime = 0;
+
+const trackInputActivity = (event: Event) => {
+  try {
+    const target = (event.composedPath?.()[0] ?? event.target) as HTMLElement | null;
+    if (!target || !isInput(target)) return;
+    if (target.type === 'password') {
+      if (target.value) {
+        lastTypedPassword = target.value;
+      }
+    } else if (isTextualInput(target)) {
+      if (target.value && target.value.trim().length > 0) {
+        if (matchesUsernameHeuristics(target) || !lastTypedUsername) {
+          lastTypedUsername = target.value.trim();
+        }
+      }
+    }
+  } catch {}
+};
+
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   const protectUnsavedInput = (event: Event) => {
+    trackInputActivity(event);
     if (!event.isTrusted || dirty) return;
     // Shadow DOM retargets event.target to the host; composedPath preserves
     // the actual editable control for open shadow roots.
@@ -192,6 +260,7 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   };
   window.addEventListener('input', protectUnsavedInput, true);
   window.addEventListener('change', protectUnsavedInput, true);
+  window.addEventListener('blur', trackInputActivity, true);
 
   window.addEventListener('wheel', (event: WheelEvent) => {
     if (event.ctrlKey || event.metaKey) {
@@ -203,7 +272,10 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
     }
   }, { passive: false, capture: true });
 
-  // Chromium Password Manager: Automatic login form submission capture
+  // =========================================================================
+  // Chromium Password Manager: Interception & Autofill Engine
+  // =========================================================================
+
   const isInputVisible = (input: HTMLElement): boolean => {
     if (!input.isConnected) return false;
     if (input instanceof HTMLInputElement && input.type === 'hidden') return false;
@@ -222,39 +294,6 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
     return true;
   };
 
-  const isTextualInput = (el: Element): el is HTMLInputElement => {
-    if (!(el instanceof HTMLInputElement)) return false;
-    if (
-      el.type === 'password' ||
-      el.type === 'hidden' ||
-      el.type === 'submit' ||
-      el.type === 'button' ||
-      el.type === 'reset' ||
-      el.type === 'checkbox' ||
-      el.type === 'radio' ||
-      el.type === 'file' ||
-      el.type === 'image'
-    ) {
-      return false;
-    }
-    const rawType = (el.getAttribute('type') || '').toLowerCase();
-    return !rawType || rawType === 'text' || rawType === 'email' || rawType === 'tel';
-  };
-
-  const matchesUsernameHeuristics = (input: HTMLInputElement): boolean => {
-    const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
-    if (autocomplete === 'username' || autocomplete === 'email') {
-      return true;
-    }
-    const name = (input.getAttribute('name') || '').toLowerCase();
-    const id = (input.getAttribute('id') || '').toLowerCase();
-    const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
-    const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
-
-    const keywords = ['user', 'login', 'email', 'телефон', 'логин'];
-    return keywords.some(k => name.includes(k) || id.includes(k) || placeholder.includes(k) || ariaLabel.includes(k));
-  };
-
   let lastSubmitted = { origin: '', username: '', password: '', time: 0 };
 
   const notifyPasswordSubmitted = (username: string, password: string) => {
@@ -266,7 +305,7 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
         lastSubmitted.origin === window.location.origin &&
         lastSubmitted.username === trimmedUser &&
         lastSubmitted.password === password &&
-        now - lastSubmitted.time < 1500
+        now - lastSubmitted.time < 2000
       ) {
         return;
       }
@@ -305,14 +344,18 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
         }
       }
 
-      if (!passwordInput || !passwordInput.value || passwordInput.value.length < 1) {
+      let password = passwordInput?.value || '';
+      if (!password && lastTypedPassword) {
+        password = lastTypedPassword;
+      }
+
+      if (!password || password.length < 1) {
         return null;
       }
 
-      const password = passwordInput.value;
       let username = '';
 
-      const enclosingForm = form || passwordInput.closest('form');
+      const enclosingForm = form || passwordInput?.closest('form');
 
       if (enclosingForm) {
         const formInputs = Array.from(enclosingForm.querySelectorAll<HTMLInputElement>('input'));
@@ -321,14 +364,18 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
         // 1. Поиск инпута с autocomplete="username", autocomplete="email" или именами user, login, email, телефон, логин
         const heuristicMatches = textInputs.filter(input => matchesUsernameHeuristics(input) && input.value.trim().length > 0);
         if (heuristicMatches.length > 0) {
-          const precedingMatches = heuristicMatches.filter(input =>
-            Boolean(input.compareDocumentPosition(passwordInput!) & Node.DOCUMENT_POSITION_PRECEDING)
-          );
-          username = (precedingMatches.length > 0 ? precedingMatches[precedingMatches.length - 1] : heuristicMatches[0]).value;
+          if (passwordInput) {
+            const precedingMatches = heuristicMatches.filter(input =>
+              Boolean(input.compareDocumentPosition(passwordInput!) & Node.DOCUMENT_POSITION_PRECEDING)
+            );
+            username = (precedingMatches.length > 0 ? precedingMatches[precedingMatches.length - 1] : heuristicMatches[0]).value;
+          } else {
+            username = heuristicMatches[0].value;
+          }
         }
 
         // 2. Если не найдено, берет ближайшее текстовое поле перед паролем
-        if (!username) {
+        if (!username && passwordInput) {
           const precedingTextInputs = textInputs.filter(input =>
             Boolean(input.compareDocumentPosition(passwordInput!) & Node.DOCUMENT_POSITION_PRECEDING)
           );
@@ -349,21 +396,33 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
         // Пароль вне формы: ищет ближайший предшествующий инпут логина в DOM
         const allDocInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input'));
         const textInputs = allDocInputs.filter(input => isTextualInput(input));
-        const preceding = textInputs.filter(input =>
-          Boolean(input.compareDocumentPosition(passwordInput!) & Node.DOCUMENT_POSITION_PRECEDING)
-        );
+        if (passwordInput) {
+          const preceding = textInputs.filter(input =>
+            Boolean(input.compareDocumentPosition(passwordInput!) & Node.DOCUMENT_POSITION_PRECEDING)
+          );
 
-        const heuristicMatches = preceding.filter(input => matchesUsernameHeuristics(input) && input.value.trim().length > 0);
-        if (heuristicMatches.length > 0) {
-          username = heuristicMatches[heuristicMatches.length - 1].value;
-        } else {
-          for (let i = preceding.length - 1; i >= 0; i--) {
-            if (preceding[i].value.trim().length > 0) {
-              username = preceding[i].value;
-              break;
+          const heuristicMatches = preceding.filter(input => matchesUsernameHeuristics(input) && input.value.trim().length > 0);
+          if (heuristicMatches.length > 0) {
+            username = heuristicMatches[heuristicMatches.length - 1].value;
+          } else {
+            for (let i = preceding.length - 1; i >= 0; i--) {
+              if (preceding[i].value.trim().length > 0) {
+                username = preceding[i].value;
+                break;
+              }
             }
           }
+        } else {
+          const heuristicMatches = textInputs.filter(input => matchesUsernameHeuristics(input) && input.value.trim().length > 0);
+          if (heuristicMatches.length > 0) {
+            username = heuristicMatches[heuristicMatches.length - 1].value;
+          }
         }
+      }
+
+      // Если в текущей форме поле логина не найдено или очищено — используем lastTypedUsername (2-этапный вход VK, Google, Yandex)
+      if (!username && lastTypedUsername) {
+        username = lastTypedUsername;
       }
 
       if (username && password) {
@@ -375,12 +434,35 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
     return null;
   };
 
+  // Селектор кнопок отправки: расширенный для любых современных SPA (React, Vue, VKUI, Tailwind)
+  const SUBMIT_BUTTON_SELECTOR = 'button, input[type="submit"], input[type="button"], [role="button"], a[class*="btn"], a[class*="login"], a[class*="submit"], div[class*="btn"], div[class*="button"], [data-testid*="submit"], [data-testid*="login"]';
+  const SUBMIT_TEXT_REGEX = /(?:войти|вход|log\s*in|sign\s*in|submit|далее|next|continue|продолжить|отправить)/i;
+
+  const isSubmitTrigger = (el: HTMLElement): boolean => {
+    try {
+      if (typeof el.matches === 'function' && el.matches(SUBMIT_BUTTON_SELECTOR)) {
+        const isBtn = typeof HTMLButtonElement !== 'undefined' && el instanceof HTMLButtonElement;
+        const isInp = typeof HTMLInputElement !== 'undefined' && el instanceof HTMLInputElement;
+        if (isBtn || isInp || (el && typeof el === 'object' && 'type' in el)) {
+          if ((el as any).type === 'reset') return false;
+        }
+        return true;
+      }
+      const text = (el.textContent || '').trim();
+      if (text.length > 0 && text.length < 50 && SUBMIT_TEXT_REGEX.test(text)) {
+        return true;
+      }
+    } catch {}
+    return false;
+  };
+
   // Перехватчик submit на уровне window (capture: true)
   window.addEventListener('submit', (event: Event) => {
     try {
+      lastSubmitAttemptTime = Date.now();
       const form = event.target instanceof HTMLFormElement
         ? event.target
-        : (event.target as Element)?.closest?.('form');
+        : (typeof (event.target as Element)?.closest === 'function' ? (event.target as Element).closest('form') : null);
       const creds = extractCredentials(form);
       if (creds) {
         notifyPasswordSubmitted(creds.username, creds.password);
@@ -388,46 +470,352 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
     } catch {}
   }, true);
 
-  // Перехватчик click на кнопках отправки формы: button[type="submit"], input[type="submit"], button:not([type]), [role="button"] (если внутри формы есть пароль)
+  // Перехватчик click на кнопках отправки формы и SPA
   window.addEventListener('click', (event: MouseEvent) => {
     try {
       const target = (event.composedPath?.()[0] ?? event.target) as HTMLElement | null;
       if (!target) return;
-      const submitBtn = target.closest('button[type="submit"], input[type="submit"], button:not([type]), [role="button"]');
-      if (submitBtn) {
-        const form = submitBtn.closest('form');
-        if (form) {
-          if (form.querySelector('input[type="password"]')) {
-            const creds = extractCredentials(form);
+      const submitBtn = typeof target.closest === 'function' ? (target.closest(SUBMIT_BUTTON_SELECTOR) as HTMLElement | null) : null;
+      const isTextMatch = !submitBtn && isSubmitTrigger(target);
+      const trigger = submitBtn || (isTextMatch ? target : null);
+
+      if (trigger) {
+        lastSubmitAttemptTime = Date.now();
+        const form = typeof trigger.closest === 'function' ? (trigger.closest('form') as HTMLFormElement | null) : null;
+        const creds = extractCredentials(form);
+        if (creds) {
+          notifyPasswordSubmitted(creds.username, creds.password);
+        } else if (lastTypedUsername && lastTypedPassword) {
+          notifyPasswordSubmitted(lastTypedUsername, lastTypedPassword);
+        }
+      }
+    } catch {}
+  }, true);
+
+  // Перехватчик keydown с клавишей Enter в поле пароля или логина
+  window.addEventListener('keydown', (event: KeyboardEvent) => {
+    try {
+      if (event.key === 'Enter') {
+        const target = (event.composedPath?.()[0] ?? event.target) as HTMLElement | null;
+        if (target instanceof HTMLInputElement) {
+          lastSubmitAttemptTime = Date.now();
+          if (target.type === 'password' || isTextualInput(target)) {
+            const creds = extractCredentials(target.closest('form'), target.type === 'password' ? target : null);
             if (creds) {
               notifyPasswordSubmitted(creds.username, creds.password);
             }
-          }
-        } else {
-          // Кнопка вне формы (SPA)
-          const creds = extractCredentials(null);
-          if (creds) {
-            notifyPasswordSubmitted(creds.username, creds.password);
           }
         }
       }
     } catch {}
   }, true);
 
-  // Перехватчик keydown с клавишей Enter в поле пароля
-  window.addEventListener('keydown', (event: KeyboardEvent) => {
+  // Перехватчик перед уходом со страницы (beforeunload / pagehide)
+  const onPageUnload = () => {
     try {
-      if (event.key === 'Enter') {
-        const target = (event.composedPath?.()[0] ?? event.target) as HTMLElement | null;
-        if (target instanceof HTMLInputElement && target.type === 'password') {
-          const creds = extractCredentials(target.closest('form'), target);
-          if (creds) {
-            notifyPasswordSubmitted(creds.username, creds.password);
-          }
-        }
+      const now = Date.now();
+      if (lastTypedUsername && lastTypedPassword && (now - lastSubmitAttemptTime < 5000)) {
+        notifyPasswordSubmitted(lastTypedUsername, lastTypedPassword);
       }
     } catch {}
+  };
+  window.addEventListener('beforeunload', onPageUnload, true);
+  window.addEventListener('pagehide', onPageUnload, true);
+
+  // =========================================================================
+  // Autofill Engine: Auto-fill & Interactive Dropdown
+  // =========================================================================
+
+  const setNativeInputValue = (el: HTMLInputElement, val: string) => {
+    const proto = Object.getPrototypeOf(el);
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+      || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setter) {
+      setter.call(el, val);
+    } else {
+      el.value = val;
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+  };
+
+  const findUsernameInputForPassword = (passwordInput: HTMLInputElement): HTMLInputElement | null => {
+    const form = passwordInput.form || passwordInput.closest('form');
+    if (form) {
+      const inputs = Array.from(form.querySelectorAll<HTMLInputElement>('input')).filter(isTextualInput);
+      const preceding = inputs.filter(i => Boolean(i.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_PRECEDING));
+      const heuristicMatches = preceding.filter(matchesUsernameHeuristics);
+      if (heuristicMatches.length > 0) return heuristicMatches[heuristicMatches.length - 1];
+      if (preceding.length > 0) return preceding[preceding.length - 1];
+      const anyHeuristic = inputs.filter(matchesUsernameHeuristics);
+      if (anyHeuristic.length > 0) return anyHeuristic[0];
+      if (inputs.length > 0) return inputs[0];
+    } else {
+      const container = passwordInput.closest('[role="form"], [class*="login"], [class*="auth"], [class*="modal"], [class*="form"], main, section') || passwordInput.parentElement;
+      if (container) {
+        const inputs = Array.from(container.querySelectorAll<HTMLInputElement>('input')).filter(isTextualInput);
+        const preceding = inputs.filter(i => Boolean(i.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_PRECEDING));
+        const heuristicMatches = preceding.filter(matchesUsernameHeuristics);
+        if (heuristicMatches.length > 0) return heuristicMatches[heuristicMatches.length - 1];
+        if (preceding.length > 0) return preceding[preceding.length - 1];
+      }
+      const all = Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter(isTextualInput);
+      const preceding = all.filter(i => Boolean(i.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_PRECEDING));
+      const heuristicMatches = preceding.filter(matchesUsernameHeuristics);
+      if (heuristicMatches.length > 0) return heuristicMatches[heuristicMatches.length - 1];
+      if (preceding.length > 0) return preceding[preceding.length - 1];
+    }
+    return null;
+  };
+
+  const findPasswordInputForUsername = (usernameInput: HTMLInputElement): HTMLInputElement | null => {
+    const form = usernameInput.form || usernameInput.closest('form');
+    if (form) {
+      const pw = form.querySelector<HTMLInputElement>('input[type="password"]');
+      if (pw) return pw;
+    }
+    const container = usernameInput.closest('[role="form"], [class*="login"], [class*="auth"], [class*="modal"], [class*="form"], main, section') || usernameInput.parentElement;
+    if (container) {
+      const pw = container.querySelector<HTMLInputElement>('input[type="password"]');
+      if (pw) return pw;
+    }
+    const allPw = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="password"]'));
+    const following = allPw.filter(i => Boolean(usernameInput.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_FOLLOWING));
+    if (following.length > 0) return following[0];
+    if (allPw.length > 0) return allPw[0];
+    return null;
+  };
+
+  let cachedCredentials: { id: string; username: string; password: string; exactOrigin?: boolean }[] | null = null;
+  let fetchingCredentialsPromise: Promise<{ id: string; username: string; password: string; exactOrigin?: boolean }[]> | null = null;
+
+  const getSavedCredentials = async (): Promise<{ id: string; username: string; password: string; exactOrigin?: boolean }[]> => {
+    if (cachedCredentials !== null) return cachedCredentials;
+    if (fetchingCredentialsPromise) return fetchingCredentialsPromise;
+    fetchingCredentialsPromise = (async () => {
+      try {
+        if (!window.location.protocol.startsWith('http')) return [];
+        const res = await ipcRenderer.invoke('page:get-autofill-credentials', {
+          origin: window.location.origin,
+          hostname: window.location.hostname,
+        });
+        cachedCredentials = Array.isArray(res) ? res : [];
+      } catch {
+        cachedCredentials = [];
+      } finally {
+        fetchingCredentialsPromise = null;
+      }
+      return cachedCredentials;
+    })();
+    return fetchingCredentialsPromise;
+  };
+
+  const autofilledInputs = new WeakSet<HTMLInputElement>();
+
+  const tryAutoFillSingleAccount = async () => {
+    if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+    const creds = await getSavedCredentials();
+    const exactCreds = creds.filter(c => c.exactOrigin !== false);
+    if (exactCreds.length !== 1) return;
+    const account = exactCreds[0];
+    if (!account.username && !account.password) return;
+
+    const pwInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="password"]'))
+      .filter(pw => isInputVisible(pw) && !pw.readOnly && !pw.disabled);
+
+    for (const pw of pwInputs) {
+      if (autofilledInputs.has(pw)) continue;
+      if (pw.value.length > 0) continue;
+
+      const user = findUsernameInputForPassword(pw);
+      if (user && isInputVisible(user) && !user.readOnly && !user.disabled) {
+        if (!user.value || user.value === account.username) {
+          if (!user.value) setNativeInputValue(user, account.username);
+          setNativeInputValue(pw, account.password);
+          autofilledInputs.add(pw);
+          autofilledInputs.add(user);
+        }
+      } else {
+        setNativeInputValue(pw, account.password);
+        autofilledInputs.add(pw);
+      }
+    }
+  };
+
+  // Выпадающий список (Dropdown)
+  let dropdownEl: HTMLDivElement | null = null;
+  let activeTargetInput: HTMLInputElement | null = null;
+
+  const removeDropdown = () => {
+    if (dropdownEl) {
+      dropdownEl.remove();
+      dropdownEl = null;
+    }
+    activeTargetInput = null;
+  };
+
+  const createDropdown = (targetInput: HTMLInputElement, creds: { id: string; username: string; password: string }[]) => {
+    removeDropdown();
+    if (!creds || creds.length === 0) return;
+    activeTargetInput = targetInput;
+
+    const popup = document.createElement('div');
+    popup.setAttribute('data-soulm8te-autofill', 'true');
+    Object.assign(popup.style, {
+      position: 'fixed',
+      zIndex: '2147483647',
+      background: '#12131d',
+      border: '1px solid rgba(139, 92, 246, 0.45)',
+      borderRadius: '8px',
+      boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.7), 0 0 15px rgba(139, 92, 246, 0.25)',
+      padding: '4px',
+      minWidth: '220px',
+      maxWidth: '340px',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '13px',
+      color: '#f3f4f6',
+      userSelect: 'none',
+      overflow: 'hidden',
+    });
+
+    // Шапка
+    const header = document.createElement('div');
+    Object.assign(header.style, {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '6px',
+      padding: '6px 10px 4px 10px',
+      fontSize: '11px',
+      fontWeight: '600',
+      color: '#a78bfa',
+      borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+      textTransform: 'uppercase',
+      letterSpacing: '0.5px',
+    });
+    header.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:block; flex-shrink:0;">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+      </svg>
+      <span>soulm8te пароли</span>
+    `;
+    popup.appendChild(header);
+
+    // Список учетных записей
+    const list = document.createElement('div');
+    Object.assign(list.style, {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '2px',
+      marginTop: '4px',
+      maxHeight: '200px',
+      overflowY: 'auto',
+    });
+
+    creds.forEach((account) => {
+      const item = document.createElement('div');
+      Object.assign(item.style, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        padding: '7px 10px',
+        borderRadius: '6px',
+        cursor: 'pointer',
+        transition: 'background 0.15s ease',
+      });
+
+      item.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+          <path d="m21 2-2 2m-1.5 1.5L16 7l-1.5-1.5L13 7l-1.5-1.5L10 7"></path>
+          <circle cx="7.5" cy="15.5" r="5.5"></circle>
+        </svg>
+        <div style="display:flex; flex-direction:column; overflow:hidden; min-width:0;">
+          <div style="font-weight:500; color:#f3f4f6; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px;">
+            ${account.username ? account.username.replace(/</g, '&lt;') : 'Без логина'}
+          </div>
+          <div style="font-size:11px; color:#9ca3af; letter-spacing:1px; line-height:1.2;">••••••••</div>
+        </div>
+      `;
+
+      item.addEventListener('mouseenter', () => {
+        item.style.backgroundColor = 'rgba(139, 92, 246, 0.22)';
+      });
+      item.addEventListener('mouseleave', () => {
+        item.style.backgroundColor = 'transparent';
+      });
+
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (targetInput.type === 'password') {
+          setNativeInputValue(targetInput, account.password);
+          const user = findUsernameInputForPassword(targetInput);
+          if (user && account.username) setNativeInputValue(user, account.username);
+        } else {
+          if (account.username) setNativeInputValue(targetInput, account.username);
+          const pw = findPasswordInputForUsername(targetInput);
+          if (pw && account.password) setNativeInputValue(pw, account.password);
+        }
+
+        removeDropdown();
+      });
+
+      list.appendChild(item);
+    });
+
+    popup.appendChild(list);
+
+    // Позиционирование
+    const rect = targetInput.getBoundingClientRect();
+    const top = rect.bottom + 4;
+    const left = Math.max(8, Math.min(window.innerWidth - 240, rect.left));
+    const width = Math.max(220, Math.min(320, rect.width));
+
+    popup.style.top = `${Math.min(window.innerHeight - 150, Math.max(8, top))}px`;
+    popup.style.left = `${left}px`;
+    popup.style.width = `${width}px`;
+
+    (document.body || document.documentElement).appendChild(popup);
+    dropdownEl = popup;
+  };
+
+  const showDropdownForInput = async (input: HTMLInputElement) => {
+    if (!isInputVisible(input) || input.readOnly || input.disabled) return;
+    const creds = await getSavedCredentials();
+    if (!creds || creds.length === 0) return;
+    createDropdown(input, creds);
+  };
+
+  const onFocusOrClick = (event: Event) => {
+    try {
+      const target = (event.composedPath?.()[0] ?? event.target) as HTMLElement | null;
+      if (!target || !isInput(target)) return;
+      if (target.type === 'password' || isTextualInput(target)) {
+        void tryAutoFillSingleAccount();
+        void showDropdownForInput(target);
+      }
+    } catch {}
+  };
+
+  window.addEventListener('focusin', onFocusOrClick, true);
+  window.addEventListener('click', (event: MouseEvent) => {
+    if (dropdownEl && !dropdownEl.contains(event.target as Node) && event.target !== activeTargetInput) {
+      removeDropdown();
+    }
   }, true);
+
+  window.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && dropdownEl) {
+      removeDropdown();
+    }
+  }, true);
+
+  window.addEventListener('scroll', () => {
+    if (dropdownEl) {
+      removeDropdown();
+    }
+  }, { capture: true, passive: true });
 }
 // Submitting a form does not guarantee data was saved (SPA handlers may cancel
 // navigation or receive a server error). Keep the guard until document navigation.

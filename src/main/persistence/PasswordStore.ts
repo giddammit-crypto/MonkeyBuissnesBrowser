@@ -2,7 +2,15 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeStorage } from 'electron';
+import { getDomain } from 'tldts';
 import type { ImportBrowser, ImportedPasswordSummary } from '../../shared/types';
+
+export function getBaseDomain(hostname: string): string {
+  if (!hostname || typeof hostname !== 'string') return '';
+  const cleanHost = hostname.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+  const domain = getDomain(cleanHost);
+  return domain || cleanHost;
+}
 
 export interface StoredPassword extends ImportedPasswordSummary {
   password: string;
@@ -72,12 +80,23 @@ export class PasswordStore {
   /** Main-process only. Callers must obtain explicit consent before reading a secret. */
   getForOrigin(id: string, exactOrigin: string): { username: string; password: string } | null {
     const canonical = (raw: string): string | null => {
-      try { const url = new URL(raw); return url.protocol === 'https:' && !url.username && !url.password ? url.origin : null; } catch { return null; }
+      try {
+        const url = new URL(raw);
+        return url.protocol === 'https:' && !url.username && !url.password ? url.origin : null;
+      } catch {
+        return null;
+      }
     };
     const origin = canonical(exactOrigin);
     if (!origin || !this.canPersistSecurely()) return null;
-    const requested = new URL(exactOrigin);
-    if (requested.pathname !== '/' || requested.search || requested.hash) return null;
+    try {
+      const requested = new URL(exactOrigin);
+      if ((requested.pathname !== '/' && requested.pathname !== '') || requested.search || requested.hash) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
     const record = this.read(true).find(record => record.id === id && canonical(record.origin) === origin);
     return record ? { username: record.username, password: record.password } : null;
   }
@@ -108,12 +127,15 @@ export class PasswordStore {
       throw new Error('Защищённое хранилище паролей недоступно. Сохранённые данные не изменены.');
     }
     let normalizedOrigin = origin;
+    let targetHost = '';
     try {
       const parsed = new URL(origin.includes('://') ? origin : `https://${origin}`);
       normalizedOrigin = parsed.origin;
+      targetHost = parsed.hostname;
     } catch {
       normalizedOrigin = origin;
     }
+    const targetBaseDomain = getBaseDomain(targetHost || normalizedOrigin);
 
     const existing = this.read(true);
     const normalize = (val: string): string => {
@@ -123,10 +145,27 @@ export class PasswordStore {
         return val;
       }
     };
+    const extractHost = (val: string): string => {
+      try {
+        return new URL(val.includes('://') ? val : `https://${val}`).hostname;
+      } catch {
+        return val;
+      }
+    };
 
-    const idx = existing.findIndex(
+    // 1. Точный поиск по origin + username
+    let idx = existing.findIndex(
       (r) => (r.origin === normalizedOrigin || r.origin === origin || normalize(r.origin) === normalizedOrigin) && r.username === username,
     );
+
+    // 2. Если не найден, поиск по базовому домену + username (для id.vk.com и vk.com)
+    if (idx === -1 && targetBaseDomain) {
+      idx = existing.findIndex((r) => {
+        if (r.username !== username) return false;
+        const recHost = extractHost(r.origin);
+        return getBaseDomain(recHost) === targetBaseDomain;
+      });
+    }
 
     if (idx !== -1) {
       existing[idx].password = password;
@@ -159,33 +198,17 @@ export class PasswordStore {
   findByOriginAndUser(origin: string, username: string): StoredPassword | null {
     if (!this.canPersistSecurely()) return null;
     let normalizedOrigin = origin;
+    let targetHost = '';
     try {
-      normalizedOrigin = new URL(origin.includes('://') ? origin : `https://${origin}`).origin;
+      const url = new URL(origin.includes('://') ? origin : `https://${origin}`);
+      normalizedOrigin = url.origin;
+      targetHost = url.hostname;
     } catch {
       normalizedOrigin = origin;
     }
+    const targetBaseDomain = getBaseDomain(targetHost || normalizedOrigin);
     const records = this.read(false);
-    return (
-      records.find((record) => {
-        if (record.username !== username) return false;
-        if (record.origin === origin || record.origin === normalizedOrigin) return true;
-        try {
-          return new URL(record.origin.includes('://') ? record.origin : `https://${record.origin}`).origin === normalizedOrigin;
-        } catch {
-          return false;
-        }
-      }) ?? null
-    );
-  }
 
-  getSummariesForOrigin(origin: string): ImportedPasswordSummary[] {
-    if (!this.canPersistSecurely()) return [];
-    let normalizedOrigin = origin;
-    try {
-      normalizedOrigin = new URL(origin.includes('://') ? origin : `https://${origin}`).origin;
-    } catch {
-      normalizedOrigin = origin;
-    }
     const normalize = (val: string): string => {
       try {
         return new URL(val.includes('://') ? val : `https://${val}`).origin;
@@ -193,9 +216,137 @@ export class PasswordStore {
         return val;
       }
     };
-    return this.summaries().filter(
+    const extractHost = (val: string): string => {
+      try {
+        return new URL(val.includes('://') ? val : `https://${val}`).hostname;
+      } catch {
+        return val;
+      }
+    };
+
+    // Сначала ищем точное совпадение
+    const exact = records.find((record) => {
+      if (record.username !== username) return false;
+      if (record.origin === origin || record.origin === normalizedOrigin) return true;
+      return normalize(record.origin) === normalizedOrigin;
+    });
+    if (exact) return exact;
+
+    // Fallback: поиск по базовому домену
+    if (targetBaseDomain) {
+      const byBaseDomain = records.find((record) => {
+        if (record.username !== username) return false;
+        const recHost = extractHost(record.origin);
+        return getBaseDomain(recHost) === targetBaseDomain;
+      });
+      if (byBaseDomain) return byBaseDomain;
+    }
+
+    return null;
+  }
+
+  getSummariesForOrigin(origin: string): ImportedPasswordSummary[] {
+    if (!this.canPersistSecurely()) return [];
+    let normalizedOrigin = origin;
+    let targetHost = '';
+    try {
+      const url = new URL(origin.includes('://') ? origin : `https://${origin}`);
+      normalizedOrigin = url.origin;
+      targetHost = url.hostname;
+    } catch {
+      normalizedOrigin = origin;
+    }
+    const targetBaseDomain = getBaseDomain(targetHost || normalizedOrigin);
+    const normalize = (val: string): string => {
+      try {
+        return new URL(val.includes('://') ? val : `https://${val}`).origin;
+      } catch {
+        return val;
+      }
+    };
+    const extractHost = (val: string): string => {
+      try {
+        return new URL(val.includes('://') ? val : `https://${val}`).hostname;
+      } catch {
+        return val;
+      }
+    };
+
+    const all = this.summaries();
+    const exactMatches = all.filter(
       (r) => r.origin === normalizedOrigin || r.origin === origin || normalize(r.origin) === normalizedOrigin,
     );
+    if (exactMatches.length > 0) {
+      return exactMatches;
+    }
+
+    // Fallback на базовый домен, если точный origin не дал совпадений
+    if (targetBaseDomain) {
+      return all.filter((r) => {
+        const recHost = extractHost(r.origin);
+        return getBaseDomain(recHost) === targetBaseDomain;
+      });
+    }
+
+    return [];
+  }
+
+  getCredentialsForAutofill(origin: string, hostname?: string): { id: string; username: string; password: string; exactOrigin: boolean }[] {
+    if (!this.canPersistSecurely()) return [];
+    let targetOrigin = origin;
+    let targetHost = hostname || '';
+    try {
+      const url = new URL(origin.includes('://') ? origin : `https://${origin}`);
+      targetOrigin = url.origin;
+      if (!targetHost) targetHost = url.hostname;
+    } catch {
+      targetOrigin = origin;
+    }
+    const targetBaseDomain = getBaseDomain(targetHost || targetOrigin);
+
+    const records = this.read(false);
+    const result: { id: string; username: string; password: string; exactOrigin: boolean }[] = [];
+    const seenIds = new Set<string>();
+
+    const normalize = (val: string): string => {
+      try {
+        return new URL(val.includes('://') ? val : `https://${val}`).origin;
+      } catch {
+        return val;
+      }
+    };
+
+    const extractHost = (val: string): string => {
+      try {
+        return new URL(val.includes('://') ? val : `https://${val}`).hostname;
+      } catch {
+        return val;
+      }
+    };
+
+    // 1. Точные совпадения по origin
+    for (const record of records) {
+      const recOrigin = normalize(record.origin);
+      if (recOrigin === targetOrigin || record.origin === origin) {
+        result.push({ id: record.id, username: record.username, password: record.password, exactOrigin: true });
+        seenIds.add(record.id);
+      }
+    }
+
+    // 2. Совпадения по базовому домену (eTLD+1)
+    if (targetBaseDomain) {
+      for (const record of records) {
+        if (seenIds.has(record.id)) continue;
+        const recHost = extractHost(record.origin);
+        const recBaseDomain = getBaseDomain(recHost);
+        if (recBaseDomain && recBaseDomain === targetBaseDomain) {
+          result.push({ id: record.id, username: record.username, password: record.password, exactOrigin: false });
+          seenIds.add(record.id);
+        }
+      }
+    }
+
+    return result;
   }
 
   private read(strict = false): StoredPassword[] {

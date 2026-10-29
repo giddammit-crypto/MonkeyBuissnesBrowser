@@ -38,22 +38,43 @@ function fillVisibleTopFrame(input: PageFillInput): PasswordFillResult & { eligi
   const candidates = [...document.querySelectorAll<HTMLInputElement>('input[type="password"]')].filter(field => !field.readOnly && visible(field));
   if (candidates.length !== 1) return { filled: false, reason: candidates.length ? 'На странице несколько полей пароля. Выберите обычную форму входа.' : 'В верхнем документе нет видимой формы входа. Прокрутите страницу к ней.' };
   const password = candidates[0];
+  if (password.autocomplete.toLowerCase().includes('new-password')) {
+    return { filled: false, reason: 'Поддерживается только видимая форма входа; формы регистрации и iframe не заполняются.' };
+  }
   const form = password.form;
-  if (!form || !(form instanceof HTMLFormElement) || password.autocomplete.toLowerCase().includes('new-password')) return { filled: false, reason: 'Поддерживается только видимая форма входа; формы регистрации и iframe не заполняются.' };
   const sameOriginAction = (raw: string): boolean => {
-    try { const action = new URL(raw, location.href); return action.protocol === 'https:' && action.origin === input.origin && !action.username && !action.password; } catch { return false; }
+    try {
+      const action = new URL(raw, location.href);
+      return action.protocol === 'https:' && action.origin === input.origin && !action.username && !action.password;
+    } catch {
+      return false;
+    }
   };
-  if (!sameOriginAction(form.action || location.href)) return { filled: false, reason: 'Форма отправляет данные на другой адрес. Заполнение отклонено.' };
-  // form.elements includes externally associated submit buttons. Image inputs are
-  // historically omitted from that collection, so include those explicitly too.
-  const controls = [...form.elements, ...document.querySelectorAll<HTMLInputElement>('input[type="image"]')];
-  for (const control of controls) {
-    const submitter = control instanceof HTMLButtonElement && control.type === 'submit' || control instanceof HTMLInputElement && ['submit', 'image'].includes(control.type);
-    if (submitter && (control as HTMLInputElement | HTMLButtonElement).form === form && control.hasAttribute('formaction') && !sameOriginAction((control as HTMLInputElement | HTMLButtonElement).formAction)) {
-      return { filled: false, reason: 'Кнопка формы отправляет данные на другой адрес. Заполнение отклонено.' };
+
+  if (form && form instanceof HTMLFormElement) {
+    if (form.action && !sameOriginAction(form.action)) {
+      return { filled: false, reason: 'Форма отправляет данные на другой адрес. Заполнение отклонено.' };
+    }
+    const controls = [...form.elements, ...document.querySelectorAll<HTMLInputElement>('input[type="image"]')];
+    for (const control of controls) {
+      const submitter = control instanceof HTMLButtonElement && control.type === 'submit' || control instanceof HTMLInputElement && ['submit', 'image'].includes(control.type);
+      if (submitter && (control as HTMLInputElement | HTMLButtonElement).form === form && control.hasAttribute('formaction') && !sameOriginAction((control as HTMLInputElement | HTMLButtonElement).formAction)) {
+        return { filled: false, reason: 'Кнопка формы отправляет данные на другой адрес. Заполнение отклонено.' };
+      }
     }
   }
-  const fields = [...form.querySelectorAll<HTMLInputElement>('input')].filter(field => field.form === form && field !== password && ['text', 'email', 'tel'].includes(field.type) && !field.readOnly && visible(field));
+
+  let fields: HTMLInputElement[] = [];
+  if (form && form instanceof HTMLFormElement) {
+    fields = [...form.querySelectorAll<HTMLInputElement>('input')].filter(field => field.form === form && field !== password && ['text', 'email', 'tel'].includes(field.type) && !field.readOnly && visible(field));
+  } else {
+    const container = password.closest('[role="form"], [class*="login"], [class*="auth"], [class*="modal"], [class*="form"], main, section') || password.parentElement || document.body;
+    fields = [...container.querySelectorAll<HTMLInputElement>('input')].filter(field => field !== password && ['text', 'email', 'tel'].includes(field.type) && !field.readOnly && visible(field));
+    if (!fields.length) {
+      fields = [...document.querySelectorAll<HTMLInputElement>('input')].filter(field => field !== password && ['text', 'email', 'tel'].includes(field.type) && !field.readOnly && visible(field) && Boolean(field.compareDocumentPosition(password) & Node.DOCUMENT_POSITION_PRECEDING));
+    }
+  }
+
   const marked = fields.filter(field => /^(?:username|email)$/.test(field.autocomplete.toLowerCase()) || field.type === 'email' || /(?:user|login|email|логин|почт)/i.test(`${field.name} ${field.id}`));
   const users = marked.length ? marked : fields;
   if (users.length > 1) return { filled: false, reason: 'Не удалось однозначно выбрать поле логина.' };

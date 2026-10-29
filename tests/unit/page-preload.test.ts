@@ -229,6 +229,46 @@ it('captures password form submissions on submit, click and Enter keydown', asyn
     username: 'alice@example.com',
     password: 'UpdatedPass456!',
   });
+
+  // Case 3: Modern SPA 2-step login with button type="button" and separate username step
+  send.mockClear();
+  // Step 1: User types username
+  const step1Input = new FakeInput();
+  step1Input.setAttribute('name', 'login');
+  step1Input.value = 'vk_user@vk.com';
+  const inputListeners = listeners.get('input') ?? [];
+  for (const listener of inputListeners) {
+    listener({ isTrusted: true, target: step1Input, composedPath: () => [step1Input] });
+  }
+
+  // Step 2: Next screen has only password and a modern SPA button
+  const step2Pass = new FakeInput();
+  step2Pass.type = 'password';
+  step2Pass.value = 'my_secure_spa_pass!';
+  for (const listener of inputListeners) {
+    listener({ isTrusted: true, target: step2Pass, composedPath: () => [step2Pass] });
+  }
+
+  class FakeButton extends FakeElement {
+    type = 'button';
+    textContent = 'Войти';
+    matches(sel: string) { return sel.includes('button'); }
+  }
+  const spaLoginButton = new FakeButton();
+
+  // User clicks "Войти" button
+  const clickListeners = listeners.get('click') ?? [];
+  for (const listener of clickListeners) {
+    listener({ target: spaLoginButton, composedPath: () => [spaLoginButton] });
+  }
+
+  // Should successfully preserve step 1 username and pair it with step 2 password
+  expect(send).toHaveBeenCalledWith('page:password-form-submitted', {
+    origin: 'https://login.example.org',
+    url: 'https://login.example.org/signin',
+    username: 'vk_user@vk.com',
+    password: 'my_secure_spa_pass!',
+  });
 });
 
 
