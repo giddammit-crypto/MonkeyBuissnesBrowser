@@ -33,6 +33,7 @@ export interface HistoryEntry {
   url: string;
   title: string;
   visitedAt: number;
+  favicon?: string;
 }
 
 export interface BookmarkEntry {

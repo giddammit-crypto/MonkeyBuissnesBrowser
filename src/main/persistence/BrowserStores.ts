@@ -399,6 +399,31 @@ export class BrowserStores {
     return true;
   }
 
+  updateHistoryFavicon(url: string, favicon: string): boolean {
+    if (typeof url !== 'string' || typeof favicon !== 'string' || !isSafeWebUrl(url)) return false;
+    const entries = this.history.get();
+    if (!entries.some(entry => entry.url === url && entry.favicon !== favicon)) return false;
+    this.history.set(entries.map(entry => entry.url === url ? { ...entry, favicon } : entry));
+    return true;
+  }
+
+  updateBookmarkFavicon(url: string, favicon: string): boolean {
+    if (typeof url !== 'string' || typeof favicon !== 'string' || !isSafeWebUrl(url)) return false;
+    const entries = this.bookmarks.get();
+    let parsedUrl: string;
+    try { parsedUrl = new URL(url).href; } catch { return false; }
+    if (!entries.some(entry => {
+      try { return new URL(entry.url).href === parsedUrl && entry.favicon !== favicon; } catch { return false; }
+    })) return false;
+    this.bookmarks.set(entries.map(entry => {
+      try {
+        if (new URL(entry.url).href === parsedUrl) return { ...entry, favicon };
+      } catch {}
+      return entry;
+    }));
+    return true;
+  }
+
   toggleBookmark(entry: Omit<BookmarkEntry, 'id' | 'createdAt'>): BookmarkEntry | null {
     let canonical = entry.url;
     try { canonical = new URL(entry.url).href; } catch { /* saveBookmark supplies validation. */ }

@@ -3287,7 +3287,12 @@ export class BrowserController {
       this.emitSnapshot();
     });
     contents.on('page-favicon-updated', (_event, favicons) => {
-      tab.favicon = favicons.find((value) => isSafeWebUrl(value) || value.startsWith('data:image/'));
+      const best = favicons.find((value) => isSafeWebUrl(value) || value.startsWith('data:image/'));
+      tab.favicon = best;
+      if (best && !tab.isPrivate && !tab.isInternal && isSafeWebUrl(tab.url)) {
+        this.stores.updateHistoryFavicon(tab.url, best);
+        this.stores.updateBookmarkFavicon(tab.url, best);
+      }
       this.emitSnapshot();
     });
     contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -3377,7 +3382,7 @@ export class BrowserController {
     tab.isInternal = false;
     tab.isLoading = false;
     tab.lifecycle = tab.id === this.activeTabId ? 'active' : 'background';
-    if (!tab.isPrivate) this.stores.addHistory({ url, title: tab.title || url });
+    if (!tab.isPrivate) this.stores.addHistory({ url, title: tab.title || url, favicon: tab.favicon });
     this.memoryManager.updateTab(tab.id, { lifecycle: tab.lifecycle });
     this.updateNavigationState(tab);
     this.emitSnapshot();

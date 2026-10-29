@@ -6,6 +6,7 @@ export interface SiteFaviconProps {
   favicon?: string | null;
   size?: number;
   className?: string;
+  isPrivate?: boolean;
 }
 
 export function isPrivateHost(host: string): boolean {
@@ -32,12 +33,20 @@ export function isPrivateHost(host: string): boolean {
 
 export function getFaviconSources(
   url: string,
-  favicon?: string | null
+  favicon?: string | null,
+  isPrivate?: boolean
 ): { primarySrc: string | null; fallbackSrc: string | null } {
-  // Never disclose visited hostnames to a third-party favicon lookup service.
-  // This component is also rendered for private tabs in the normal shell session.
+  let hostname = "";
+  try {
+    const raw = url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
+    hostname = new URL(raw).hostname.replace(/^www\./, "");
+  } catch {}
+
   const primarySrc = favicon && favicon.trim() ? favicon.trim() : null;
-  const fallbackSrc = null;
+  const fallbackSrc =
+    !isPrivate && hostname && !isPrivateHost(hostname)
+      ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`
+      : null;
 
   return { primarySrc, fallbackSrc };
 }
@@ -47,6 +56,7 @@ export const SiteFavicon: React.FC<SiteFaviconProps> = ({
   favicon,
   size = 18,
   className = "",
+  isPrivate = false,
 }) => {
   const [loadFailed, setLoadFailed] = useState(false);
   const [useFallback, setUseFallback] = useState(false);
@@ -54,11 +64,11 @@ export const SiteFavicon: React.FC<SiteFaviconProps> = ({
   useEffect(() => {
     setLoadFailed(false);
     setUseFallback(false);
-  }, [url, favicon]);
+  }, [url, favicon, isPrivate]);
 
   const { primarySrc, fallbackSrc } = useMemo(
-    () => getFaviconSources(url, favicon),
-    [url, favicon]
+    () => getFaviconSources(url, favicon, isPrivate),
+    [url, favicon, isPrivate]
   );
 
   const currentSrc = !loadFailed

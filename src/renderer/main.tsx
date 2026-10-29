@@ -2978,6 +2978,7 @@ function NewTabPage({
                             url={bookmark.url}
                             favicon={(bookmark as any).favicon}
                             size={24}
+                            isPrivate={privateMode}
                           />
                         </span>
                       </button>
@@ -3074,7 +3075,7 @@ function NewTabPage({
                       onClick={() => onOpen(entry.url)}
                     >
                       <span className="recent-page-icon">
-                        <SiteFavicon url={entry.url} favicon={(entry as any).favicon} size={16} />
+                        <SiteFavicon url={entry.url} favicon={(entry as any).favicon} size={16} isPrivate={privateMode} />
                       </span>
                       <span className="recent-page-text">
                         <strong>{entry.title}</strong>
