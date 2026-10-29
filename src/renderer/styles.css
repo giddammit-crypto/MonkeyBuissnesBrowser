@@ -101,6 +101,40 @@
 * {
   box-sizing: border-box;
 }
+/* Ergonomic, slim rounded scrollbars matching system themes */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong, rgba(160, 175, 195, 0.35));
+  border-radius: 999px;
+  border: 1.5px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.15s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border: 1.5px solid transparent;
+  background-clip: padding-box;
+}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--accent, #a7ccef);
+}
+:root[data-theme="graphite"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1.5px solid transparent;
+  background-clip: padding-box;
+}
+:root[data-theme="graphite"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--accent, #7ea8d6);
+}
 :root,
 html,
 body,
@@ -916,6 +950,9 @@ select {
   margin-left: 4px;
   flex: 1;
 }
+:root[data-theme="light"] .omnibox-suggestion-domain {
+  color: #526071;
+}
 .omnibox-suggestion-badge {
   font-size: 11px;
   font-weight: 600;
@@ -931,17 +968,33 @@ select {
   background: rgba(59, 130, 246, 0.15);
   color: #60a5fa;
 }
+:root[data-theme="light"] .omnibox-suggestion-badge.badge-popular {
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+}
 .omnibox-suggestion-badge.badge-bookmark {
   background: rgba(245, 158, 11, 0.15);
   color: #fbbf24;
+}
+:root[data-theme="light"] .omnibox-suggestion-badge.badge-bookmark {
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
 }
 .omnibox-suggestion-badge.badge-history {
   background: rgba(139, 92, 246, 0.15);
   color: #a78bfa;
 }
+:root[data-theme="light"] .omnibox-suggestion-badge.badge-history {
+  background: rgba(124, 58, 237, 0.1);
+  color: #6d28d9;
+}
 .omnibox-suggestion-badge.badge-search {
   background: rgba(236, 72, 153, 0.15);
   color: #f472b6;
+}
+:root[data-theme="light"] .omnibox-suggestion-badge.badge-search {
+  background: rgba(219, 39, 119, 0.1);
+  color: #be185d;
 }
 .mode-chip {
   display: flex;
@@ -2201,6 +2254,7 @@ select {
   border-radius: 14px;
   box-shadow: var(--shadow);
   z-index: 40;
+  animation: popover-fade-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .popover-heading {
   font-family: Montserrat, sans-serif;
@@ -2219,6 +2273,7 @@ select {
   border-radius: 8px;
   text-align: left;
   font-size: 12px;
+  transition: background 0.12s ease, transform 0.12s ease;
 }
 .menu-action:hover:not(:disabled) {
   background: var(--surface-subtle);
@@ -2230,8 +2285,11 @@ select {
   flex: 1;
 }
 .menu-action small {
-  font-size: 9px;
-  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
 }
 .menu-divider {
   height: 1px;
@@ -7107,6 +7165,55 @@ select:focus-visible {
   color: var(--accent);
   border-color: var(--accent);
   box-shadow: 0 0 8px var(--accent-soft);
+}
+
+.omnibox-action-btn.reader-available {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  animation: reader-btn-glow 2.8s infinite ease-in-out;
+}
+
+.omnibox-action-btn.reader-available:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 12px var(--accent-soft);
+  transform: translateY(-1px);
+}
+
+.omnibox-action-btn.reader-available::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  animation: reader-beacon-pulse 2.8s infinite ease-in-out;
+}
+
+@keyframes reader-btn-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+  }
+  50% {
+    box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 38%, transparent);
+  }
+}
+
+@keyframes reader-beacon-pulse {
+  0%, 100% {
+    transform: scale(0.85);
+    opacity: 0.75;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 1;
+    box-shadow: 0 0 10px var(--accent);
+  }
 }
 
 .omnibox-action-btn.pip-active::after {

@@ -890,7 +890,7 @@ function App(): React.JSX.Element {
         setFindOpen(true);
         setPanel("home");
         setPopover(null);
-      } else if (modifier && event.altKey && key === "r") {
+      } else if ((modifier && event.altKey && key === "r") || key === "f9") {
         event.preventDefault();
         if (currentTab && !currentTab.isInternal) {
           run(window.browserApi.toggleReaderMode(currentTab.id));
@@ -1061,8 +1061,8 @@ function App(): React.JSX.Element {
             className="icon-button"
             title={
               currentTab?.isLoading
-                ? "Остановить загрузку"
-                : "Обновить · Ctrl+R"
+                ? "Остановить загрузку · Esc"
+                : "Обновить · Ctrl+R / F5"
             }
             aria-label={currentTab?.isLoading ? "Остановить" : "Обновить"}
             onClick={() =>
@@ -1302,11 +1302,11 @@ function App(): React.JSX.Element {
               {(currentTab.isReaderAvailable || currentTab.isReaderActive) && (
                 <button
                   type="button"
-                  className={`omnibox-action-btn ${currentTab.isReaderActive ? "active" : ""}`}
+                  className={`omnibox-action-btn ${currentTab.isReaderActive ? "active" : ""} ${currentTab.isReaderAvailable && !currentTab.isReaderActive ? "reader-available" : ""}`.trim()}
                   title={
                     currentTab.isReaderActive
-                      ? "Выйти из режима чтения · Ctrl+Alt+R"
-                      : "Режим чтения · Ctrl+Alt+R"
+                      ? "Выйти из режима чтения · F9 или Ctrl+Alt+R"
+                      : "Режим чтения доступен · F9 или Ctrl+Alt+R"
                   }
                   aria-label="Режим чтения"
                   onMouseDown={(event) => event.preventDefault()}
@@ -5091,7 +5091,7 @@ function SettingsPanel({
             <div style={{ flex: 1 }}>
               <strong>soulm8te Browser</strong>
               <p>Ваш цифровой союзник · Detroit: Become Human</p>
-              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.9.1</small>
+              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.9.2</small>
             </div>
             <button
               className="action-button secondary"

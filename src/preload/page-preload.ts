@@ -2503,16 +2503,175 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
         if (!rootEl) return null;
 
         const clone = rootEl.cloneNode(true) as HTMLElement;
+
+        // Collect corresponding live and clone images before any clone element removal
+        const liveImgs = Array.from(rootEl.querySelectorAll('img'));
+        const cloneImgs = Array.from(clone.querySelectorAll('img'));
+
+        // Helper to parse srcset and select the highest resolution / width descriptor URL
+        const parseBestSrcset = (srcsetStr: string | null | undefined, baseUrl: string): string | null => {
+          if (!srcsetStr || typeof srcsetStr !== 'string') return null;
+          const entries = srcsetStr.split(/,\s+/).map((s) => s.trim()).filter(Boolean);
+          let bestUrl: string | null = null;
+          let maxScore = -1;
+
+          for (const entry of entries) {
+            const parts = entry.split(/\s+/);
+            const rawUrl = parts[0]?.trim();
+            if (!rawUrl) continue;
+            const descriptor = parts[1]?.trim();
+            let score = 1;
+            if (descriptor) {
+              if (descriptor.endsWith('w')) {
+                const w = parseFloat(descriptor.slice(0, -1));
+                if (!isNaN(w)) score = w;
+              } else if (descriptor.endsWith('x')) {
+                const x = parseFloat(descriptor.slice(0, -1));
+                if (!isNaN(x)) score = x * 1000;
+              }
+            }
+            if (score > maxScore) {
+              maxScore = score;
+              bestUrl = rawUrl;
+            }
+          }
+
+          if (bestUrl) {
+            try {
+              return new URL(bestUrl, baseUrl).href;
+            } catch {
+              return bestUrl;
+            }
+          }
+          return null;
+        };
+
+        const isPlaceholder = (u: string | null | undefined): boolean => {
+          if (!u) return true;
+          const str = u.trim().toLowerCase();
+          if (str.startsWith('data:image/svg+xml') || str.startsWith('data:image/gif')) return true;
+          if (str.startsWith('data:') && str.length < 250) return true;
+          return /\b(placeholder|blank|spacer|1x1|pixel|transparent)\b/i.test(str);
+        };
+
+        // Process images with full Chromium-grade fidelity
+        for (let i = 0; i < cloneImgs.length; i++) {
+          const cloneImg = cloneImgs[i];
+          const liveImg = liveImgs[i];
+          let chosenUrl: string | null = null;
+
+          // a) currentSrc from live rendered DOM (highest fidelity if not a placeholder)
+          if (liveImg && liveImg.currentSrc && !isPlaceholder(liveImg.currentSrc)) {
+            chosenUrl = liveImg.currentSrc;
+          }
+
+          // b) Check lazy-load attributes
+          if (!chosenUrl || isPlaceholder(chosenUrl)) {
+            const lazyAttrs = [
+              'data-src',
+              'data-original',
+              'data-lazy-src',
+              'data-actualsrc',
+              'data-full-src',
+              'data-orig-file',
+              'data-url',
+              'data-image',
+            ];
+            for (const attr of lazyAttrs) {
+              const val = cloneImg.getAttribute(attr) || liveImg?.getAttribute(attr);
+              if (val && !isPlaceholder(val)) {
+                chosenUrl = val.trim();
+                break;
+              }
+            }
+          }
+
+          // c) Parse srcset or data-srcset for highest resolution
+          if (!chosenUrl || isPlaceholder(chosenUrl)) {
+            const srcsetVal =
+              cloneImg.getAttribute('data-srcset') ||
+              cloneImg.getAttribute('srcset') ||
+              cloneImg.getAttribute('data-lazy-srcset') ||
+              liveImg?.getAttribute('data-srcset') ||
+              liveImg?.getAttribute('srcset');
+            if (srcsetVal) {
+              const best = parseBestSrcset(srcsetVal, window.location.href);
+              if (best && !isPlaceholder(best)) {
+                chosenUrl = best;
+              }
+            }
+          }
+
+          // d) Check enclosing <picture> element sources
+          if (!chosenUrl || isPlaceholder(chosenUrl)) {
+            const picture = cloneImg.closest('picture') || liveImg?.closest('picture');
+            if (picture) {
+              const sources = Array.from(picture.querySelectorAll('source'));
+              for (const source of sources) {
+                const sourceSrcset =
+                  source.getAttribute('srcset') ||
+                  source.getAttribute('data-srcset') ||
+                  source.getAttribute('data-lazy-srcset');
+                if (sourceSrcset) {
+                  const best = parseBestSrcset(sourceSrcset, window.location.href);
+                  if (best && !isPlaceholder(best)) {
+                    chosenUrl = best;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+
+          // e) Fallback to regular src attribute
+          if (!chosenUrl || isPlaceholder(chosenUrl)) {
+            const rawSrc = cloneImg.getAttribute('src') || liveImg?.getAttribute('src');
+            if (rawSrc && !isPlaceholder(rawSrc)) {
+              chosenUrl = rawSrc.trim();
+            } else if (rawSrc && rawSrc.trim().startsWith('data:image/')) {
+              chosenUrl = rawSrc.trim();
+            }
+          }
+
+          // f) Convert relative URL to absolute URL
+          if (chosenUrl) {
+            try {
+              chosenUrl = new URL(chosenUrl, window.location.href).href;
+            } catch {}
+            cloneImg.setAttribute('src', chosenUrl);
+          }
+
+          // Clean up conflicting or outdated responsive/lazy attributes on the clone
+          cloneImg.removeAttribute('srcset');
+          cloneImg.removeAttribute('data-srcset');
+          cloneImg.removeAttribute('data-lazy-srcset');
+          for (const attr of [
+            'data-src', 'data-original', 'data-lazy-src', 'data-actualsrc',
+            'data-full-src', 'data-orig-file', 'data-image', 'data-url'
+          ]) {
+            cloneImg.removeAttribute(attr);
+          }
+        }
+
         const removeSelectors = [
           'script', 'style', 'noscript', 'iframe', 'frame', 'object', 'embed',
           'form', 'input', 'button', 'select', 'textarea',
           'nav', 'header', 'footer', 'aside',
           '.ad', '.ads', '.advertisement', '.banner', '.social-share',
-          '[aria-hidden="true"]', 'svg'
+          'svg'
         ];
         for (const sel of removeSelectors) {
           clone.querySelectorAll(sel).forEach((el) => el.remove());
         }
+
+        // Filter [aria-hidden="true"]: remove ONLY if it does not contain img, picture, or figure
+        clone.querySelectorAll('[aria-hidden="true"]').forEach((el) => {
+          if (!el.querySelector('img, picture, figure')) {
+            el.remove();
+          } else {
+            el.removeAttribute('aria-hidden');
+          }
+        });
 
         const allEls = clone.querySelectorAll('*');
         for (const el of Array.from(allEls)) {
@@ -2521,14 +2680,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
               el.removeAttribute(attr.name);
             }
           }
-          if (el instanceof HTMLImageElement) {
-            const dataSrc = el.getAttribute('data-src') || el.getAttribute('data-original');
-            if (dataSrc) el.src = dataSrc;
-            if (el.src) el.setAttribute('src', el.src);
-            el.removeAttribute('srcset');
-          }
-          if (el instanceof HTMLAnchorElement && el.href) {
-            el.setAttribute('href', el.href);
+          if (el.tagName === 'A') {
+            const rawHref = el.getAttribute('href');
+            if (rawHref && !rawHref.startsWith('#') && !rawHref.startsWith('javascript:')) {
+              try {
+                el.setAttribute('href', new URL(rawHref, window.location.href).href);
+              } catch {}
+            }
           }
         }
 

@@ -338,6 +338,69 @@ export class BrowserController {
       callback(false);
     });
 
+    // Native Chrome 134 stealth identity and header sanitization for defaultSession (privileged shell & reader mode)
+    session.defaultSession.setUserAgent(getChromeUserAgent());
+    session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+      const headers = { ...details.requestHeaders };
+      const origin = headers['Origin'] || headers['origin'] || '';
+      const referer = headers['Referer'] || headers['referer'] || '';
+      const isFromShell =
+        origin.startsWith('app://shell') ||
+        referer.startsWith('app://shell') ||
+        Boolean(details.initiatorOrigin?.startsWith('app://shell')) ||
+        (details.webContentsId === this.shellContentsId);
+
+      if (isFromShell) {
+        for (const key of Object.keys(headers)) {
+          const lower = key.toLowerCase();
+          if (['user-agent', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform'].includes(lower)) {
+            delete headers[key];
+          }
+        }
+        const clientHints = getClientHintHeaders();
+        headers['User-Agent'] = clientHints['User-Agent'];
+        headers['Sec-CH-UA'] = clientHints['Sec-CH-UA'];
+        headers['Sec-CH-UA-Mobile'] = clientHints['Sec-CH-UA-Mobile'];
+        headers['Sec-CH-UA-Platform'] = clientHints['Sec-CH-UA-Platform'];
+
+        const activeTab = this.getActiveTab();
+        const articleReferer = activeTab?.url && (activeTab.url.startsWith('http://') || activeTab.url.startsWith('https://'))
+          ? activeTab.url
+          : undefined;
+
+        for (const key of Object.keys(headers)) {
+          const lower = key.toLowerCase();
+          if (lower === 'origin' && headers[key]?.startsWith('app://shell')) {
+            delete headers[key];
+          }
+          if (lower === 'referer' && headers[key]?.startsWith('app://shell')) {
+            if (articleReferer) {
+              headers[key] = articleReferer;
+            } else {
+              delete headers[key];
+            }
+          }
+        }
+
+        if (articleReferer && !headers['Referer'] && !headers['referer']) {
+          headers['Referer'] = articleReferer;
+        }
+      }
+      callback({ requestHeaders: headers });
+    });
+
+    session.defaultSession.webRequest.onHeadersReceived({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+      const headers = { ...details.responseHeaders };
+      if (details.webContentsId === this.shellContentsId) {
+        for (const key of Object.keys(headers)) {
+          if (key.toLowerCase() === 'cross-origin-resource-policy') {
+            delete headers[key];
+          }
+        }
+      }
+      callback({ responseHeaders: headers });
+    });
+
     this.shellView = new WebContentsView({
       webPreferences: {
         preload: shellPreloadPath,
@@ -4452,6 +4515,7 @@ export class BrowserController {
       else if (modifier && key === 'h') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-history' }); });
       else if (modifier && key === 'j') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-downloads' }); });
       else if (((modifier && input.shift && key === 'r') || (modifier && key === 'f5') || (input.shift && key === 'f5')) && tab) run(() => { void this.reload(tab.id, true); });
+      else if ((modifier && input.alt && key === 'r' || key === 'f9') && tab && !tab.isInternal) run(() => { void this.toggleReaderMode(tab.id); });
       else if ((modifier && key === 'r' || key === 'f5') && tab) run(() => { void this.reload(tab.id, false); });
       else if (modifier && key === 'p' && tab) run(() => { void this.tabAction(tab.id, 'print'); });
       else if (modifier && ['+', '=', '-', '0'].includes(key) && tab) run(() => { void this.tabAction(tab.id, key === '0' ? 'zoom-reset' : key === '-' ? 'zoom-out' : 'zoom-in'); });
@@ -6305,6 +6369,10 @@ export class BrowserController {
     if (this.shellView && !this.shellView.webContents.isDestroyed()) this.shellView.webContents.close();
     if (this.voodooView && !this.voodooView.webContents.isDestroyed()) this.voodooView.webContents.close();
     if (this.metricsTimer) clearInterval(this.metricsTimer);
+    try {
+      session.defaultSession.webRequest.onBeforeSendHeaders(null);
+      session.defaultSession.webRequest.onHeadersReceived(null);
+    } catch {}
     this.browsec.destroy();
   }
 }

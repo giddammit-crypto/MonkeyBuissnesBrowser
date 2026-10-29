@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   BookOpen,
   X,
@@ -12,6 +12,7 @@ import {
   Calendar,
   AlertCircle,
   RotateCcw,
+  ImageOff,
 } from "lucide-react";
 import type {
   ReaderArticle,
@@ -52,11 +53,21 @@ export function ReaderView({
 
   const sanitizedContent = useMemo(() => sanitizeReaderHtml(article?.content || "", url), [article?.content, url]);
 
+  // Lightbox state for enlarged image view
+  const [lightboxImage, setLightboxImage] = useState<{ src: string; alt?: string; caption?: string } | null>(null);
+
+  // Body container ref
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
   // Text to speech state
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [speechRate, setSpeechRate] = useState<number>(1.0);
   const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const speechElementsRef = useRef<HTMLElement[]>([]);
+  const currentSpeechIndexRef = useRef<number>(0);
+  const isSpeakingRef = useRef(false);
+  const isPausedRef = useRef(false);
 
   // Sync settings when initialSettings changes
   useEffect(() => {
@@ -88,25 +99,100 @@ export function ReaderView({
     void loadArticle();
   }, [tabId]);
 
-  // Escape key listener to close reader mode
+  // Escape key listener: close lightbox if open, otherwise close reader mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        if (lightboxImage) {
+          e.stopPropagation();
+          setLightboxImage(null);
+        } else {
+          onClose();
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [lightboxImage, onClose]);
 
-  // Handle Speech Synthesis
+  // Helper to remove all speech highlights
+  const clearSpeechHighlights = useCallback(() => {
+    if (bodyRef.current) {
+      bodyRef.current.querySelectorAll('.reader-speech-active').forEach((el) => {
+        el.classList.remove('reader-speech-active');
+      });
+    }
+  }, []);
+
+  const handleStopSpeech = useCallback(() => {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    clearSpeechHighlights();
+    currentSpeechIndexRef.current = 0;
+    setIsSpeaking(false);
+    setIsPaused(false);
+    isSpeakingRef.current = false;
+    isPausedRef.current = false;
+  }, [clearSpeechHighlights]);
+
+  // Handle Speech Synthesis cleanup on unmount
   useEffect(() => {
     return () => {
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel();
       }
+      clearSpeechHighlights();
     };
-  }, []);
+  }, [clearSpeechHighlights]);
+
+  // Speak a specific element in the article queue
+  const speakElement = useCallback((index: number, rate = speechRate) => {
+    if (!window.speechSynthesis) return;
+    clearSpeechHighlights();
+
+    const elements = speechElementsRef.current;
+    if (index >= elements.length) {
+      handleStopSpeech();
+      return;
+    }
+
+    currentSpeechIndexRef.current = index;
+    const el = elements[index];
+    el.classList.add('reader-speech-active');
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    const text = el.textContent?.trim() || '';
+    if (!text) {
+      speakElement(index + 1, rate);
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = rate;
+    utterance.lang = article?.lang || "ru-RU";
+
+    utterance.onboundary = () => {
+      if (!el.classList.contains('reader-speech-active')) {
+        el.classList.add('reader-speech-active');
+      }
+    };
+
+    utterance.onend = () => {
+      el.classList.remove('reader-speech-active');
+      if (isSpeakingRef.current && !isPausedRef.current) {
+        speakElement(index + 1, rate);
+      }
+    };
+
+    utterance.onerror = () => {
+      el.classList.remove('reader-speech-active');
+      handleStopSpeech();
+    };
+
+    speechUtteranceRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+  }, [article?.lang, speechRate, clearSpeechHighlights, handleStopSpeech]);
 
   const handleToggleSpeech = () => {
     if (!window.speechSynthesis) return;
@@ -114,46 +200,48 @@ export function ReaderView({
     if (isSpeaking && !isPaused) {
       window.speechSynthesis.pause();
       setIsPaused(true);
+      isPausedRef.current = true;
       return;
     }
 
     if (isSpeaking && isPaused) {
       window.speechSynthesis.resume();
       setIsPaused(false);
+      isPausedRef.current = false;
       return;
     }
 
-    // Start new speech
+    // Start fresh speech
     window.speechSynthesis.cancel();
-    const textToSpeak = article?.textContent || article?.title || "";
-    if (!textToSpeak.trim()) return;
+    clearSpeechHighlights();
 
-    const utterance = new SpeechSynthesisUtterance(textToSpeak);
-    utterance.rate = speechRate;
-    utterance.lang = article?.lang || "ru-RU";
+    const els = Array.from(
+      bodyRef.current?.querySelectorAll<HTMLElement>('p, h1, h2, h3, h4, h5, h6, blockquote, li') || []
+    ).filter((el) => (el.textContent || '').trim().length > 0);
 
-    utterance.onend = () => {
-      setIsSpeaking(false);
+    if (els.length > 0) {
+      speechElementsRef.current = els;
+      setIsSpeaking(true);
       setIsPaused(false);
-    };
+      isSpeakingRef.current = true;
+      isPausedRef.current = false;
+      speakElement(0, speechRate);
+    } else {
+      const textToSpeak = article?.textContent || article?.title || "";
+      if (!textToSpeak.trim()) return;
 
-    utterance.onerror = () => {
-      setIsSpeaking(false);
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      utterance.rate = speechRate;
+      utterance.lang = article?.lang || "ru-RU";
+      utterance.onend = () => handleStopSpeech();
+      utterance.onerror = () => handleStopSpeech();
+      speechUtteranceRef.current = utterance;
+      window.speechSynthesis.speak(utterance);
+      setIsSpeaking(true);
       setIsPaused(false);
-    };
-
-    speechUtteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
-    setIsSpeaking(true);
-    setIsPaused(false);
-  };
-
-  const handleStopSpeech = () => {
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+      isSpeakingRef.current = true;
+      isPausedRef.current = false;
     }
-    setIsSpeaking(false);
-    setIsPaused(false);
   };
 
   const handleCycleRate = () => {
@@ -162,9 +250,53 @@ export function ReaderView({
     const nextRate = rates[nextIndex];
     setSpeechRate(nextRate);
     if (isSpeaking) {
+      const curIndex = currentSpeechIndexRef.current;
       handleStopSpeech();
+      setTimeout(() => {
+        setIsSpeaking(true);
+        isSpeakingRef.current = true;
+        speakElement(curIndex, nextRate);
+      }, 50);
     }
   };
+
+  // Image error handling: replace broken images with a neat fallback card
+  useEffect(() => {
+    const container = bodyRef.current;
+    if (!container) return;
+
+    const handleImageError = (event: Event) => {
+      const target = event.target;
+      if (target instanceof HTMLImageElement) {
+        if (target.classList.contains("reader-img-error")) return;
+        target.classList.add("reader-img-error");
+
+        const fallback = document.createElement("div");
+        fallback.className = "reader-img-fallback";
+        fallback.setAttribute("role", "note");
+        fallback.setAttribute("aria-label", "Изображение недоступно");
+
+        const iconContainer = document.createElement("div");
+        iconContainer.className = "reader-img-fallback-icon";
+        iconContainer.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="2" x2="22" y2="22"/><path d="M10.41 10.41a2 2 0 1 1-2.83-2.83"/><line x1="13.5" y1="13.5" x2="6" y2="21"/><line x1="18" y1="12" x2="21" y2="15"/><path d="M3.59 3.59A1.99 1.99 0 0 0 3 5v14a2 2 0 0 0 2 2h14c.55 0 1.05-.22 1.41-.59"/><path d="M21 15V5a2 2 0 0 0-2-2H9"/></svg>`;
+
+        const textContainer = document.createElement("div");
+        textContainer.className = "reader-img-fallback-text";
+        textContainer.textContent = target.alt || target.title || "Изображение недоступно";
+
+        fallback.appendChild(iconContainer);
+        fallback.appendChild(textContainer);
+
+        target.style.display = "none";
+        target.parentNode?.insertBefore(fallback, target);
+      }
+    };
+
+    container.addEventListener("error", handleImageError, true);
+    return () => {
+      container.removeEventListener("error", handleImageError, true);
+    };
+  }, [sanitizedContent]);
 
   // Update Settings
   const updateSettings = async (patch: Partial<ReaderSettings>) => {
@@ -422,9 +554,27 @@ export function ReaderView({
             </div>
 
             <div
+              ref={bodyRef}
               className="reader-body"
               onClick={(event) => {
-                const anchor = (event.target as Element).closest('a[href]');
+                const target = event.target as HTMLElement;
+                const img = target.closest('img');
+                if (img && img.src && !img.classList.contains('reader-img-error')) {
+                  event.preventDefault();
+                  const figure = img.closest('figure');
+                  const caption = figure?.querySelector('figcaption')?.textContent?.trim() || img.alt || undefined;
+                  const anchor = target.closest('a[href]');
+                  const anchorHref = anchor?.getAttribute('href');
+                  const isImageLink = Boolean(anchorHref && /\.(jpe?g|png|webp|gif|svg|avif)(\?.*)?$/i.test(anchorHref));
+                  setLightboxImage({
+                    src: isImageLink && anchorHref ? anchorHref : (img.currentSrc || img.src),
+                    alt: img.alt || undefined,
+                    caption,
+                  });
+                  return;
+                }
+
+                const anchor = target.closest('a[href]');
                 if (!anchor) return;
                 event.preventDefault();
                 const href = anchor.getAttribute('href');
@@ -435,6 +585,42 @@ export function ReaderView({
           </article>
         ) : null}
       </main>
+
+      {/* Lightbox Modal */}
+      {lightboxImage && (
+        <div
+          className="reader-lightbox-backdrop"
+          onClick={() => setLightboxImage(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Просмотр изображения"
+        >
+          <div
+            className="reader-lightbox-container"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="reader-lightbox-close"
+              onClick={() => setLightboxImage(null)}
+              title="Закрыть · Esc"
+              aria-label="Закрыть"
+            >
+              <X size={20} />
+            </button>
+            <img
+              src={lightboxImage.src}
+              alt={lightboxImage.alt || ""}
+              className="reader-lightbox-img"
+            />
+            {(lightboxImage.caption || lightboxImage.alt) && (
+              <div className="reader-lightbox-caption">
+                {lightboxImage.caption || lightboxImage.alt}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -112,6 +112,17 @@ describe('Hotkeys and Chromium Shortcuts logic', () => {
       expect(isClickAndCleanShortcut({ ctrlOrCmd: true, shiftKey: false, key: 'Delete' })).toBe(false);
       expect(isClickAndCleanShortcut({ ctrlOrCmd: false, shiftKey: true, key: 'Delete' })).toBe(false);
     });
+
+    function isReaderModeShortcut(e: { ctrlOrCmd: boolean; altKey: boolean; key: string }): boolean {
+      const key = e.key.toLowerCase();
+      return (e.ctrlOrCmd && e.altKey && key === 'r') || key === 'f9';
+    }
+
+    it('activates Reader Mode on Ctrl+Alt+R, Cmd+Alt+R or F9', () => {
+      expect(isReaderModeShortcut({ ctrlOrCmd: true, altKey: true, key: 'r' })).toBe(true);
+      expect(isReaderModeShortcut({ ctrlOrCmd: false, altKey: false, key: 'F9' })).toBe(true);
+      expect(isReaderModeShortcut({ ctrlOrCmd: true, altKey: false, key: 'r' })).toBe(false); // standard reload, not reader
+    });
   });
 });
 
