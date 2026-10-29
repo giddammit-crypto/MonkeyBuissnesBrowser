@@ -21,6 +21,7 @@ const api: BrowserApi = {
   setPrivateProxy: (proxy) => ipcRenderer.invoke('browser:private-proxy', proxy),
   closePrivateTabs: () => ipcRenderer.invoke('browser:close-private-tabs'),
   closeTab: (tabId) => ipcRenderer.invoke('browser:close-tab', tabId),
+  detachTab: (tabId, screenX, screenY) => ipcRenderer.invoke('browser:detach-tab', tabId, screenX, screenY),
   setSplitView: (tabId) => ipcRenderer.invoke('browser:set-split-view', tabId),
   setSplitViewRatio: (ratio) => ipcRenderer.invoke('browser:set-split-view-ratio', ratio),
   exportBookmarks: () => ipcRenderer.invoke('browser:export-bookmarks'),

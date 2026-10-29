@@ -2410,6 +2410,8 @@ function TabStrip({
   onCreate: () => void;
 }): React.JSX.Element {
   const listRef = useRef<HTMLDivElement>(null);
+  const dragHandledRef = useRef(false);
+  const dragStartPosRef = useRef({ screenX: 0, screenY: 0, clientX: 0, clientY: 0 });
   const [overflow, setOverflow] = useState({ left: false, right: false });
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState<{ id: string; side: "left" | "right" } | null>(null);
@@ -2508,6 +2510,7 @@ function TabStrip({
         onDrop={(event) => {
           event.preventDefault();
           const sourceId = event.dataTransfer.getData("text/plain") || draggingId;
+          dragHandledRef.current = true;
           setDraggingId(null);
           setDragOver(null);
           if (sourceId) {
@@ -2525,6 +2528,13 @@ function TabStrip({
             data-private={tab.isPrivate ? "true" : undefined}
             draggable={!tab.isPinned}
             onDragStart={(event) => {
+              dragHandledRef.current = false;
+              dragStartPosRef.current = {
+                screenX: event.screenX,
+                screenY: event.screenY,
+                clientX: event.clientX,
+                clientY: event.clientY,
+              };
               event.dataTransfer.setData("text/plain", tab.id);
               event.dataTransfer.effectAllowed = "move";
               setDraggingId(tab.id);
@@ -2551,6 +2561,7 @@ function TabStrip({
             onDrop={(event) => {
               event.preventDefault();
               event.stopPropagation();
+              dragHandledRef.current = true;
               const sourceId = event.dataTransfer.getData("text/plain") || draggingId;
               const currentDragOver = dragOver;
               setDraggingId(null);
@@ -2560,9 +2571,36 @@ function TabStrip({
                 void window.browserApi.reorderTab(sourceId, tab.id, position).catch(console.error);
               }
             }}
-            onDragEnd={() => {
+            onDragEnd={(event) => {
+              const wasHandled = dragHandledRef.current;
+              const sourceId = draggingId || tab.id;
               setDraggingId(null);
               setDragOver(null);
+
+              if (!wasHandled && sourceId && tabs.length > 1) {
+                const finalScreenX = (event.screenX !== 0 || event.screenY !== 0)
+                  ? event.screenX
+                  : (window.screenX + event.clientX);
+                const finalScreenY = (event.screenX !== 0 || event.screenY !== 0)
+                  ? event.screenY
+                  : (window.screenY + event.clientY);
+
+                const stripRect = listRef.current?.getBoundingClientRect();
+                const isOutside = !stripRect ||
+                  event.clientX < stripRect.left - 20 ||
+                  event.clientX > stripRect.right + 20 ||
+                  event.clientY < stripRect.top - 20 ||
+                  event.clientY > stripRect.bottom + 20;
+
+                const distance = Math.hypot(
+                  finalScreenX - dragStartPosRef.current.screenX,
+                  finalScreenY - dragStartPosRef.current.screenY,
+                );
+
+                if (isOutside && distance > 30) {
+                  void window.browserApi.detachTab(sourceId, finalScreenX, finalScreenY).catch(console.error);
+                }
+              }
             }}
             onContextMenu={(event) => { event.preventDefault(); void window.browserApi.showTabMenu(tab.id).catch(console.error); }}
             className={`tab-container ${tab.id === snapshot.activeTabId ? "active" : ""} ${tab.isPrivate ? "private-tab" : ""} ${tab.isPinned ? "pinned-tab" : ""} ${tab.lifecycle === "hibernated" ? "sleeping-tab" : ""} ${draggingId === tab.id ? "dragging-tab" : ""} ${dragOver?.id === tab.id ? (dragOver.side === "left" ? "drag-over-left" : "drag-over-right") : ""}`}

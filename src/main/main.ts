@@ -5,6 +5,7 @@ import {
   ipcMain,
   nativeTheme,
   protocol,
+  screen,
 } from 'electron';
 import type { BrowserApi, ChromeBounds } from '../shared/ipc';
 import type { BrowserSettings } from '../shared/types';
@@ -69,7 +70,7 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-let controller: BrowserController | undefined;
+let primaryController: BrowserController | undefined;
 let appProtocolRegistered = false;
 let ipcRegistered = false;
 let applicationPromise: Promise<void> | undefined;
@@ -115,10 +116,11 @@ function registerAppProtocol(): void {
 function requireShell(event: Electron.IpcMainInvokeEvent): BrowserController {
   const frameUrl = event.senderFrame?.url || '';
   const isAppShell = frameUrl === 'app://shell/index.html' || frameUrl.startsWith('app://shell/index.html?');
-  if (!controller || (!controller.isTrustedShell(event.sender.id) || event.senderFrame !== event.sender.mainFrame || !isAppShell)) {
+  const matched = BrowserController.findControllerForShell(event.sender.id);
+  if (!matched || event.senderFrame !== event.sender.mainFrame || !isAppShell) {
     throw new Error('Untrusted IPC sender');
   }
-  return controller;
+  return matched;
 }
 
 function registerIpc(): void {
@@ -143,17 +145,24 @@ function registerIpc(): void {
   ipcMain.handle('browser:private-proxy', (event, proxy: string) => requireShell(event).setPrivateProxy(proxy));
   ipcMain.handle('browser:close-private-tabs', (event) => requireShell(event).closePrivateTabs());
   ipcMain.handle('page:get-adblock-policy', (event) => {
-    if (event.senderFrame !== event.sender.mainFrame || !controller?.isTrustedPage(event.sender.id)) return false;
-    return controller.getPageAdBlockPolicy(event.sender.id);
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (event.senderFrame !== event.sender.mainFrame || !c) return false;
+    return c.getPageAdBlockPolicy(event.sender.id);
   });
   ipcMain.handle('page:get-autofill-credentials', (event, data: { origin: string; hostname?: string }) => {
-    if (event.senderFrame !== event.sender.mainFrame || !controller?.isTrustedPage(event.sender.id)) return [];
-    return controller.getPageAutofillCredentials(event.sender.id, data);
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (event.senderFrame !== event.sender.mainFrame || !c) return [];
+    return c.getPageAutofillCredentials(event.sender.id, data);
   });
   ipcMain.on('page:form-state', (event, dirty: unknown) => {
-    if (event.senderFrame === event.sender.mainFrame && typeof dirty === 'boolean') controller?.markFormState(event.sender.id, dirty);
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (event.senderFrame === event.sender.mainFrame && typeof dirty === 'boolean') c?.markFormState(event.sender.id, dirty);
   });
   ipcMain.handle('browser:close-tab', (event, tabId: string) => requireShell(event).closeTab(tabId));
+  ipcMain.handle('browser:detach-tab', async (event, tabId: string, screenX: number, screenY: number) => {
+    const source = requireShell(event);
+    await source.detachTabToNewWindow(tabId, screenX, screenY);
+  });
   ipcMain.handle('browser:set-split-view', (event, tabId?: string) => requireShell(event).setSplitView(tabId));
   ipcMain.handle('browser:set-split-view-ratio', (event, ratio: number) => requireShell(event).setSplitViewRatio(ratio));
   ipcMain.handle('browser:export-bookmarks', (event) => requireShell(event).exportBookmarks());
@@ -232,37 +241,46 @@ function registerIpc(): void {
   ipcMain.handle('browser:switch-google-account', (event, accountId: string) => requireShell(event).switchGoogleAccount(accountId));
   ipcMain.handle('browser:remove-google-account', (event, accountId: string) => requireShell(event).removeGoogleAccount(accountId));
   ipcMain.on('page:download-media', (event, data: { url: string; filename?: string; isAudio?: boolean }) => {
-    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id) && data?.url && typeof data.url === 'string' && (data.url.startsWith('https://') || data.url.startsWith('http://'))) {
-      controller.downloadMediaUrl(data.url, typeof data.filename === 'string' ? data.filename : undefined, typeof data.isAudio === 'boolean' ? data.isAudio : false, event.sender.id);
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (event.senderFrame === event.sender.mainFrame && c && data?.url && typeof data.url === 'string' && (data.url.startsWith('https://') || data.url.startsWith('http://'))) {
+      c.downloadMediaUrl(data.url, typeof data.filename === 'string' ? data.filename : undefined, typeof data.isAudio === 'boolean' ? data.isAudio : false, event.sender.id);
     }
   });
   ipcMain.on('page:media-detected', (event, data: { hasVideo?: boolean; hasAudio?: boolean }) => {
-    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabHasMedia(event.sender.id, Boolean(data?.hasVideo || data?.hasAudio));
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (event.senderFrame === event.sender.mainFrame && c) c.markTabHasMedia(event.sender.id, Boolean(data?.hasVideo || data?.hasAudio));
   });
   ipcMain.on('page:video-detected', (event, data: { hasVideo?: boolean }) => {
-    if (controller?.isTrustedPage(event.sender.id)) controller.markTabVideoDetected(event.sender.id, Boolean(data?.hasVideo));
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (c) c.markTabVideoDetected(event.sender.id, Boolean(data?.hasVideo));
   });
   ipcMain.on('page:pip-changed', (event, data: { isPip?: boolean; source?: 'native' | 'mini' }) => {
-    if (controller?.isTrustedPage(event.sender.id)) controller.markTabPipChanged(event.sender.id, Boolean(data?.isPip), data?.source === 'native' ? 'native' : 'mini');
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (c) c.markTabPipChanged(event.sender.id, Boolean(data?.isPip), data?.source === 'native' ? 'native' : 'mini');
   });
   ipcMain.on('page:pip-layout', (event, patch: { deltaX?: number; deltaY?: number; width?: number }) => {
-    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.updatePictureInPictureLayout(event.sender.id, patch);
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (event.senderFrame === event.sender.mainFrame && c) c.updatePictureInPictureLayout(event.sender.id, patch);
   });
   ipcMain.on('page:request-activate-tab', (event, tabId?: string) => {
-    if (typeof tabId === 'string' && tabId && controller?.isTrustedPage(event.sender.id)
-      && event.senderFrame === event.sender.mainFrame && controller.tabs.get(tabId)?.webContentsId === event.sender.id) {
-      controller.activateTab(tabId);
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (typeof tabId === 'string' && tabId && c
+      && event.senderFrame === event.sender.mainFrame && c.tabs.get(tabId)?.webContentsId === event.sender.id) {
+      c.activateTab(tabId);
     }
   });
   ipcMain.on('page:exit-fullscreen', (event) => {
-    if (controller?.isTrustedPage(event.sender.id)) controller.exitFullScreenIfActive();
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (c) c.exitFullScreenIfActive();
   });
   ipcMain.on('page:reader-status', (event, data: { available?: boolean }) => {
-    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id)) controller.markTabReaderStatus(event.sender.id, Boolean(data?.available));
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (event.senderFrame === event.sender.mainFrame && c) c.markTabReaderStatus(event.sender.id, Boolean(data?.available));
   });
   ipcMain.on('page:audio-stream-captured', (event, data: { url: string; title?: string; artist?: string; filename?: string }) => {
-    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id) && data?.url && typeof data.url === 'string') {
-      controller.registerCapturedAudio(
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (event.senderFrame === event.sender.mainFrame && c && data?.url && typeof data.url === 'string') {
+      c.registerCapturedAudio(
         event.sender.id,
         data.url,
         typeof data.title === 'string' ? data.title : undefined,
@@ -272,8 +290,9 @@ function registerIpc(): void {
     }
   });
   ipcMain.on('page:google-account-detected', (event, data: { email: string; name?: string; avatar?: string }) => {
-    if (event.senderFrame === event.sender.mainFrame && controller?.isTrustedPage(event.sender.id) && typeof data?.email === 'string' && data.email) {
-      controller.registerGoogleAccount(
+    const c = BrowserController.findControllerForPage(event.sender.id);
+    if (event.senderFrame === event.sender.mainFrame && c && typeof data?.email === 'string' && data.email) {
+      c.registerGoogleAccount(
         data.email,
         typeof data.name === 'string' ? data.name : undefined,
         typeof data.avatar === 'string' ? data.avatar : undefined,
@@ -312,27 +331,109 @@ function registerIpc(): void {
   ipcMain.handle('window:close', (event) => requireShell(event).closeWindow());
 }
 
+function setupController(c: BrowserController): void {
+  if (!primaryController) primaryController = c;
+  c.setListeners(
+    (snapshot) => {
+      c.shellView?.webContents.send('browser:snapshot', snapshot);
+      c.voodooView?.webContents.send('browser:snapshot', snapshot);
+    },
+    (event) => {
+      c.shellView?.webContents.send('browser:event', event);
+      c.voodooView?.webContents.send('browser:event', event);
+    },
+  );
+  c.onFocus = () => {
+    primaryController = c;
+  };
+  c.onClosed = () => {
+    if (primaryController === c) {
+      primaryController = BrowserController.controllers.values().next().value;
+    }
+  };
+  c.onDetachTab = async (source, tabId, screenX, screenY) => {
+    await detachTabToNewWindow(source, tabId, screenX, screenY);
+  };
+}
+
+async function detachTabToNewWindow(
+  source: BrowserController,
+  tabId: string,
+  screenX?: number,
+  screenY?: number,
+): Promise<void> {
+  const tab = source.tabs.get(tabId);
+  if (!tab || source.tabs.size <= 1) return;
+
+  const tabData = {
+    url: tab.url,
+    title: tab.title,
+    isPrivate: tab.isPrivate,
+    isPinned: tab.isPinned,
+    isMuted: tab.isMuted,
+    workspaceId: tab.workspaceId,
+  };
+
+  await source.closeTab(tabId);
+
+  const sourceBounds = source.window && !source.window.isDestroyed()
+    ? source.window.getBounds()
+    : { x: 100, y: 100, width: 1280, height: 800 };
+
+  let targetX = sourceBounds.x + 40;
+  let targetY = sourceBounds.y + 40;
+  const targetWidth = sourceBounds.width || 1280;
+  const targetHeight = sourceBounds.height || 800;
+
+  if (typeof screenX === 'number' && typeof screenY === 'number' && (screenX !== 0 || screenY !== 0)) {
+    try {
+      const point = { x: Math.round(screenX), y: Math.round(screenY) };
+      const display = screen.getDisplayNearestPoint(point);
+      const workArea = display.workArea;
+      targetX = Math.round(screenX - 150);
+      targetY = Math.round(screenY - 20);
+      if (targetX + targetWidth > workArea.x + workArea.width) {
+        targetX = workArea.x + workArea.width - targetWidth;
+      }
+      if (targetX < workArea.x) targetX = workArea.x;
+      if (targetY + targetHeight > workArea.y + workArea.height) {
+        targetY = workArea.y + workArea.height - targetHeight;
+      }
+      if (targetY < workArea.y) targetY = workArea.y;
+    } catch {
+      targetX = sourceBounds.x + 40;
+      targetY = sourceBounds.y + 40;
+    }
+  }
+
+  const newController = new BrowserController();
+  setupController(newController);
+  await newController.createWindow({
+    bounds: {
+      x: targetX,
+      y: targetY,
+      width: targetWidth,
+      height: targetHeight,
+    },
+    initialTab: tabData,
+  });
+  if (newController.window && !newController.window.isDestroyed()) {
+    newController.window.focus();
+  }
+}
+
 async function createApplication(): Promise<void> {
   if (applicationPromise) return applicationPromise;
   applicationPromise = (async () => {
-    if (controller?.window && !controller.window.isDestroyed()) {
-      controller.window.show();
+    if (primaryController?.window && !primaryController.window.isDestroyed()) {
+      primaryController.window.show();
       return;
     }
     registerAppProtocol();
-    controller = new BrowserController();
-    controller.setListeners(
-      (snapshot) => {
-        controller?.shellView?.webContents.send('browser:snapshot', snapshot);
-        controller?.voodooView?.webContents.send('browser:snapshot', snapshot);
-      },
-      (event) => {
-        controller?.shellView?.webContents.send('browser:event', event);
-        controller?.voodooView?.webContents.send('browser:event', event);
-      },
-    );
     registerIpc();
-    await controller.createWindow();
+    const initialController = new BrowserController();
+    setupController(initialController);
+    await initialController.createWindow();
   })();
   try {
     await applicationPromise;
@@ -344,7 +445,7 @@ async function createApplication(): Promise<void> {
 async function showApplication(): Promise<void> {
   await app.whenReady();
   await createApplication();
-  const window = controller?.window;
+  const window = primaryController?.window;
   if (!window || window.isDestroyed()) return;
   if (window.isMinimized()) window.restore();
   window.show();
@@ -365,7 +466,9 @@ app.on('login', (event, _webContents, _authInfo, _authResponseDetails, callback)
 
 app.on('child-process-gone', (_event, details) => {
   if (details.type === 'GPU') {
-    void controller?.samplePerformance();
+    for (const c of BrowserController.controllers) {
+      void c.samplePerformance();
+    }
   }
 });
 

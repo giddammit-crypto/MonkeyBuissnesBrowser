@@ -140,7 +140,66 @@ async function getDirectorySize(dirPath: string): Promise<number> {
   } catch { return 0; }
 }
 
+export interface CreateWindowOptions {
+  bounds?: { x?: number; y?: number; width?: number; height?: number };
+  initialTab?: {
+    url: string;
+    title?: string;
+    isPrivate?: boolean;
+    isPinned?: boolean;
+    isMuted?: boolean;
+    workspaceId?: string;
+  };
+}
+
 export class BrowserController {
+  public static readonly controllers = new Set<BrowserController>();
+  private static defaultSessionConfigured = false;
+  private static readonly configuredSessions = new WeakSet<Electron.Session>();
+
+  public onDetachTab?: (
+    source: BrowserController,
+    tabId: string,
+    screenX?: number,
+    screenY?: number,
+  ) => Promise<void>;
+  public onClosed?: () => void;
+  public onFocus?: () => void;
+
+  static findControllerForShell(webContentsId?: number): BrowserController | undefined {
+    if (webContentsId === undefined) return undefined;
+    for (const c of BrowserController.controllers) {
+      if (c.isTrustedShell(webContentsId)) return c;
+    }
+    return undefined;
+  }
+
+  static findControllerForPage(webContentsId?: number): BrowserController | undefined {
+    if (webContentsId === undefined) return undefined;
+    for (const c of BrowserController.controllers) {
+      if (c.isTrustedPage(webContentsId)) return c;
+    }
+    return undefined;
+  }
+
+  static findTab(webContentsId?: number): TabRecord | undefined {
+    if (webContentsId === undefined) return undefined;
+    for (const c of BrowserController.controllers) {
+      for (const tab of c.tabs.values()) {
+        if (tab.webContentsId === webContentsId) return tab;
+      }
+    }
+    return undefined;
+  }
+
+  static isAnyInternal(webContentsId?: number): boolean {
+    if (webContentsId === undefined) return false;
+    for (const c of BrowserController.controllers) {
+      if (c.isTrustedShell(webContentsId)) return true;
+    }
+    return false;
+  }
+
   readonly stores: BrowserStores;
   readonly downloads: DownloadEntry[];
   readonly tabs = new Map<string, TabRecord>();
@@ -205,6 +264,7 @@ export class BrowserController {
   private neverSaveOrigins = new Set<string>();
 
   constructor() {
+    BrowserController.controllers.add(this);
     this.stores = new BrowserStores(app.getPath('userData'));
     const initialSettings = this.stores.settings.get();
     if (initialSettings.voodooBubblePosition) {
@@ -301,11 +361,14 @@ export class BrowserController {
     this.eventListener = eventListener;
   }
 
-  async createWindow(): Promise<void> {
+  async createWindow(options?: CreateWindowOptions): Promise<void> {
     const appIconPath = path.join(app.getAppPath(), 'assets/icons/png/app-icon-512.png');
+    const bounds = options?.bounds;
     this.window = new BaseWindow({
-      width: 1440,
-      height: 900,
+      width: bounds?.width ?? 1440,
+      height: bounds?.height ?? 900,
+      x: bounds?.x,
+      y: bounds?.y,
       minWidth: 360,
       minHeight: 640,
       show: false,
@@ -317,89 +380,94 @@ export class BrowserController {
     const appIcon = nativeImage.createFromPath(appIconPath);
     if (!appIcon.isEmpty()) this.window.setIcon(appIcon);
 
-    session.defaultSession.setPermissionCheckHandler((contents, permission, origin) => {
-      const isInternal = origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId;
-      if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission)) {
-        return isInternal;
-      }
-      return permission === 'fullscreen' || permission === 'clipboard-sanitized-write';
-    });
-    session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
-      const origin = details?.requestingUrl || (contents && !contents.isDestroyed() ? contents.getURL() : '') || '';
-      const isInternal = origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId;
-      if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission) && isInternal) {
-        callback(true);
-        return;
-      }
-      if (permission === 'fullscreen' || permission === 'clipboard-sanitized-write') {
-        callback(true);
-        return;
-      }
-      callback(false);
-    });
+    if (!BrowserController.defaultSessionConfigured) {
+      BrowserController.defaultSessionConfigured = true;
 
-    // Native Chrome 134 stealth identity and header sanitization for defaultSession (privileged shell & reader mode)
-    session.defaultSession.setUserAgent(getChromeUserAgent());
-    session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
-      const headers = { ...details.requestHeaders };
-      const origin = headers['Origin'] || headers['origin'] || '';
-      const referer = headers['Referer'] || headers['referer'] || '';
-      const isFromShell =
-        origin.startsWith('app://shell') ||
-        referer.startsWith('app://shell') ||
-        Boolean(details.initiatorOrigin?.startsWith('app://shell')) ||
-        (details.webContentsId === this.shellContentsId);
+      session.defaultSession.setPermissionCheckHandler((contents, permission, origin) => {
+        const isInternal = origin.startsWith('app://') || BrowserController.isAnyInternal(contents?.id);
+        if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission)) {
+          return isInternal;
+        }
+        return permission === 'fullscreen' || permission === 'clipboard-sanitized-write';
+      });
+      session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+        const origin = details?.requestingUrl || (contents && !contents.isDestroyed() ? contents.getURL() : '') || '';
+        const isInternal = origin.startsWith('app://') || BrowserController.isAnyInternal(contents?.id);
+        if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission) && isInternal) {
+          callback(true);
+          return;
+        }
+        if (permission === 'fullscreen' || permission === 'clipboard-sanitized-write') {
+          callback(true);
+          return;
+        }
+        callback(false);
+      });
 
-      if (isFromShell) {
-        for (const key of Object.keys(headers)) {
-          const lower = key.toLowerCase();
-          if (['user-agent', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform'].includes(lower)) {
-            delete headers[key];
+      // Native Chrome 134 stealth identity and header sanitization for defaultSession (privileged shell & reader mode)
+      session.defaultSession.setUserAgent(getChromeUserAgent());
+      session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+        const headers = { ...details.requestHeaders };
+        const origin = headers['Origin'] || headers['origin'] || '';
+        const referer = headers['Referer'] || headers['referer'] || '';
+        const isFromShell =
+          origin.startsWith('app://shell') ||
+          referer.startsWith('app://shell') ||
+          Boolean(details.initiatorOrigin?.startsWith('app://shell')) ||
+          BrowserController.isAnyInternal(details.webContentsId);
+
+        if (isFromShell) {
+          for (const key of Object.keys(headers)) {
+            const lower = key.toLowerCase();
+            if (['user-agent', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform'].includes(lower)) {
+              delete headers[key];
+            }
+          }
+          const clientHints = getClientHintHeaders();
+          headers['User-Agent'] = clientHints['User-Agent'];
+          headers['Sec-CH-UA'] = clientHints['Sec-CH-UA'];
+          headers['Sec-CH-UA-Mobile'] = clientHints['Sec-CH-UA-Mobile'];
+          headers['Sec-CH-UA-Platform'] = clientHints['Sec-CH-UA-Platform'];
+
+          const controller = BrowserController.findControllerForShell(details.webContentsId) || BrowserController.controllers.values().next().value;
+          const activeTab = controller?.getActiveTab();
+          const articleReferer = activeTab?.url && (activeTab.url.startsWith('http://') || activeTab.url.startsWith('https://'))
+            ? activeTab.url
+            : undefined;
+
+          for (const key of Object.keys(headers)) {
+            const lower = key.toLowerCase();
+            if (lower === 'origin' && headers[key]?.startsWith('app://shell')) {
+              delete headers[key];
+            }
+            if (lower === 'referer' && headers[key]?.startsWith('app://shell')) {
+              if (articleReferer) {
+                headers[key] = articleReferer;
+              } else {
+                delete headers[key];
+              }
+            }
+          }
+
+          if (articleReferer && !headers['Referer'] && !headers['referer']) {
+            headers['Referer'] = articleReferer;
           }
         }
-        const clientHints = getClientHintHeaders();
-        headers['User-Agent'] = clientHints['User-Agent'];
-        headers['Sec-CH-UA'] = clientHints['Sec-CH-UA'];
-        headers['Sec-CH-UA-Mobile'] = clientHints['Sec-CH-UA-Mobile'];
-        headers['Sec-CH-UA-Platform'] = clientHints['Sec-CH-UA-Platform'];
+        callback({ requestHeaders: headers });
+      });
 
-        const activeTab = this.getActiveTab();
-        const articleReferer = activeTab?.url && (activeTab.url.startsWith('http://') || activeTab.url.startsWith('https://'))
-          ? activeTab.url
-          : undefined;
-
-        for (const key of Object.keys(headers)) {
-          const lower = key.toLowerCase();
-          if (lower === 'origin' && headers[key]?.startsWith('app://shell')) {
-            delete headers[key];
-          }
-          if (lower === 'referer' && headers[key]?.startsWith('app://shell')) {
-            if (articleReferer) {
-              headers[key] = articleReferer;
-            } else {
+      session.defaultSession.webRequest.onHeadersReceived({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+        const headers = { ...details.responseHeaders };
+        if (BrowserController.isAnyInternal(details.webContentsId)) {
+          for (const key of Object.keys(headers)) {
+            if (key.toLowerCase() === 'cross-origin-resource-policy') {
               delete headers[key];
             }
           }
         }
-
-        if (articleReferer && !headers['Referer'] && !headers['referer']) {
-          headers['Referer'] = articleReferer;
-        }
-      }
-      callback({ requestHeaders: headers });
-    });
-
-    session.defaultSession.webRequest.onHeadersReceived({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
-      const headers = { ...details.responseHeaders };
-      if (details.webContentsId === this.shellContentsId) {
-        for (const key of Object.keys(headers)) {
-          if (key.toLowerCase() === 'cross-origin-resource-policy') {
-            delete headers[key];
-          }
-        }
-      }
-      callback({ responseHeaders: headers });
-    });
+        callback({ responseHeaders: headers });
+      });
+    }
 
     this.shellView = new WebContentsView({
       webPreferences: {
@@ -449,21 +517,42 @@ export class BrowserController {
     await this.extensionsManager.restore();
 
     this.restoring = true;
-    const savedSession = this.stores.settings.get().restoreSession !== false ? this.stores.session.get() : { tabs: [], activeIndex: 0 };
-    for (const saved of savedSession.tabs) {
-      if (saved.url !== NEW_TAB_URL && !isSafeWebUrl(saved.url)) continue;
-      this.activeWorkspaceId = this.stores.workspaces.get().some((entry) => entry.id === saved.workspaceId) ? saved.workspaceId : 'personal';
-      const restored = await this.createTab({ url: saved.url, isPrivate: false, active: false, lazy: true });
-      const record = this.tabs.get(restored.id)!;
-      record.title = saved.title || record.title;
-      record.isPinned = Boolean(saved.isPinned);
-      record.isMuted = Boolean(saved.isMuted);
-      this.memoryManager.updateTab(record.id, { pinned: record.isPinned });
+    if (options?.initialTab) {
+      if (options.initialTab.workspaceId) {
+        this.activeWorkspaceId = this.stores.workspaces.get().some((entry) => entry.id === options.initialTab!.workspaceId)
+          ? options.initialTab.workspaceId
+          : 'personal';
+      }
+      const created = await this.createTab({
+        url: options.initialTab.url,
+        isPrivate: options.initialTab.isPrivate,
+        active: true,
+      });
+      const record = this.tabs.get(created.id);
+      if (record) {
+        if (options.initialTab.title) record.title = options.initialTab.title;
+        record.isPinned = Boolean(options.initialTab.isPinned);
+        record.isMuted = Boolean(options.initialTab.isMuted);
+        this.memoryManager.updateTab(record.id, { pinned: record.isPinned });
+      }
+    } else {
+      const savedSession = this.stores.settings.get().restoreSession !== false ? this.stores.session.get() : { tabs: [], activeIndex: 0 };
+      for (const saved of savedSession.tabs) {
+        if (saved.url !== NEW_TAB_URL && !isSafeWebUrl(saved.url)) continue;
+        this.activeWorkspaceId = this.stores.workspaces.get().some((entry) => entry.id === saved.workspaceId) ? saved.workspaceId : 'personal';
+        const restored = await this.createTab({ url: saved.url, isPrivate: false, active: false, lazy: true });
+        const record = this.tabs.get(restored.id)!;
+        record.title = saved.title || record.title;
+        record.isPinned = Boolean(saved.isPinned);
+        record.isMuted = Boolean(saved.isMuted);
+        this.memoryManager.updateTab(record.id, { pinned: record.isPinned });
+      }
+      const restoredIds = [...this.tabs.keys()];
+      if (restoredIds.length) this.activateTab(restoredIds[Math.min(savedSession.activeIndex, restoredIds.length - 1)] ?? restoredIds[0]);
+      else await this.createTab({ url: NEW_TAB_URL, isPrivate: false, active: true });
     }
-    const restoredIds = [...this.tabs.keys()];
-    if (restoredIds.length) this.activateTab(restoredIds[Math.min(savedSession.activeIndex, restoredIds.length - 1)] ?? restoredIds[0]);
-    else await this.createTab({ url: NEW_TAB_URL, isPrivate: false, active: true });
     this.restoring = false;
+    this.window.on('focus', () => this.onFocus?.());
     this.window.on('resize', () => this.refreshViewBounds());
     this.window.on('maximize', () => this.refreshViewBounds());
     this.window.on('unmaximize', () => this.refreshViewBounds());
@@ -478,7 +567,10 @@ export class BrowserController {
       this.notifyFullscreenChange(false);
       if (this.stores) this.emitSnapshot();
     });
-    this.window.on('closed', () => this.dispose());
+    this.window.on('closed', () => {
+      this.dispose();
+      this.onClosed?.();
+    });
     this.memoryManager.sample();
     this.metricsTimer = setInterval(() => {
       this.memoryManager.sample();
@@ -1117,6 +1209,15 @@ export class BrowserController {
     return exportBookmarksHtml(this.window, this.stores.bookmarks.get(), path.join(app.getPath('documents'), 'bookmarks.html'));
   }
 
+  async detachTabToNewWindow(tabId: string, screenX?: number, screenY?: number): Promise<void> {
+    if (this.tabs.size <= 1) return;
+    const tab = this.tabs.get(tabId);
+    if (!tab) return;
+    if (this.onDetachTab) {
+      await this.onDetachTab(this, tabId, screenX, screenY);
+    }
+  }
+
   showTabMenu(tabId: string): void {
     const tab = this.tabs.get(tabId);
     if (!tab || !this.window || this.window.isDestroyed() || this.disposed) return;
@@ -1134,6 +1235,7 @@ export class BrowserController {
       { label: tab.isPinned ? 'Открепить вкладку' : 'Закрепить вкладку', type: 'checkbox', checked: tab.isPinned, click: safely(() => this.tabAction(tabId, 'pin')) },
       { label: tab.isMuted ? 'Включить звук' : 'Отключить звук', type: 'checkbox', checked: tab.isMuted, click: safely(() => this.tabAction(tabId, 'mute')) },
       { label: 'Дублировать вкладку', enabled: tab.url === NEW_TAB_URL || isSafeWebUrl(tab.url), click: safely(() => this.tabAction(tabId, 'duplicate')) },
+      { label: 'Переместить в новое окно', enabled: this.tabs.size > 1, click: safely(() => this.detachTabToNewWindow(tabId)) },
       { label: 'Перезагрузить вкладку', enabled: isSafeWebUrl(tab.url), click: safely(() => this.reload(tabId)) },
       { label: 'Копировать адрес страницы', enabled: isSafeWebUrl(tab.url), click: safely(() => clipboard.writeText(tab.url)) },
       { label: 'Добавить или убрать закладку', enabled: isSafeWebUrl(tab.url), click: safely(() => this.toggleBookmark(tabId)) },
@@ -2785,20 +2887,22 @@ export class BrowserController {
     this.privateSession = undefined;
     this.privateAdBlock = new SessionAdBlock(new FilterEngine());
     if (target) {
-      this.browsec.unregisterSession(target);
+      this.browsec?.unregisterSession(target);
     }
-    for (const [id, download] of this.liveDownloads) {
-      if (this.downloads.find((entry) => entry.id === id)?.isPrivate) download.item.cancel();
+    for (const [id, download] of this.liveDownloads || []) {
+      if (this.downloads?.find((entry) => entry.id === id)?.isPrivate) download.item.cancel();
     }
-    for (const [id, process] of this.ytDlpProcesses) {
-      if (!this.downloads.find((entry) => entry.id === id)?.isPrivate) continue;
+    for (const [id, process] of this.ytDlpProcesses || []) {
+      if (!this.downloads?.find((entry) => entry.id === id)?.isPrivate) continue;
       try { if (process.isPaused) process.child.kill('SIGCONT'); process.child.kill('SIGTERM'); } catch {}
-      this.ytDlpProcesses.delete(id);
+      this.ytDlpProcesses?.delete(id);
       this.mediaCookieCleanup?.get(id)?.();
     }
-    this.downloads.splice(0, this.downloads.length, ...this.downloads.filter((entry) => !entry.isPrivate));
+    if (this.downloads) {
+      this.downloads.splice(0, this.downloads.length, ...this.downloads.filter((entry) => !entry.isPrivate));
+    }
     if (target) {
-      const handler = this.sessionDownloadHandlers.get(target);
+      const handler = this.sessionDownloadHandlers?.get(target);
       if (handler) target.removeListener('will-download', handler);
       this.sessionDownloadHandlers.delete(target);
       target.webRequest.onBeforeRequest(null);
@@ -4558,7 +4662,17 @@ export class BrowserController {
 
   private persistSession(): void {
     if (this.restoring) return;
-    const saved = this.stores.settings.get().restoreSession !== false ? buildStoredSession([...this.tabs.values()].map((tab) => this.toSnapshot(tab)), this.activeTabId) : { tabs: [], activeIndex: 0 };
+    let allTabs: TabSnapshot[] = [];
+    if (BrowserController.controllers.size > 1) {
+      for (const c of BrowserController.controllers) {
+        if (!c.disposed) {
+          allTabs.push(...[...c.tabs.values()].map((tab) => c.toSnapshot(tab)));
+        }
+      }
+    } else {
+      allTabs = [...this.tabs.values()].map((tab) => this.toSnapshot(tab));
+    }
+    const saved = this.stores.settings.get().restoreSession !== false ? buildStoredSession(allTabs, this.activeTabId) : { tabs: [], activeIndex: 0 };
     const signature = JSON.stringify(saved);
     if (signature === this.sessionSignature) return;
     try {
@@ -6276,7 +6390,8 @@ export class BrowserController {
     };
   }
 
-  private dispose(): void {
+  dispose(): void {
+    BrowserController.controllers.delete(this);
     this.updateService?.stopAutoCheckTimer();
     this.voodooModelCatalog?.dispose();
     if (this.disposed) return;
@@ -6290,40 +6405,52 @@ export class BrowserController {
     if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
     if (this.sessionPersistTimer) clearTimeout(this.sessionPersistTimer);
     if (this.downloadPersistTimer) clearTimeout(this.downloadPersistTimer);
-    for (const popup of this.popupWindows) {
-      if (!popup.isDestroyed()) popup.destroy();
+    if (this.popupWindows) {
+      for (const popup of this.popupWindows) {
+        if (!popup.isDestroyed()) popup.destroy();
+      }
+      this.popupWindows.clear();
     }
-    this.popupWindows.clear();
-    this.popupToTab.clear();
-    for (const [target, handler] of this.sessionDownloadHandlers) target.removeListener('will-download', handler);
-    this.sessionDownloadHandlers.clear();
-    for (const { item } of this.liveDownloads.values()) item.cancel();
-    for (const [id, process] of this.ytDlpProcesses) {
-      // A stopped POSIX child cannot handle SIGTERM until resumed.
-      try { if (process.isPaused) process.child.kill('SIGCONT'); process.child.kill('SIGTERM'); } catch {}
-      const entry = this.downloads.find((download) => download.id === id);
-      if (entry) { entry.state = 'interrupted'; entry.isLive = false; entry.canResume = false; }
+    this.popupToTab?.clear();
+    if (this.sessionDownloadHandlers) {
+      for (const [target, handler] of this.sessionDownloadHandlers) target.removeListener('will-download', handler);
+      this.sessionDownloadHandlers.clear();
     }
-    this.ytDlpProcesses.clear();
+    if (this.liveDownloads) {
+      for (const { item } of this.liveDownloads.values()) item.cancel();
+    }
+    if (this.ytDlpProcesses) {
+      for (const [id, process] of this.ytDlpProcesses) {
+        // A stopped POSIX child cannot handle SIGTERM until resumed.
+        try { if (process.isPaused) process.child.kill('SIGCONT'); process.child.kill('SIGTERM'); } catch {}
+        const entry = this.downloads?.find((download) => download.id === id);
+        if (entry) { entry.state = 'interrupted'; entry.isLive = false; entry.canResume = false; }
+      }
+      this.ytDlpProcesses.clear();
+    }
     for (const cleanup of this.mediaCookieCleanup?.values() || []) cleanup();
     this.mediaCookieCleanup?.clear();
-    this.persistDownloads(true);
-    for (const tab of this.tabs.values()) this.detachView(tab);
-    this.tabs.clear();
-    this.tabHandlerCleanup.clear();
-    this.memoryManager.clear();
-    this.findQueries.clear();
-    this.pipBounds.clear();
-    this.capturedMediaStreams.clear();
-    this.popupOpeners.clear();
-    void this.endPrivateSession();
+    this.persistDownloads?.(true);
+    if (this.tabs) {
+      for (const tab of this.tabs.values()) this.detachView?.(tab);
+      this.tabs.clear();
+    }
+    this.tabHandlerCleanup?.clear();
+    this.memoryManager?.clear();
+    this.findQueries?.clear();
+    this.pipBounds?.clear();
+    this.capturedMediaStreams?.clear();
+    this.popupOpeners?.clear();
+    void this.endPrivateSession?.();
     if (this.shellView && !this.shellView.webContents.isDestroyed()) this.shellView.webContents.close();
     if (this.voodooView && !this.voodooView.webContents.isDestroyed()) this.voodooView.webContents.close();
     if (this.metricsTimer) clearInterval(this.metricsTimer);
     try {
-      session.defaultSession.webRequest.onBeforeSendHeaders(null);
-      session.defaultSession.webRequest.onHeadersReceived(null);
+      if (BrowserController.controllers.size === 0) {
+        session.defaultSession.webRequest.onBeforeSendHeaders(null);
+        session.defaultSession.webRequest.onHeadersReceived(null);
+      }
     } catch {}
-    this.browsec.destroy();
+    this.browsec?.destroy();
   }
 }
