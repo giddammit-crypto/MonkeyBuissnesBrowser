@@ -362,6 +362,7 @@ async function detachTabToNewWindow(
   screenX?: number,
   screenY?: number,
 ): Promise<void> {
+  if (BrowserController.transferringTabs.has(tabId)) return;
   const tab = source.tabs.get(tabId);
   if (!tab || source.tabs.size <= 1) return;
 

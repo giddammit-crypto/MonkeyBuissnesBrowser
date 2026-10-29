@@ -2572,7 +2572,7 @@ function TabStrip({
               }
             }}
             onDragEnd={(event) => {
-              const wasHandled = dragHandledRef.current;
+              const wasHandled = dragHandledRef.current || event.dataTransfer.dropEffect === "move";
               const sourceId = draggingId || tab.id;
               setDraggingId(null);
               setDragOver(null);

@@ -68,6 +68,7 @@ import { Menu } from 'electron';
 describe('Tab tear-off and multi-window routing', () => {
   beforeEach(() => {
     BrowserController.controllers.clear();
+    BrowserController.transferringTabs.clear();
   });
 
   it('prevents detaching when only 1 tab exists', async () => {
@@ -173,5 +174,122 @@ describe('Tab tear-off and multi-window routing', () => {
     const singleTemplate = singleTabCall[0] as Array<{ label?: string; enabled?: boolean }>;
     const singleMoveItem = singleTemplate.find((item) => item.label === 'Переместить в новое окно');
     expect(singleMoveItem?.enabled).toBe(false);
+  });
+
+  it('findControllerForTab locates the controller that owns the tab', () => {
+    const controller1 = Object.create(BrowserController.prototype) as any;
+    controller1.tabs = new Map([['tab-1', { id: 'tab-1' }]]);
+
+    const controller2 = Object.create(BrowserController.prototype) as any;
+    controller2.tabs = new Map([['tab-2', { id: 'tab-2' }]]);
+
+    BrowserController.controllers.add(controller1);
+    BrowserController.controllers.add(controller2);
+
+    expect(BrowserController.findControllerForTab('tab-1')).toBe(controller1);
+    expect(BrowserController.findControllerForTab('tab-2')).toBe(controller2);
+    expect(BrowserController.findControllerForTab('tab-999')).toBeUndefined();
+    expect(BrowserController.findControllerForTab(undefined)).toBeUndefined();
+  });
+
+  it('adoptTabFromController transfers tab and keeps source window open when source has >1 tabs', async () => {
+    const controllerA = Object.create(BrowserController.prototype) as any;
+    controllerA.tabs = new Map([
+      ['tab-A1', { id: 'tab-A1', url: 'https://example.com/a1', title: 'A1', workspaceId: 'personal', isPrivate: false, isPinned: false, isMuted: false }],
+      ['tab-A2', { id: 'tab-A2', url: 'https://example.com/a2', title: 'A2', workspaceId: 'personal', isPrivate: false, isPinned: false, isMuted: false }],
+    ]);
+    controllerA.closeTab = vi.fn(async (id: string) => { controllerA.tabs.delete(id); });
+    controllerA.closeWindow = vi.fn();
+
+    const controllerB = Object.create(BrowserController.prototype) as any;
+    const tabB1 = { id: 'tab-B1', url: 'https://example.com/b1', title: 'B1', workspaceId: 'personal', isPrivate: false, isPinned: false, isMuted: false };
+    controllerB.tabs = new Map([['tab-B1', tabB1]]);
+    controllerB.createTab = vi.fn(async (opts) => {
+      const created = { id: 'tab-new', url: opts.url, isPrivate: opts.isPrivate, title: 'A1', workspaceId: 'personal' };
+      controllerB.tabs.set('tab-new', created);
+      return created;
+    });
+    controllerB.memoryManager = { updateTab: vi.fn() };
+    controllerB.emitSnapshot = vi.fn();
+    controllerB.persistSession = vi.fn();
+    controllerB.window = { isDestroyed: () => false, focus: vi.fn() };
+
+    await controllerB.adoptTabFromController(controllerA, 'tab-A1', 'tab-B1', 'before');
+
+    expect(controllerA.closeTab).toHaveBeenCalledWith('tab-A1');
+    expect(controllerA.closeWindow).not.toHaveBeenCalled();
+    expect(controllerB.createTab).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'https://example.com/a1',
+      isPrivate: false,
+      active: true,
+    }));
+    expect([...controllerB.tabs.keys()]).toEqual(['tab-new', 'tab-B1']);
+    expect(controllerB.window.focus).toHaveBeenCalled();
+  });
+
+  it('adoptTabFromController transfers tab and closes source window when source has only 1 tab', async () => {
+    const controllerA = Object.create(BrowserController.prototype) as any;
+    controllerA.tabs = new Map([
+      ['tab-A1', { id: 'tab-A1', url: 'https://example.com/sole', title: 'Sole', workspaceId: 'personal', isPrivate: false, isPinned: false, isMuted: false }],
+    ]);
+    controllerA.closeTab = vi.fn();
+    controllerA.closeWindow = vi.fn();
+
+    const controllerB = Object.create(BrowserController.prototype) as any;
+    const tabB1 = { id: 'tab-B1', url: 'https://example.com/b1', title: 'B1', workspaceId: 'personal', isPrivate: false, isPinned: false, isMuted: false };
+    controllerB.tabs = new Map([['tab-B1', tabB1]]);
+    controllerB.createTab = vi.fn(async (opts) => {
+      const created = { id: 'tab-new', url: opts.url, isPrivate: opts.isPrivate, title: 'Sole', workspaceId: 'personal' };
+      controllerB.tabs.set('tab-new', created);
+      return created;
+    });
+    controllerB.memoryManager = { updateTab: vi.fn() };
+    controllerB.emitSnapshot = vi.fn();
+    controllerB.persistSession = vi.fn();
+    controllerB.window = { isDestroyed: () => false, focus: vi.fn() };
+
+    await controllerB.adoptTabFromController(controllerA, 'tab-A1', 'end');
+
+    expect(controllerA.closeWindow).toHaveBeenCalled();
+    expect(controllerA.closeTab).not.toHaveBeenCalled();
+    expect(controllerB.createTab).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'https://example.com/sole',
+      isPrivate: false,
+      active: true,
+    }));
+    expect([...controllerB.tabs.keys()]).toEqual(['tab-B1', 'tab-new']);
+  });
+
+  it('reorderTab delegates to adoptTabFromController when tab belongs to another controller', async () => {
+    const controllerA = Object.create(BrowserController.prototype) as any;
+    controllerA.tabs = new Map([['tab-A1', { id: 'tab-A1' }]]);
+
+    const controllerB = Object.create(BrowserController.prototype) as any;
+    controllerB.tabs = new Map([['tab-B1', { id: 'tab-B1' }]]);
+    controllerB.adoptTabFromController = vi.fn();
+
+    BrowserController.controllers.add(controllerA);
+    BrowserController.controllers.add(controllerB);
+
+    await controllerB.reorderTab('tab-A1', 'tab-B1', 'after');
+
+    expect(controllerB.adoptTabFromController).toHaveBeenCalledWith(controllerA, 'tab-A1', 'tab-B1', 'after');
+  });
+
+  it('prevents detachTabToNewWindow when tab is marked in transferringTabs', async () => {
+    const controller = Object.create(BrowserController.prototype) as any;
+    controller.tabs = new Map([
+      ['tab-1', { id: 'tab-1' }],
+      ['tab-2', { id: 'tab-2' }],
+    ]);
+    controller.onDetachTab = vi.fn();
+
+    BrowserController.transferringTabs.add('tab-1');
+    await controller.detachTabToNewWindow('tab-1', 500, 300);
+    expect(controller.onDetachTab).not.toHaveBeenCalled();
+
+    BrowserController.transferringTabs.delete('tab-1');
+    await controller.detachTabToNewWindow('tab-1', 500, 300);
+    expect(controller.onDetachTab).toHaveBeenCalledWith(controller, 'tab-1', 500, 300);
   });
 });

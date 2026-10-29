@@ -154,6 +154,7 @@ export interface CreateWindowOptions {
 
 export class BrowserController {
   public static readonly controllers = new Set<BrowserController>();
+  public static readonly transferringTabs = new Set<string>();
   private static defaultSessionConfigured = false;
   private static readonly configuredSessions = new WeakSet<Electron.Session>();
 
@@ -165,6 +166,14 @@ export class BrowserController {
   ) => Promise<void>;
   public onClosed?: () => void;
   public onFocus?: () => void;
+
+  static findControllerForTab(tabId?: string): BrowserController | undefined {
+    if (!tabId) return undefined;
+    for (const c of BrowserController.controllers) {
+      if (c.tabs.has(tabId)) return c;
+    }
+    return undefined;
+  }
 
   static findControllerForShell(webContentsId?: number): BrowserController | undefined {
     if (webContentsId === undefined) return undefined;
@@ -1210,7 +1219,7 @@ export class BrowserController {
   }
 
   async detachTabToNewWindow(tabId: string, screenX?: number, screenY?: number): Promise<void> {
-    if (this.tabs.size <= 1) return;
+    if (this.tabs.size <= 1 || BrowserController.transferringTabs.has(tabId)) return;
     const tab = this.tabs.get(tabId);
     if (!tab) return;
     if (this.onDetachTab) {
@@ -2304,10 +2313,16 @@ export class BrowserController {
     }
   }
 
-  reorderTab(tabId: string, targetTabId: string, position: 'before' | 'after' = 'before'): void {
+  async reorderTab(tabId: string, targetTabId: string, position: 'before' | 'after' = 'before'): Promise<void> {
     const entries = [...this.tabs.entries()];
     const sourceIndex = entries.findIndex(([id]) => id === tabId);
-    if (sourceIndex === -1) return;
+    if (sourceIndex === -1) {
+      const sourceController = BrowserController.findControllerForTab(tabId);
+      if (sourceController && sourceController !== this) {
+        await this.adoptTabFromController(sourceController, tabId, targetTabId, position);
+      }
+      return;
+    }
 
     if (targetTabId === 'end') {
       const [removed] = entries.splice(sourceIndex, 1);
@@ -2328,6 +2343,81 @@ export class BrowserController {
     }
     this.emitSnapshot();
     this.persistSession();
+  }
+
+  async adoptTabFromController(
+    sourceController: BrowserController,
+    tabId: string,
+    targetTabId?: string,
+    position: 'before' | 'after' = 'before',
+  ): Promise<void> {
+    if (BrowserController.transferringTabs.has(tabId)) return;
+    const sourceTab = sourceController.tabs.get(tabId);
+    if (!sourceTab) return;
+
+    BrowserController.transferringTabs.add(tabId);
+    try {
+      const tabData = {
+        url: sourceTab.url,
+        title: sourceTab.title,
+        favicon: sourceTab.favicon,
+        isPrivate: sourceTab.isPrivate,
+        isPinned: sourceTab.isPinned,
+        isMuted: sourceTab.isMuted,
+        workspaceId: sourceTab.workspaceId,
+      };
+
+      if (sourceController.tabs.size <= 1) {
+        sourceController.closeWindow();
+      } else {
+        await sourceController.closeTab(tabId);
+      }
+
+      const created = await this.createTab({
+        url: tabData.url,
+        isPrivate: tabData.isPrivate,
+        active: true,
+      });
+
+      const newTab = this.tabs.get(created.id);
+      if (newTab) {
+        if (tabData.title) newTab.title = tabData.title;
+        if (tabData.favicon) newTab.favicon = tabData.favicon;
+        newTab.isPinned = Boolean(tabData.isPinned);
+        newTab.isMuted = Boolean(tabData.isMuted);
+        if (tabData.workspaceId) newTab.workspaceId = tabData.workspaceId;
+        this.memoryManager.updateTab(newTab.id, { pinned: newTab.isPinned });
+      }
+
+      if (targetTabId && targetTabId !== 'end') {
+        const entries = [...this.tabs.entries()];
+        const srcIdx = entries.findIndex(([id]) => id === created.id);
+        const tgtIdx = entries.findIndex(([id]) => id === targetTabId);
+        if (srcIdx !== -1 && tgtIdx !== -1) {
+          const [removed] = entries.splice(srcIdx, 1);
+          let insertIndex = entries.findIndex(([id]) => id === targetTabId);
+          if (position === 'after') {
+            insertIndex += 1;
+          }
+          entries.splice(insertIndex, 0, removed);
+          this.tabs.clear();
+          for (const [id, tab] of entries) {
+            this.tabs.set(id, tab);
+          }
+        }
+      }
+
+      this.emitSnapshot();
+      this.persistSession();
+      if (this.window && !this.window.isDestroyed()) {
+        this.window.focus();
+      }
+    } finally {
+      const timer = setTimeout(() => {
+        BrowserController.transferringTabs.delete(tabId);
+      }, 1500);
+      timer?.unref?.();
+    }
   }
 
   private async getCookieArgsForUrl(targetUrl: string, sourceSession: Electron.Session = this.browserSession): Promise<{ args: string[]; cleanup: () => void }> {
