@@ -5893,58 +5893,9 @@ export class BrowserController {
   }
 
   async performStartupVoodooKeysCheck(): Promise<void> {
-    try {
-      const settings = this.stores.settings.get();
-      const rawKeys = Array.isArray(settings?.voodooKeys) ? settings.voodooKeys : [];
-      const keys = rawKeys.map((k) => String(k).trim()).filter(Boolean);
-
-      if (keys.length === 0) return;
-
-      console.log(`[Voodoo AI] Auto-checking ${keys.length} xkiro key(s) on browser launch...`);
-      const checkResult = await this.voodooService.checkAllKeys(
-        keys,
-        settings.voodooBaseUrl,
-        settings.voodooModel
-      );
-
-      const { healthyKeys, reorderedKeys } = checkResult;
-      const primaryWorkingKey = healthyKeys.length > 0 && reorderedKeys[0] ? VoodooAiService.maskKey(reorderedKeys[0]) : null;
-      console.log(
-        `[Voodoo AI] Startup key check finished: ${healthyKeys.length}/${keys.length} healthy. Active working key:`,
-        primaryWorkingKey || 'none'
-      );
-
-      if (healthyKeys.length > 0) {
-        const orderChanged = reorderedKeys.length !== keys.length || reorderedKeys.some((k, i) => k !== keys[i]);
-        if (orderChanged) {
-          console.log('[Voodoo AI] Reordering keys to ensure healthy working keys are used first.');
-          const freshSettings = this.stores.settings.get();
-          this.stores.settings.set({
-            ...freshSettings,
-            voodooKeys: reorderedKeys,
-          });
-        }
-      }
-
-      this.emitSnapshot();
-      const eventData = {
-        type: 'voodoo-keys-checked',
-        data: {
-          healthyCount: healthyKeys.length,
-          totalCount: keys.length,
-          primaryKey: primaryWorkingKey,
-        },
-      };
-
-      if (this.voodooView?.webContents && !this.voodooView.webContents.isDestroyed()) {
-        try { this.voodooView.webContents.send('browser:event', eventData); } catch {}
-      }
-      if (this.shellView?.webContents && !this.shellView.webContents.isDestroyed()) {
-        try { this.shellView.webContents.send('browser:event', eventData); } catch {}
-      }
-    } catch (err) {
-      console.warn('[Voodoo AI] Startup keys check error:', err);
-    }
+    // Startup key check disabled: verifying keys on launch burns quota and delays startup.
+    // Credentials are checked dynamically on real requests or manually via Settings -> Проверить все.
+    return;
   }
 
   async checkAllVoodooKeys(): Promise<VoodooCheckAllKeysResult> {
