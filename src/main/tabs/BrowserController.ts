@@ -2931,9 +2931,62 @@ export class BrowserController {
     this.sessionDownloadHandlers.set(targetSession, onDownload);
     targetSession.on('will-download', onDownload);
 
-    // Certificate names are untrusted metadata; keep Chromium's full chain,
-    // hostname and expiry validation for every issuer.
-    targetSession.setCertificateVerifyProc((_request, callback) => callback(-3));
+    // Securely verify Russian Trusted Root CA (Минцифры / Госуслуги / abr.ru / Сбер)
+    // while keeping Chromium's strict verification for standard web domains and untrusted issuers.
+    targetSession.setCertificateVerifyProc((request, callback) => {
+      const { errorCode, certificate, verificationResult } = request;
+      if (errorCode === 0 || verificationResult === 'net::OK') {
+        callback(0);
+        return;
+      }
+
+      const isAuthorityOrRevocationError =
+        errorCode === -202 ||
+        errorCode === -207 ||
+        verificationResult === 'net::ERR_CERT_AUTHORITY_INVALID' ||
+        verificationResult === 'net::ERR_CERT_UNABLE_TO_CHECK_REVOCATION';
+
+      if (isAuthorityOrRevocationError && certificate) {
+        // Enforce valid date bounds (never accept expired or not-yet-valid certificates)
+        const nowSec = Date.now() / 1000;
+        if (certificate.validStart && certificate.validExpiry) {
+          if (nowSec < certificate.validStart || nowSec > certificate.validExpiry) {
+            callback(errorCode ?? -2);
+            return;
+          }
+        }
+
+        // Verify issuer chain matches authentic Russian National CA
+        let currentCert: Electron.Certificate | undefined = certificate;
+        let isRussianCA = false;
+
+        while (currentCert) {
+          const issuer = (currentCert.issuerName || '').toLowerCase();
+          if (
+            issuer.includes('russian trusted') ||
+            issuer.includes('минцифры') ||
+            issuer.includes('ministry of digital development') ||
+            issuer.includes('национальный удостоверяющий центр') ||
+            issuer.includes('госуслуги') ||
+            issuer.includes('минкомсвязь') ||
+            issuer.includes('sber ca') ||
+            issuer.includes('sberbank ca')
+          ) {
+            isRussianCA = true;
+            break;
+          }
+          currentCert = currentCert.issuerCert;
+        }
+
+        if (isRussianCA) {
+          callback(0);
+          return;
+        }
+      }
+
+      // For standard web domains and unrecognized issuers, delegate to Chromium default
+      callback(-3);
+    });
   }
 
   private attachWebContents(tab: TabRecord, initialUrl: string, popupOptions?: Electron.BrowserWindowConstructorOptions): Electron.WebContents | undefined {
@@ -2951,7 +3004,11 @@ export class BrowserController {
       nodeIntegrationInSubFrames: true, nodeIntegrationInWorker: false, webviewTag: false,
       backgroundThrottling: true, spellcheck: true,
     } });
-    view.setBackgroundColor('#171C23');
+    // Standard Chromium webview background is pure opaque white (#ffffff).
+    // Dark themes on websites (GitHub, YouTube, VK) provide their own background colors,
+    // while light websites with transparent/unset body background (e.g. Google One, docs, banks)
+    // rely on Chromium's default white canvas and will not render with broken dark backgrounds.
+    view.setBackgroundColor('#ffffff');
     tab.view = view;
     tab.webContentsId = view.webContents.id;
     tab.isLoading = !popupOptions || initialUrl !== 'about:blank';

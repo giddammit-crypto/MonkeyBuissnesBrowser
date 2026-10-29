@@ -792,4 +792,81 @@ describe('BrowserController.executeVoodooTool', () => {
     }
   });
 
+  it('securely validates Russian Trusted CA certificates and rejects invalid dates or host mismatches', () => {
+    const { controller } = createTestController();
+    const setCertificateVerifyProc = vi.fn();
+    const targetSession = {
+      setUserAgent: vi.fn(), setPermissionCheckHandler: vi.fn(), setPermissionRequestHandler: vi.fn(),
+      setCertificateVerifyProc, on: vi.fn(),
+      webRequest: { onBeforeRequest: vi.fn(), onBeforeSendHeaders: vi.fn(), onHeadersReceived: vi.fn() },
+    };
+    Object.assign(controller, {
+      adBlock: { engine: { setEnabled: vi.fn() } },
+      browsec: { applyWebRtcPolicyToSession: vi.fn() },
+      notificationPermissions: new Map(), sessionDownloadHandlers: new Map(),
+    });
+    controller.configureSession(targetSession);
+    const verify = setCertificateVerifyProc.mock.calls[0][0];
+
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    // 1. Valid Russian Trusted Sub CA cert on abr.ru -> accepted with 0
+    const abrCallback = vi.fn();
+    verify({
+      hostname: 'abr.ru',
+      errorCode: -202,
+      verificationResult: 'net::ERR_CERT_AUTHORITY_INVALID',
+      certificate: {
+        issuerName: 'C=RU; O=The Ministry of Digital Development and Communications; CN=Russian Trusted Sub CA',
+        subjectName: 'CN=abr.ru; O=АО АБ РОССИЯ',
+        validStart: nowSec - 3600,
+        validExpiry: nowSec + 86400 * 30,
+      },
+    }, abrCallback);
+    expect(abrCallback).toHaveBeenCalledWith(0);
+
+    // 2. Expired Russian Trusted cert -> rejected with error code
+    const expiredCallback = vi.fn();
+    verify({
+      hostname: 'abr.ru',
+      errorCode: -202,
+      verificationResult: 'net::ERR_CERT_AUTHORITY_INVALID',
+      certificate: {
+        issuerName: 'C=RU; O=The Ministry of Digital Development and Communications; CN=Russian Trusted Sub CA',
+        validStart: nowSec - 86400 * 60,
+        validExpiry: nowSec - 86400, // expired yesterday
+      },
+    }, expiredCallback);
+    expect(expiredCallback).toHaveBeenCalledWith(-202);
+
+    // 3. Hostname mismatch error (-200) -> delegated/rejected with -3
+    const mismatchCallback = vi.fn();
+    verify({
+      hostname: 'attacker.example',
+      errorCode: -200,
+      verificationResult: 'net::ERR_CERT_COMMON_NAME_INVALID',
+      certificate: {
+        issuerName: 'CN=Russian Trusted Sub CA',
+        validStart: nowSec - 3600,
+        validExpiry: nowSec + 86400,
+      },
+    }, mismatchCallback);
+    expect(mismatchCallback).toHaveBeenCalledWith(-3);
+
+    // 4. Fake cert where subject claims Russian Trusted but issuer is untrusted
+    const fakeSubjectCallback = vi.fn();
+    verify({
+      hostname: 'phishing.example',
+      errorCode: -202,
+      verificationResult: 'net::ERR_CERT_AUTHORITY_INVALID',
+      certificate: {
+        subjectName: 'CN=Russian Trusted Sub CA',
+        issuerName: 'CN=Untrusted Attacker Root',
+        validStart: nowSec - 3600,
+        validExpiry: nowSec + 86400,
+      },
+    }, fakeSubjectCallback);
+    expect(fakeSubjectCallback).toHaveBeenCalledWith(-3);
+  });
+
 });

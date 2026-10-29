@@ -31,6 +31,37 @@ if (process.platform === 'linux') {
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
 
+app.on('certificate-error', (event, _webContents, _url, error, certificate, callback) => {
+  const isAuthorityOrRevocation = error === 'net::ERR_CERT_AUTHORITY_INVALID' || error === 'net::ERR_CERT_UNABLE_TO_CHECK_REVOCATION';
+  if (isAuthorityOrRevocation && certificate) {
+    const nowSec = Date.now() / 1000;
+    if (certificate.validStart && certificate.validExpiry && (nowSec < certificate.validStart || nowSec > certificate.validExpiry)) {
+      callback(false);
+      return;
+    }
+    let currentCert: Electron.Certificate | undefined = certificate;
+    while (currentCert) {
+      const issuer = (currentCert.issuerName || '').toLowerCase();
+      if (
+        issuer.includes('russian trusted') ||
+        issuer.includes('минцифры') ||
+        issuer.includes('ministry of digital development') ||
+        issuer.includes('национальный удостоверяющий центр') ||
+        issuer.includes('госуслуги') ||
+        issuer.includes('минкомсвязь') ||
+        issuer.includes('sber ca') ||
+        issuer.includes('sberbank ca')
+      ) {
+        event.preventDefault();
+        callback(true);
+        return;
+      }
+      currentCert = currentCert.issuerCert;
+    }
+  }
+  callback(false);
+});
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'app',
