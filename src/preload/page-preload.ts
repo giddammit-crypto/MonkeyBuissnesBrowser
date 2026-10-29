@@ -207,20 +207,128 @@ const isTextualInput = (el: Element): el is HTMLInputElement => {
   return !lower || lower === 'text' || lower === 'email' || lower === 'tel';
 };
 
-const matchesUsernameHeuristics = (input: HTMLInputElement): boolean => {
-  const autocomplete = (typeof input.getAttribute === 'function' ? input.getAttribute('autocomplete') : '') || '';
-  const autoLower = autocomplete.toLowerCase();
-  if (autoLower === 'username' || autoLower === 'email') {
+export const isExcludedInput = (input: HTMLInputElement): boolean => {
+  if (!isInput(input)) return true;
+  const rawType = (input as any).type || (typeof input.getAttribute === 'function' ? input.getAttribute('type') : '') || '';
+  const lowerType = String(rawType).toLowerCase();
+  if (['search', 'number', 'range', 'date', 'datetime-local', 'month', 'week', 'time', 'color', 'file', 'checkbox', 'radio', 'button', 'submit', 'reset', 'hidden', 'image'].includes(lowerType)) {
     return true;
   }
-  const name = (typeof input.getAttribute === 'function' ? input.getAttribute('name') : (input as any).name) || '';
-  const id = (typeof input.getAttribute === 'function' ? input.getAttribute('id') : (input as any).id) || '';
-  const placeholder = (typeof input.getAttribute === 'function' ? input.getAttribute('placeholder') : '') || '';
-  const ariaLabel = (typeof input.getAttribute === 'function' ? input.getAttribute('aria-label') : '') || '';
 
-  const str = `${name} ${id} ${placeholder} ${ariaLabel}`.toLowerCase();
-  const keywords = ['user', 'login', 'email', 'телефон', 'логин', 'phone', 'account'];
+  const role = ((typeof input.getAttribute === 'function' ? input.getAttribute('role') : (input as any).role) || '').toLowerCase();
+  if (role === 'searchbox' || role === 'search') return true;
+
+  const autocomplete = ((typeof input.getAttribute === 'function' ? input.getAttribute('autocomplete') : (input as any).autocomplete) || '').toLowerCase();
+  const isExplicitAuth = autocomplete === 'username' || autocomplete === 'email' || autocomplete === 'current-password';
+
+  if (!isExplicitAuth && typeof input.closest === 'function') {
+    if (input.closest('search, [role="search"], form[role="search"], [class*="search-form" i], [id*="search-form" i], [class*="SearchForm"], [class*="searchBox" i], [class*="search_box" i]')) {
+      return true;
+    }
+  }
+
+  const name = ((typeof input.getAttribute === 'function' ? input.getAttribute('name') : '') || (input as any).name || '').toLowerCase();
+  const id = ((typeof input.getAttribute === 'function' ? input.getAttribute('id') : '') || (input as any).id || '').toLowerCase();
+  const placeholder = ((typeof input.getAttribute === 'function' ? input.getAttribute('placeholder') : '') || (input as any).placeholder || '').toLowerCase();
+  const ariaLabel = ((typeof input.getAttribute === 'function' ? input.getAttribute('aria-label') : '') || (input as any).ariaLabel || '').toLowerCase();
+  const className = (typeof input.className === 'string' ? input.className : '').toLowerCase();
+
+  const str = `${name} ${id} ${placeholder} ${ariaLabel} ${className}`;
+
+  if (isExplicitAuth) {
+    return false;
+  }
+
+  const negativeKeywords = [
+    'search', 'query', 'find', 'filter', 'keyword', 'поиск', 'найти', 'искать',
+    'comment', 'message', 'chat', 'reply', 'feedback', 'сообщени', 'комментар', 'отзыв', 'ответить', 'написать',
+    'coupon', 'promo', 'voucher', 'discount', 'промокод', 'скидк',
+    'address', 'street', 'city', 'zip', 'postal', 'country', 'город', 'улиц', 'индекс', 'дом', 'квартир',
+    'amount', 'quantity', 'sum', 'price', 'цена', 'сумма', 'кол-во',
+    'tag', 'subject', 'заголовок', 'тема', 'описание', 'description', 'title',
+    'captcha', 'капча',
+    'cvv', 'cvc', 'card', 'карт',
+    'sms_code', 'phone_code', 'one_time_code', 'смс-код', 'код из смс',
+  ];
+
+  return negativeKeywords.some(k => str.includes(k));
+};
+
+export const matchesUsernameHeuristics = (input: HTMLInputElement): boolean => {
+  if (isExcludedInput(input)) return false;
+
+  const autocomplete = ((typeof input.getAttribute === 'function' ? input.getAttribute('autocomplete') : '') || (input as any).autocomplete || '').toLowerCase();
+  if (autocomplete === 'username' || autocomplete === 'email') {
+    return true;
+  }
+  const name = ((typeof input.getAttribute === 'function' ? input.getAttribute('name') : '') || (input as any).name || '').toLowerCase();
+  const id = ((typeof input.getAttribute === 'function' ? input.getAttribute('id') : '') || (input as any).id || '').toLowerCase();
+  const placeholder = ((typeof input.getAttribute === 'function' ? input.getAttribute('placeholder') : '') || (input as any).placeholder || '').toLowerCase();
+  const ariaLabel = ((typeof input.getAttribute === 'function' ? input.getAttribute('aria-label') : '') || (input as any).ariaLabel || '').toLowerCase();
+
+  const str = `${name} ${id} ${placeholder} ${ariaLabel}`;
+  const keywords = ['username', 'user_login', 'login_id', 'user_name', 'auth_user', 'auth_login', 'user', 'login', 'email', 'телефон', 'логин', 'phone', 'account'];
   return keywords.some(k => str.includes(k));
+};
+
+export const isLoginOrPasswordInput = (el: HTMLElement | null): el is HTMLInputElement => {
+  if (!el || !isInput(el)) return false;
+  if (el.type === 'password') return true;
+  if (!isTextualInput(el) || isExcludedInput(el)) return false;
+
+  const autocomplete = ((typeof el.getAttribute === 'function' ? el.getAttribute('autocomplete') : '') || (el as any).autocomplete || '').toLowerCase();
+  if (autocomplete === 'username' || autocomplete === 'email' || autocomplete === 'current-password') {
+    return true;
+  }
+
+  // 1. Проверяем наличие поля пароля в той же форме
+  const form = el.form || (typeof el.closest === 'function' ? el.closest('form') : null);
+  if (form) {
+    const hasPassword = Boolean(form.querySelector('input[type="password"]'));
+    if (hasPassword) {
+      const textual = Array.from(form.querySelectorAll<HTMLInputElement>('input')).filter(i => isTextualInput(i) && !isExcludedInput(i));
+      if (textual.includes(el)) {
+        return true;
+      }
+    }
+  }
+
+  // 2. Проверяем наличие контейнера авторизации с полем пароля
+  if (typeof el.closest === 'function') {
+    const container = el.closest('[role="form"], [class*="login" i], [class*="auth" i], [class*="signin" i], [class*="modal" i]');
+    if (container) {
+      const hasPassword = Boolean(container.querySelector('input[type="password"]'));
+      if (hasPassword) {
+        const textual = Array.from(container.querySelectorAll<HTMLInputElement>('input')).filter(i => isTextualInput(i) && !isExcludedInput(i));
+        if (textual.includes(el)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // 3. Двухэтапная авторизация (первый экран ввода логина без поля пароля)
+  if (matchesUsernameHeuristics(el)) {
+    const url = (typeof window !== 'undefined' && window.location)
+      ? `${window.location.pathname || ''} ${window.location.hostname || ''} ${window.location.search || ''}`.toLowerCase()
+      : '';
+    const hasAuthUrl = url.includes('login') || url.includes('signin') || url.includes('auth') || url.includes('account') || url.includes('id.') || url.includes('oauth') || url.includes('session');
+
+    const containerClass = typeof el.closest === 'function'
+      ? Boolean(el.closest('[class*="auth" i], [class*="login" i], [class*="signin" i], [class*="account" i]'))
+      : false;
+
+    const name = ((typeof el.getAttribute === 'function' ? el.getAttribute('name') : '') || (el as any).name || '').toLowerCase();
+    const id = ((typeof el.getAttribute === 'function' ? el.getAttribute('id') : '') || (el as any).id || '').toLowerCase();
+    const strongLoginKeywords = ['username', 'user_login', 'login_id', 'auth_user', 'auth_login', 'login_email', 'user[login]', 'session[username_or_email]', 'session[username]'];
+    const isStrongIdentifier = strongLoginKeywords.some(k => name.includes(k) || id.includes(k));
+
+    if (hasAuthUrl || containerClass || isStrongIdentifier) {
+      return true;
+    }
+  }
+
+  return false;
 };
 
 // Состояние пользовательского ввода (для двухэтапной авторизации и SPA)
@@ -236,9 +344,9 @@ const trackInputActivity = (event: Event) => {
       if (target.value) {
         lastTypedPassword = target.value;
       }
-    } else if (isTextualInput(target)) {
+    } else if (isTextualInput(target) && !isExcludedInput(target)) {
       if (target.value && target.value.trim().length > 0) {
-        if (matchesUsernameHeuristics(target) || !lastTypedUsername) {
+        if (matchesUsernameHeuristics(target)) {
           lastTypedUsername = target.value.trim();
         }
       }
@@ -246,9 +354,14 @@ const trackInputActivity = (event: Event) => {
   } catch {}
 };
 
+let onInputActivityCallback: ((event: Event) => void) | null = null;
+
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   const protectUnsavedInput = (event: Event) => {
     trackInputActivity(event);
+    try {
+      onInputActivityCallback?.(event);
+    } catch {}
     if (!event.isTrusted || dirty) return;
     // Shadow DOM retargets event.target to the host; composedPath preserves
     // the actual editable control for open shadow roots.
@@ -359,7 +472,7 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
 
       if (enclosingForm) {
         const formInputs = Array.from(enclosingForm.querySelectorAll<HTMLInputElement>('input'));
-        const textInputs = formInputs.filter(input => isTextualInput(input));
+        const textInputs = formInputs.filter(input => isTextualInput(input) && !isExcludedInput(input));
 
         // 1. Поиск инпута с autocomplete="username", autocomplete="email" или именами user, login, email, телефон, логин
         const heuristicMatches = textInputs.filter(input => matchesUsernameHeuristics(input) && input.value.trim().length > 0);
@@ -395,7 +508,7 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
       } else {
         // Пароль вне формы: ищет ближайший предшествующий инпут логина в DOM
         const allDocInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input'));
-        const textInputs = allDocInputs.filter(input => isTextualInput(input));
+        const textInputs = allDocInputs.filter(input => isTextualInput(input) && !isExcludedInput(input));
         if (passwordInput) {
           const preceding = textInputs.filter(input =>
             Boolean(input.compareDocumentPosition(passwordInput!) & Node.DOCUMENT_POSITION_PRECEDING)
@@ -499,7 +612,7 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
         const target = (event.composedPath?.()[0] ?? event.target) as HTMLElement | null;
         if (target instanceof HTMLInputElement) {
           lastSubmitAttemptTime = Date.now();
-          if (target.type === 'password' || isTextualInput(target)) {
+          if (target.type === 'password' || isLoginOrPasswordInput(target)) {
             const creds = extractCredentials(target.closest('form'), target.type === 'password' ? target : null);
             if (creds) {
               notifyPasswordSubmitted(creds.username, creds.password);
@@ -540,9 +653,9 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   };
 
   const findUsernameInputForPassword = (passwordInput: HTMLInputElement): HTMLInputElement | null => {
-    const form = passwordInput.form || passwordInput.closest('form');
+    const form = passwordInput.form || (typeof passwordInput.closest === 'function' ? passwordInput.closest('form') : null);
     if (form) {
-      const inputs = Array.from(form.querySelectorAll<HTMLInputElement>('input')).filter(isTextualInput);
+      const inputs = Array.from(form.querySelectorAll<HTMLInputElement>('input')).filter(i => isTextualInput(i) && !isExcludedInput(i));
       const preceding = inputs.filter(i => Boolean(i.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_PRECEDING));
       const heuristicMatches = preceding.filter(matchesUsernameHeuristics);
       if (heuristicMatches.length > 0) return heuristicMatches[heuristicMatches.length - 1];
@@ -550,39 +663,32 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
       const anyHeuristic = inputs.filter(matchesUsernameHeuristics);
       if (anyHeuristic.length > 0) return anyHeuristic[0];
       if (inputs.length > 0) return inputs[0];
-    } else {
-      const container = passwordInput.closest('[role="form"], [class*="login"], [class*="auth"], [class*="modal"], [class*="form"], main, section') || passwordInput.parentElement;
-      if (container) {
-        const inputs = Array.from(container.querySelectorAll<HTMLInputElement>('input')).filter(isTextualInput);
+    } else if (typeof passwordInput.closest === 'function') {
+      const container = passwordInput.closest('[role="form"], [class*="login" i], [class*="auth" i], [class*="modal" i], [class*="form" i], main, section') || passwordInput.parentElement;
+      if (container && container !== document.body && container !== document.documentElement) {
+        const inputs = Array.from(container.querySelectorAll<HTMLInputElement>('input')).filter(i => isTextualInput(i) && !isExcludedInput(i));
         const preceding = inputs.filter(i => Boolean(i.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_PRECEDING));
         const heuristicMatches = preceding.filter(matchesUsernameHeuristics);
         if (heuristicMatches.length > 0) return heuristicMatches[heuristicMatches.length - 1];
         if (preceding.length > 0) return preceding[preceding.length - 1];
       }
-      const all = Array.from(document.querySelectorAll<HTMLInputElement>('input')).filter(isTextualInput);
-      const preceding = all.filter(i => Boolean(i.compareDocumentPosition(passwordInput) & Node.DOCUMENT_POSITION_PRECEDING));
-      const heuristicMatches = preceding.filter(matchesUsernameHeuristics);
-      if (heuristicMatches.length > 0) return heuristicMatches[heuristicMatches.length - 1];
-      if (preceding.length > 0) return preceding[preceding.length - 1];
     }
     return null;
   };
 
   const findPasswordInputForUsername = (usernameInput: HTMLInputElement): HTMLInputElement | null => {
-    const form = usernameInput.form || usernameInput.closest('form');
+    const form = usernameInput.form || (typeof usernameInput.closest === 'function' ? usernameInput.closest('form') : null);
     if (form) {
       const pw = form.querySelector<HTMLInputElement>('input[type="password"]');
       if (pw) return pw;
     }
-    const container = usernameInput.closest('[role="form"], [class*="login"], [class*="auth"], [class*="modal"], [class*="form"], main, section') || usernameInput.parentElement;
-    if (container) {
-      const pw = container.querySelector<HTMLInputElement>('input[type="password"]');
-      if (pw) return pw;
+    if (typeof usernameInput.closest === 'function') {
+      const container = usernameInput.closest('[role="form"], [class*="login" i], [class*="auth" i], [class*="modal" i], [class*="form" i], main, section') || usernameInput.parentElement;
+      if (container && container !== document.body && container !== document.documentElement) {
+        const pw = container.querySelector<HTMLInputElement>('input[type="password"]');
+        if (pw) return pw;
+      }
     }
-    const allPw = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="password"]'));
-    const following = allPw.filter(i => Boolean(usernameInput.compareDocumentPosition(i) & Node.DOCUMENT_POSITION_FOLLOWING));
-    if (following.length > 0) return following[0];
-    if (allPw.length > 0) return allPw[0];
     return null;
   };
 
@@ -628,7 +734,7 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
       if (pw.value.length > 0) continue;
 
       const user = findUsernameInputForPassword(pw);
-      if (user && isInputVisible(user) && !user.readOnly && !user.disabled) {
+      if (user && isLoginOrPasswordInput(user) && isInputVisible(user) && !user.readOnly && !user.disabled) {
         if (!user.value || user.value === account.username) {
           if (!user.value) setNativeInputValue(user, account.username);
           setNativeInputValue(pw, account.password);
@@ -781,6 +887,7 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   };
 
   const showDropdownForInput = async (input: HTMLInputElement) => {
+    if (!isLoginOrPasswordInput(input)) return;
     if (!isInputVisible(input) || input.readOnly || input.disabled) return;
     const creds = await getSavedCredentials();
     if (!creds || creds.length === 0) return;
@@ -791,14 +898,36 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
     try {
       const target = (event.composedPath?.()[0] ?? event.target) as HTMLElement | null;
       if (!target || !isInput(target)) return;
-      if (target.type === 'password' || isTextualInput(target)) {
+      if (isLoginOrPasswordInput(target)) {
         void tryAutoFillSingleAccount();
         void showDropdownForInput(target);
+      } else {
+        removeDropdown();
       }
     } catch {}
   };
 
   window.addEventListener('focusin', onFocusOrClick, true);
+
+  onInputActivityCallback = (event: Event) => {
+    const target = (event.composedPath?.()[0] ?? event.target) as HTMLElement | null;
+    if (target === activeTargetInput && dropdownEl) {
+      removeDropdown();
+    }
+  };
+
+  window.addEventListener('focusout', (event: FocusEvent) => {
+    const related = event.relatedTarget as Node | null;
+    if (dropdownEl && related && dropdownEl.contains(related)) {
+      return;
+    }
+    setTimeout(() => {
+      if (document.activeElement !== activeTargetInput && (!dropdownEl || !dropdownEl.contains(document.activeElement))) {
+        removeDropdown();
+      }
+    }, 150);
+  }, true);
+
   window.addEventListener('click', (event: MouseEvent) => {
     if (dropdownEl && !dropdownEl.contains(event.target as Node) && event.target !== activeTargetInput) {
       removeDropdown();

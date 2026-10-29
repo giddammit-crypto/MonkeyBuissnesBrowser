@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.2-blue?style=for-the-badge" alt="Version 0.9.2" />
+  <img src="https://img.shields.io/badge/version-0.9.3-blue?style=for-the-badge" alt="Version 0.9.3" />
   <img src="https://img.shields.io/badge/Electron-45.0-blueviolet?style=for-the-badge" alt="Electron 45" />
   <img src="https://img.shields.io/badge/React-19-cyan?style=for-the-badge" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-7.0-blue?style=for-the-badge" alt="TypeScript" />
@@ -264,6 +264,15 @@
 - **Индикация доступности статьи:**
   - Пульсирующий неоновый маячок в адресной строке при обнаружении интересной статьи на странице.
   - Мгновенное переключение по клавише <kbd>F9</kbd> или <kbd>Ctrl+Alt+R</kbd>.
+
+### 🔐 17. Точный менеджер паролей и автозаполнение (Password Manager & Scoped Autofill)
+- **Строгая адресация полей ввода (Strict Auth Input Scoping):**
+  - Выпадающий список учётных записей («soulm8te пароли») и автоматическое автозаполнение срабатывают строго на целевых полях логина и пароля.
+  - Поисковые строки (`type="search"`, `role="searchbox"`, поисковые формы YouTube, VK, Google, Yandex), поля ввода сообщений в чатах, комментирования, промокодов, адресов и капч надёжно защищены от появления подсказок паролей.
+  - Мгновенное скрытие меню при вводе текста, нажатии <kbd>Esc</kbd> или потере фокуса.
+- **Поддержка двухэтапной авторизации:**
+  - Полная поддержка двухэтапных систем входа (VK ID, Google, Yandex, Telegram, Госуслуги), связывающая логин первого шага с паролем второго шага.
+  - Умное определение домена eTLD+1 для бесшовного входа между поддоменами сервисов (`id.vk.com` ↔ `vk.com`).
 
 ---
 
