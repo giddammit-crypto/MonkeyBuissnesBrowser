@@ -1,7 +1,6 @@
 #!/bin/bash
 # soulm8te intelligent Linux launcher wrapper
-# Enables out-of-the-box execution on Astra Linux, Debian, Ubuntu, and RedOS
-# without requiring manual chmod, chown, or sandbox reconfiguration.
+# Validates sandbox support before starting the browser.
 
 set -e
 
@@ -34,10 +33,10 @@ if [ -L /proc/self/ns/user ]; then
   fi
 fi
 
-# 3. Transparent fallback: if neither user namespaces nor SUID sandbox is available,
-# inject --no-sandbox so the browser launches seamlessly.
+# 3. Never silently disable the renderer sandbox.
 if [ "$SUID_FUNCTIONAL" -eq 0 ] && [ "$USERNS_FUNCTIONAL" -eq 0 ]; then
-  EXTRA_ARGS+=("--no-sandbox")
+  echo "soulm8te: Chromium sandbox is unavailable. Install the official .deb package to configure chrome-sandbox, or enable unprivileged user namespaces according to your distribution policy." >&2
+  exit 1
 fi
 
 # 4. Wayland / X11 Ozone auto-detection hint

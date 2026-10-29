@@ -1,3 +1,4 @@
+import { readProviderJson, readProviderText } from './VoodooProviderResponse';
 import { AgentPlan, actionEvidence, canonicalCall, textToolHistory, workflowContext, estimateTokens, estimateRequestTokens, prepareToolSchema, requestedContextWindow, COMPLETION_OUTPUT_TOKENS, type CompletionProtocol, type PreparedToolSchema } from './AgentWorkflow';
 import { normalizeVoodooKeys } from '../../shared/voodooKeys';
 import type {
@@ -102,6 +103,8 @@ export const VOODOO_BROWSER_TOOLS: VoodooToolDefinition[] = [
           description: 'Тип элементов для поиска',
           enum: ['all', 'links', 'buttons', 'inputs'],
         },
+        start: { type: 'number', description: 'Смещение из next_start предыдущего результата (0–10000). При scan_limit_reached уточни type: достигнут предел 10000 элементов' },
+        limit: { type: 'number', description: 'Размер страницы элементов (1–100, по умолчанию 30)' },
         tab_id: { type: 'string', description: 'Идентификатор вкладки (по умолчанию текущая)' },
       },
     },
@@ -733,7 +736,7 @@ export class VoodooAiService {
 
       const latencyMs = Date.now() - start;
       if (response.ok) {
-        const payload = await response.json();
+        const payload = await readProviderJson(response);
         if (!payload?.choices?.[0]?.message || (typeof payload.choices[0].message.content !== 'string' && !Array.isArray(payload.choices[0].message.tool_calls))) {
           throw new Error('API вернул некорректный ответ вместо chat completion');
         }
@@ -747,7 +750,7 @@ export class VoodooAiService {
         return { success: true, latencyMs };
       }
 
-      const bodyText = await response.text();
+      const bodyText = await readProviderText(response);
       let errorDetail = `Ошибка HTTP ${response.status}`;
       try {
         const parsed = JSON.parse(bodyText);
@@ -981,7 +984,7 @@ export class VoodooAiService {
 
         // If endpoint rejects tools parameter (some models or proxies return 400 for tools)
         if (!response.ok && response.status === 400 && requestBody.tools) {
-          errorBodyText = await response.text().catch(() => '');
+          errorBodyText = await readProviderText(response);
           if (!isContextLengthError(response.status, errorBodyText) && /unsupported.{0,50}(tool|function)|(tool|function).{0,50}(not supported|unsupported|not allowed|unknown parameter)|unrecognized request argument.{0,20}tools|does not support.{0,20}(tool|function)/i.test(errorBodyText)) {
             protocol.textOnly = true;
             this.toolProtocolCache.set(`${endpoint}|${model}`, Date.now() + 10 * 60_000);
@@ -1006,7 +1009,7 @@ export class VoodooAiService {
 
         if (response.ok) {
           let data: Record<string, any>;
-          try { data = await response.json(); }
+          try { data = await readProviderJson(response); }
           catch { return { success: false, error: 'invalid_completion' }; }
           const choice = data?.choices?.[0];
           const choiceMsg = choice?.message;
@@ -1033,7 +1036,7 @@ export class VoodooAiService {
           };
         }
 
-        const bodyText = errorBodyText ?? await response.text().catch(() => '');
+        const bodyText = errorBodyText ?? await readProviderText(response);
         let errorMsg = `HTTP ${response.status}`;
         try {
           const parsed = JSON.parse(bodyText);
@@ -1265,7 +1268,7 @@ export class VoodooAiService {
         let result: { success: boolean; result?: unknown; error?: string; summary?: string };
         try {
           result = validationError ? { success: false, error: validationError }
-            : name === 'update_plan' ? { success: true, result: plan.update(args, lastExternalSucceeded && progressVersion > completedEvidenceVersion), summary: `План: ${args.completed_steps ?? plan.completed}/${plan.steps.length}` }
+            : name === 'update_plan' ? { success: true, result: plan.update(args, lastExternalSucceeded ? progressVersion - completedEvidenceVersion : 0), summary: `План: ${args.completed_steps ?? plan.completed}/${plan.steps.length}` }
             : await options.toolExecutor!(name, args);
           if (!result || typeof result.success !== 'boolean') result = { success: false, error: 'Инструмент вернул некорректный результат' };
         } catch (error) {

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -209,4 +210,17 @@ it('skips Firefox containers and preserves normal host-only cookie attributes', 
     if (original === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = original;
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+
+it.skipIf(process.platform === 'win32')('rejects a FIFO import without blocking on a writer', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-fifo-import-'));
+  try {
+    const fifo = path.join(directory, 'bookmarks.html');
+    execFileSync('mkfifo', [fifo]);
+    const importer = new BrowserDataImporter(new BrowserStores(path.join(directory, 'data')), { canPersistSecurely: () => false } as never, async () => 0);
+    const result = await importer.importFile(fifo, 'bookmarks');
+    expect(result.imported).toBe(0);
+    expect(result.errors).toEqual([expect.stringMatching(/обычный файл/)]);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

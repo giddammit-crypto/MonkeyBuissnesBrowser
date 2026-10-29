@@ -245,7 +245,7 @@ export class BrowsecHealthCheckEngine {
         const options: tls.ConnectionOptions = {
           host,
           port,
-          rejectUnauthorized: false,
+          rejectUnauthorized: true,
           timeout: timeoutMs,
         };
         if (!isIP(host)) {

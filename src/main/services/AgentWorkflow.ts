@@ -67,7 +67,7 @@ export class AgentPlan {
   completed = 0;
   blockedReason = '';
 
-  update(args: Record<string, unknown>, hasEvidence: boolean) {
+  update(args: Record<string, unknown>, evidenceCount: number) {
     const steps = args.steps;
     const completed = args.completed_steps ?? this.completed;
     if (!Array.isArray(steps) || steps.length < 1
@@ -81,7 +81,7 @@ export class AgentPlan {
     if (completed < this.completed || this.steps.some((step, i) => step !== normalized[i])) {
       throw new Error('Нельзя удалять или заменять этапы исходного плана; при уточнении добавляй новые этапы');
     }
-    if (completed > this.completed && !hasEvidence) throw new Error('Сначала выполни действие и получи результат; план сам по себе не выполняет задачу');
+    if (completed - this.completed > evidenceCount) throw new Error('Для каждого завершаемого этапа нужен новый результат действия; план сам по себе не выполняет задачу');
     if (args.blocked_reason !== undefined && (typeof args.blocked_reason !== 'string' || args.blocked_reason.length > 1000)) {
       throw new Error('blocked_reason должен быть строкой длиной до 1000 символов');
     }

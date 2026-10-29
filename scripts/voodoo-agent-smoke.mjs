@@ -88,7 +88,7 @@ server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = `http://127.0.0.1:${server.address().port}`;
 try {
-  app = await electron.launch({ args: ['--ozone-platform=headless', '--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox', `--user-data-dir=${profile}`, '.'] });
+  app = await electron.launch({ executablePath: process.env.SOUL_EXECUTABLE, args: ['--ozone-platform=headless', '--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox', `--user-data-dir=${profile}`, '.'] });
   const shell = await app.firstWindow();
   await shell.waitForSelector('.app-shell');
   const invoke = (method, ...args) => shell.evaluate(({ method, args }) => window.browserApi[method](...args), { method, args });

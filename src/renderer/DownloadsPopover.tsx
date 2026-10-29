@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -15,6 +15,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { userFacingError } from "./userFacingError";
 import type { BrowserSnapshot, DownloadEntry } from "../shared/types";
 
 function formatBytes(bytes: number): string {
@@ -67,6 +68,18 @@ export function DownloadsPopover({
 }): React.JSX.Element {
   const popoverRef = useRef<HTMLDivElement>(null);
   const downloads = snapshot.downloads || [];
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const pending = useRef(false);
+  const perform = async (action: () => Promise<unknown>) => {
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    try { await action(); }
+    catch (cause) { setError(userFacingError(cause, "Не удалось выполнить действие с загрузкой.")); }
+    finally { pending.current = false; setBusy(false); }
+  };
 
   const activeDownloads = downloads.filter(
     (d) => d.state === "progressing" || d.state === "queued" || d.isPaused,
@@ -104,7 +117,8 @@ export function DownloadsPopover({
       ref={popoverRef}
       className="toolbar-popover downloads-popover"
       role="dialog"
-      aria-label="Загрузки Google Chrome стиль"
+      aria-label="Загрузки"
+      aria-busy={busy}
     >
       <div className="downloads-popover-header">
         <div className="downloads-popover-title">
@@ -146,10 +160,11 @@ export function DownloadsPopover({
             <button
               type="button"
               className="downloads-media-action-btn mp4"
+              disabled={busy}
               title="Скачать видео (MP4)"
               onClick={() => {
                 if (activeTab?.url) {
-                  void window.browserApi.downloadMediaUrl(activeTab.url, activeTab.title, false);
+                  void perform(() => window.browserApi.downloadMediaUrl(activeTab.url, activeTab.title, false));
                 }
               }}
             >
@@ -159,10 +174,11 @@ export function DownloadsPopover({
             <button
               type="button"
               className="downloads-media-action-btn mp3"
+              disabled={busy}
               title="Скачать аудио (MP3)"
               onClick={() => {
                 if (activeTab?.url) {
-                  void window.browserApi.downloadMediaUrl(activeTab.url, activeTab.title, true);
+                  void perform(() => window.browserApi.downloadMediaUrl(activeTab.url, activeTab.title, true));
                 }
               }}
             >
@@ -173,6 +189,7 @@ export function DownloadsPopover({
         </div>
       )}
 
+      {error && <p role="alert" className="downloads-action-error" style={{ padding: "8px 16px", overflowWrap: "anywhere" }}>{error}</p>}
       <div className="downloads-popover-scroll">
         {/* Active downloads */}
         {activeDownloads.length > 0 && (
@@ -209,12 +226,13 @@ export function DownloadsPopover({
                     <button
                       type="button"
                       className="icon-button"
+                      disabled={busy}
                       title={isPaused ? "Продолжить" : "Пауза"}
                       onClick={() =>
-                        void window.browserApi.controlDownload(
+                        void perform(() => window.browserApi.controlDownload(
                           item.id,
                           isPaused ? "resume" : "pause",
-                        )
+                        ))
                       }
                     >
                       {isPaused ? <Play size={15} /> : <Pause size={15} />}
@@ -222,8 +240,9 @@ export function DownloadsPopover({
                     <button
                       type="button"
                       className="icon-button"
+                      disabled={busy}
                       title="Отменить"
-                      onClick={() => void window.browserApi.controlDownload(item.id, "cancel")}
+                      onClick={() => void perform(() => window.browserApi.controlDownload(item.id, "cancel"))}
                     >
                       <X size={15} />
                     </button>
@@ -264,7 +283,7 @@ export function DownloadsPopover({
                   }}
                   onClick={() => {
                     if (isCompleted) {
-                      void window.browserApi.openDownload(item.id);
+                      void perform(() => window.browserApi.openDownload(item.id));
                     }
                   }}
                 >
@@ -301,8 +320,9 @@ export function DownloadsPopover({
                     <button
                       type="button"
                       className="icon-button"
+                      disabled={busy}
                       title="Повторить загрузку"
-                      onClick={() => void window.browserApi.retryDownload(item.id)}
+                      onClick={() => void perform(() => window.browserApi.retryDownload(item.id))}
                     >
                       <RotateCcw size={15} />
                     </button>
@@ -312,16 +332,18 @@ export function DownloadsPopover({
                         <button
                           type="button"
                           className="icon-button"
+                          disabled={busy}
                           title="Показать в папке"
-                          onClick={() => void window.browserApi.showDownloadInFolder(item.id)}
+                          onClick={() => void perform(() => window.browserApi.showDownloadInFolder(item.id))}
                         >
                           <FolderOpen size={15} />
                         </button>
                         <button
                           type="button"
                           className="icon-button"
+                          disabled={busy}
                           title="Открыть файл"
-                          onClick={() => void window.browserApi.openDownload(item.id)}
+                          onClick={() => void perform(() => window.browserApi.openDownload(item.id))}
                         >
                           <ExternalLink size={15} />
                         </button>
@@ -331,8 +353,9 @@ export function DownloadsPopover({
                     <button
                       type="button"
                       className="icon-button"
+                      disabled={busy}
                       title="Удалить из списка"
-                      onClick={() => void window.browserApi.deleteDownload(item.id, false)}
+                      onClick={() => void perform(() => window.browserApi.deleteDownload(item.id, false))}
                     >
                       <Trash2 size={15} />
                     </button>
@@ -367,7 +390,8 @@ export function DownloadsPopover({
           <button
             type="button"
             className="downloads-footer-link"
-            onClick={() => void window.browserApi.clearFinishedDownloads(false)}
+            disabled={busy}
+            onClick={() => void perform(() => window.browserApi.clearFinishedDownloads(false))}
           >
             Очистить список
           </button>

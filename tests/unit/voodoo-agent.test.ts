@@ -411,6 +411,26 @@ describe('Voodoo Browser Agent Tools', () => {
 });
 
 describe('BrowserController.executeVoodooTool', () => {
+  it('does not expose or operate private tabs through AI tools', async () => {
+    const { controller, tab, webContents, tabsMap } = createTestController();
+    tabsMap.set('private', { ...tab, id: 'private', isPrivate: true, url: 'https://private.example' } as any);
+    const listed = await controller.executeVoodooTool('list_tabs', {});
+    expect(JSON.stringify(listed)).not.toContain('private.example');
+    for (const tool of ['read_page', 'execute_script', 'click_element', 'switch_tab', 'close_tab']) {
+      const result = await controller.executeVoodooTool(tool, { tab_id: 'private', code: 'document.title' });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('приватным');
+    }
+    expect(webContents.executeJavaScript).not.toHaveBeenCalled();
+    controller.activeTabId = 'private';
+    const result = await controller.sendVoodooMessage([], { url: 'https://private.example' });
+    expect(result.error).toBe('private_tab');
+    for (const tool of ['get_active_dialog', 'open_url', 'search_web']) {
+      expect((await controller.executeVoodooTool(tool, { tab_id: 'tab-active', url: 'https://example.com', query: 'test' })).success).toBe(false);
+    }
+    expect(await BrowserController.prototype.extractActiveTabChatContext.call(controller)).toEqual({ text: '', source: 'private', count: 0 });
+  });
+
   function createTestController() {
     const executedJsCalls: string[] = [];
     const webContents = {
@@ -609,6 +629,35 @@ describe('BrowserController.executeVoodooTool', () => {
     }));
     return controller.executeVoodooTool(tool, args);
   }
+
+  it('pages DOM controls without starving inputs behind numerous buttons', async () => {
+    const { controller, webContents } = createTestController();
+    const make = (id: string, tagName: string) => ({ id, tagName, innerText: id, type: 'text',
+      getBoundingClientRect: () => ({ width: 20, height: 20 }), getAttribute: () => null });
+    const buttons = Array.from({ length: 40 }, (_, i) => make('b' + i, 'BUTTON'));
+    const input = make('search', 'INPUT');
+    const document = { querySelectorAll: (selector: string) => selector.startsWith('#') ? [input]
+      : selector.startsWith('button,') ? buttons : selector === 'a[href]' ? [] : [input] };
+    const first = await runDomTool(controller, webContents, 'get_page_elements', { limit: 3 }, document);
+    expect(first.result.elements.map((e: any) => e.selector)).toEqual(['#search', '#b0', '#b1']);
+    expect(first.result.next_start).toBe(3);
+    const next = await runDomTool(controller, webContents, 'get_page_elements', { limit: 3, start: 3 }, document);
+    expect(next.result.elements.map((e: any) => e.selector)).toEqual(['#b2', '#b3', '#b4']);
+    const end = await runDomTool(controller, webContents, 'get_page_elements', { start: 40, limit: 3 }, document);
+    expect(end.result.elements.map((e: any) => e.selector)).toEqual(['#b39']);
+    expect(end.result.next_start).toBeNull();
+  });
+
+  it('terminates DOM pagination at the scan boundary without an unreachable continuation', async () => {
+    const { controller, webContents } = createTestController();
+    webContents.executeJavaScript.mockResolvedValue(Array.from({ length: 10001 }, (_, i) => ({ selector: '#b' + i })));
+    const result = await controller.executeVoodooTool('get_page_elements', { start: 9990, limit: 100 });
+    expect(result.result.elements).toHaveLength(10);
+    expect(result.result).toMatchObject({ next_start: null, truncated: true, scan_limit_reached: true });
+    const past = await controller.executeVoodooTool('get_page_elements', { start: 10100, limit: 100 });
+    expect(past.result.elements).toHaveLength(0);
+    expect(past.result).toMatchObject({ start: 10000, next_start: null, scan_limit_reached: true });
+  });
 
   it('does not overwrite an unrelated input when an explicit target is missing', async () => {
     const { controller, webContents } = createTestController();

@@ -1,6 +1,11 @@
+import { spawn } from 'node:child_process';
+import os from 'node:os';
+import fs from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+vi.mock('node:child_process', async (importOriginal) => ({ ...await importOriginal<typeof import('node:child_process')>(), spawn: vi.fn() }));
 vi.mock('electron', () => ({
-  app: { getAppMetrics: vi.fn(() => []) }, BaseWindow: class {}, BrowserWindow: class {}, clipboard: {}, dialog: {}, Menu: {},
+  app: { getAppMetrics: vi.fn(() => []), getPath: vi.fn(() => os.tmpdir()) }, BaseWindow: class {}, BrowserWindow: class {}, clipboard: {}, dialog: {}, Menu: {},
   nativeImage: {}, nativeTheme: {}, session: {}, shell: {}, WebContentsView: class {}, safeStorage: {},
 }));
 import { app } from 'electron';
@@ -132,4 +137,48 @@ describe('Browser download retry profile isolation', () => {
     expect(privateSession.downloadURL).not.toHaveBeenCalled();
     expect(controller.downloadWithYtDlp).not.toHaveBeenCalled();
   });
+});
+
+
+describe('Download cancellation and deletion integrity', () => {
+  it('resumes a stopped downloader before terminating it and escalates if it does not exit', () => {
+    vi.useFakeTimers();
+    try {
+      const controller = fixture();
+      const child = Object.assign(new EventEmitter(), { kill: vi.fn(), exitCode: null, signalCode: null });
+      const entry = { id: 'video', state: 'progressing', isPaused: true };
+      Object.assign(controller, { downloads: [entry], ytDlpProcesses: new Map([['video', { child, isPaused: true }]]), persistDownloads: vi.fn(), emitSnapshot: vi.fn() });
+      controller.controlDownload('video', 'cancel');
+      expect(child.kill.mock.calls).toEqual([['SIGCONT'], ['SIGTERM']]);
+      expect(entry).toMatchObject({ state: 'cancelled', isPaused: false, isLive: false, canResume: false });
+      vi.advanceTimersByTime(2000);
+      expect(child.kill).toHaveBeenLastCalledWith('SIGKILL');
+    } finally { vi.useRealTimers(); }
+  });
+  it('keeps a download entry when file deletion fails', () => {
+    const controller = fixture();
+    const entry = { id: 'file', path: '/protected/file' };
+    Object.assign(controller, { downloads: [entry], ytDlpProcesses: new Map(), liveDownloads: new Map(), persistDownloads: vi.fn(), emitSnapshot: vi.fn() });
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => { throw new Error('EACCES'); });
+    expect(() => controller.deleteDownload('file', true)).toThrow(/Запись загрузки сохранена/);
+    expect(controller.downloads).toEqual([entry]);
+  });
+});
+
+
+it('keeps cancelled state when yt-dlp later emits close with a nonzero exit', async () => {
+  const controller = fixture();
+  const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn(), exitCode: null, signalCode: null });
+  vi.mocked(spawn).mockReturnValue(child as never);
+  Object.assign(controller, {
+    browserSession: {}, downloads: [], ytDlpProcesses: new Map(), mediaCookieCleanup: new Map(),
+    emitSnapshot: vi.fn(), persistDownloads: vi.fn(),
+    getCookieArgsForUrl: vi.fn(async () => ({ args: [], cleanup: vi.fn() })),
+  });
+  await controller.downloadWithYtDlp('https://www.youtube.com/watch?v=fixture');
+  const entry = controller.downloads[0];
+  controller.controlDownload(entry.id, 'cancel');
+  child.emit('close', 1);
+  expect(entry).toMatchObject({ state: 'cancelled', isLive: false, isPaused: false, canResume: false, error: 'Загрузка отменена.' });
 });

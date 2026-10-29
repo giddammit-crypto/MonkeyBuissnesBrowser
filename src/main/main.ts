@@ -10,6 +10,7 @@ import type { BrowserApi, ChromeBounds } from '../shared/ipc';
 import type { BrowserSettings } from '../shared/types';
 import { getChromeUserAgent } from '../shared/chromiumIdentity';
 import { BrowserController } from './tabs/BrowserController';
+import { registerSingleInstance } from './services/SingleInstance';
 
 // Branding must not silently create a new profile. Test/explicit CLI profiles
 // remain authoritative and the installed browser keeps its original user data.
@@ -301,11 +302,22 @@ async function createApplication(): Promise<void> {
   }
 }
 
-void app.whenReady().then(createApplication);
+async function showApplication(): Promise<void> {
+  await app.whenReady();
+  await createApplication();
+  const window = controller?.window;
+  if (!window || window.isDestroyed()) return;
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
 
-app.on('activate', () => {
-  void createApplication();
-});
+if (registerSingleInstance(app, showApplication)) {
+  void showApplication().catch((error) => console.error('Unable to start browser:', error));
+  app.on('activate', () => {
+    void showApplication().catch((error) => console.error('Unable to activate browser:', error));
+  });
+}
 
 app.on('login', (event, _webContents, _authInfo, _authResponseDetails, callback) => {
   event.preventDefault();

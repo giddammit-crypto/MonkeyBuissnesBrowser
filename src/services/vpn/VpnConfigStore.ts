@@ -101,8 +101,7 @@ export class VpnConfigStore {
     const filePath = result.filePaths[0];
     const file = await fs.stat(filePath);
     if (file.size > 1024 * 1024) {
-      this.sessionSnapshot = { ...emptySnapshot(), state: 'error', errors: ['Файл конфигурации больше 1 МБ.'] };
-      return this.sessionSnapshot;
+      throw new Error('Файл конфигурации больше 1 МБ. Существующая конфигурация не изменена.');
     }
     const rawConfig = await fs.readFile(filePath, 'utf8');
     const profileName = path.basename(filePath, path.extname(filePath)).slice(0, 60) || 'WireGuard';
@@ -112,23 +111,16 @@ export class VpnConfigStore {
   async importRaw(profileName: string, rawConfig: string): Promise<VpnSnapshot> {
     const backend = process.platform === 'linux' ? this.storageBackend() : undefined;
     const encryptionAvailable = await this.isEncryptionAvailable();
-    const secureBackend = backend === undefined || (backend !== 'basic_text' && backend !== 'unknown');
+    const secureBackend = process.platform !== 'linux' || (typeof backend === 'string' && !['basic_text', 'unknown'].includes(backend));
     const savedSecurely = encryptionAvailable && secureBackend;
     const next = snapshotFromConfig(profileName, rawConfig, savedSecurely, backend);
 
     if (!next.configured) {
-      this.record.set(null);
-      this.sessionSnapshot = next;
-      return next;
+      throw new Error(`VPN-конфигурация не импортирована: ${next.errors.join(' ')} Существующая конфигурация не изменена.`);
     }
 
     if (!savedSecurely) {
-      // Never persist even the raw configuration metadata when the platform
-      // cannot protect the secret. The active session may still use it until
-      // restart, but a later launch must not present it as restorable.
-      this.record.set(null);
-      this.sessionSnapshot = next;
-      return next;
+      throw new Error('Защищённое хранилище недоступно. VPN-конфигурация не импортирована; существующая конфигурация не изменена.');
     }
 
     let encrypted: Buffer;

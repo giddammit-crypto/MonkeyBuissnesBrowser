@@ -54,4 +54,21 @@ describe('SiteFavicon source resolver & privacy filter', () => {
     expect(priv.primarySrc).toBeNull();
     expect(priv.fallbackSrc).toBeNull();
   });
+  it('never sends literal addresses or intranet names to the public icon provider', () => {
+    for (const url of ['http://[::1]/', 'http://[fd12::1]/', 'http://[fe80::1234]/',
+      'http://127.8.9.10/', 'http://169.254.1.2/', 'http://100.64.0.1/',
+      'http://printer/', 'http://service.localhost/', 'http://router.home.arpa/',
+      'http://printer.local./']) {
+      expect(getFaviconSources(url).fallbackSrc, url).toBeNull();
+    }
+  });
+
+  it('never fetches a private favicon through the regular shell session', () => {
+    expect(getFaviconSources('https://private.example/', 'https://private.example/icon.png', true))
+      .toEqual({ primarySrc: null, fallbackSrc: null });
+    const embedded = 'data:image/png;base64,AAAA';
+    expect(getFaviconSources('https://private.example/', embedded, true))
+      .toEqual({ primarySrc: embedded, fallbackSrc: null });
+  });
+
 });

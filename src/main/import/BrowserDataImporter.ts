@@ -123,12 +123,21 @@ export class BrowserDataImporter {
     try {
       if (!['bookmarks', 'passwords'].includes(kind)) throw new Error('Неподдерживаемый тип импорта.');
       if (kind === 'passwords' && !this.passwords.canPersistSecurely()) throw new Error('Пароли не прочитаны: защищённое системное хранилище недоступно. Настройте keyring и повторите импорт.');
-      const file = await fs.promises.open(filePath, 'r');
+      const file = await fs.promises.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
       let source: string;
       try {
         const stat = await file.stat();
         if (!stat.isFile() || stat.size > 20 * 1024 * 1024) throw new Error('Выберите обычный файл размером не больше 20 МБ.');
-        const buffer = await file.readFile();
+        const bufferLimit = 20 * 1024 * 1024;
+        const bounded = Buffer.alloc(bufferLimit + 1);
+        let size = 0;
+        while (size < bounded.length) {
+          const read = await file.read(bounded, size, bounded.length - size, null);
+          if (!read.bytesRead) break;
+          size += read.bytesRead;
+        }
+        if (size > bufferLimit) throw new Error('Файл импорта вырос до размера больше 20 МБ.');
+        const buffer = bounded.subarray(0, size);
         source = buffer[0] === 0xff && buffer[1] === 0xfe ? buffer.subarray(2).toString('utf16le') : new TextDecoder('utf-8', { fatal: true }).decode(buffer);
       } finally { await file.close(); }
       if (kind === 'bookmarks') {

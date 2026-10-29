@@ -371,7 +371,7 @@ export default function VoodooChatBubble({
     abortControllerRef.current = abortController;
 
     try {
-      const tabContext = contextOverride || (currentTab ? {
+      const tabContext = currentTab?.isPrivate ? undefined : contextOverride || (currentTab ? {
         url: currentTab.url,
         title: currentTab.title,
       } : undefined);

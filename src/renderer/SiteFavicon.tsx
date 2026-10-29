@@ -11,23 +11,11 @@ export interface SiteFaviconProps {
 
 export function isPrivateHost(host: string): boolean {
   if (!host) return true;
-  const h = host.toLowerCase().trim();
-  if (
-    h === "localhost" ||
-    h === "127.0.0.1" ||
-    h === "::1" ||
-    h.endsWith(".local") ||
-    h.endsWith(".internal")
-  ) {
-    return true;
-  }
-  if (
-    /^10\.\d+\.\d+\.\d+$/.test(h) ||
-    /^192\.168\.\d+\.\d+$/.test(h) ||
-    /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(h)
-  ) {
-    return true;
-  }
+  const h = host.toLowerCase().trim().replace(/\.$/, "").replace(/^\[|\]$/g, "");
+  // Literal addresses and intranet names must never reach a third-party icon service.
+  if (!h.includes(".") || h.includes(":") || /^\d+(?:\.\d+){3}$/.test(h) ||
+      h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal") ||
+      h.endsWith(".home.arpa")) return true;
   return false;
 }
 
@@ -42,7 +30,9 @@ export function getFaviconSources(
     hostname = new URL(raw).hostname.replace(/^www\./, "");
   } catch {}
 
-  const primarySrc = favicon && favicon.trim() ? favicon.trim() : null;
+  const candidate = favicon?.trim() || null;
+  // Private pages cannot cause fresh requests in the shell's regular session.
+  const primarySrc = isPrivate && candidate && !/^data:image\//i.test(candidate) ? null : candidate;
   const fallbackSrc =
     !isPrivate && hostname && !isPrivateHost(hostname)
       ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`

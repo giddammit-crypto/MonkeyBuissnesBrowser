@@ -50,6 +50,9 @@ function renderProcessIcon(proc: TaskManagerProcess) {
     if (proc.favicon || proc.url) {
       return (
         <SiteFavicon
+          // Process metrics include private tabs. Use embedded icons only;
+          // never request their origins or a third-party favicon service.
+          isPrivate={true}
           url={proc.url || ""}
           favicon={proc.favicon}
           size={16}
@@ -85,6 +88,7 @@ export const TaskManagerModal: React.FC<TaskManagerModalProps> = ({
   const [sortDir, setSortDir] = useState<SortDirection>("asc");
   const [isTerminating, setIsTerminating] = useState(false);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const tableWrapperRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
@@ -120,7 +124,9 @@ export const TaskManagerModal: React.FC<TaskManagerModalProps> = ({
 
   // Focus search input on mount
   useEffect(() => {
+    const previous = document.activeElement;
     searchInputRef.current?.focus();
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
   }, []);
 
   // Filter & sort processes
@@ -275,6 +281,16 @@ export const TaskManagerModal: React.FC<TaskManagerModalProps> = ({
     >
       <div
         className="task-manager-modal"
+        ref={dialogRef}
+        onKeyDown={(event) => {
+          if (event.key !== "Tab") return;
+          const controls = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex="0"]') ?? [])]
+            .filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0);
+          const first = controls[0];
+          const last = controls.at(-1);
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        }}
         role="dialog"
         aria-modal="true"
         aria-label="Диспетчер задач"

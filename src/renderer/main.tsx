@@ -755,10 +755,8 @@ function App(): React.JSX.Element {
       }
 
       if (event.key === "Escape") {
-        if (clickCleanOpen) {
-          setClickCleanOpen(false);
-          return;
-        }
+        // The cleaner owns Escape and keeps itself open while cleaning.
+        if (clickCleanOpen) return;
         if (taskManagerOpen) {
           setTaskManagerOpen(false);
           return;
@@ -830,7 +828,8 @@ function App(): React.JSX.Element {
       const activeElement = document.activeElement;
       const isInputFocused =
         activeElement instanceof HTMLInputElement ||
-        activeElement instanceof HTMLTextAreaElement;
+        activeElement instanceof HTMLTextAreaElement ||
+        (activeElement instanceof HTMLElement && activeElement.isContentEditable);
 
       // Google Chrome keyboard shortcuts
       if (modifier && event.shiftKey && (key === "delete" || key === "del" || key === "backspace")) {
@@ -838,7 +837,7 @@ function App(): React.JSX.Element {
         setClickCleanOpen((val) => !val);
         setPopover(null);
         return;
-      } else if (modifier && event.shiftKey && key === "v") {
+      } else if (modifier && event.shiftKey && key === "v" && !isInputFocused) {
         event.preventDefault();
         const next = !voodooOpen;
         setVoodooOpen(next);

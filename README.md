@@ -2,12 +2,11 @@
 
 <p align="center">
   <strong>Современный, быстрый и стильный веб-браузер нового поколения на Chromium & Electron</strong><br/>
-  <em>Адаптивный неоновый дизайн, Click & Clean, автономный AI-ассистент Вуду с поддержкой голосовых команд STT, диспетчер задач Chrome, менеджер паролей, масштабирование Ctrl+Wheel и встроенный VPN</em>
+  <em>Адаптивный неоновый дизайн, Click & Clean, автономный AI-ассистент Вуду с поддержкой голосовых команд STT, диспетчер задач Chrome, менеджер паролей, масштабирование Ctrl+Wheel и прокси-подключения</em>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-0.8.1-blue?style=for-the-badge" alt="Version 0.8.1" />
-  <img src="https://img.shields.io/badge/Chromium-134-green?style=for-the-badge" alt="Chromium 134" />
   <img src="https://img.shields.io/badge/Electron-45.0-blueviolet?style=for-the-badge" alt="Electron 45" />
   <img src="https://img.shields.io/badge/React-19-cyan?style=for-the-badge" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-7.0-blue?style=for-the-badge" alt="TypeScript" />
@@ -262,9 +261,11 @@
 ## 🚀 Установка и запуск
 
 ### Требования
-- **Node.js**: версия 20+ (рекомендуется 24+)
+- **Node.js**: версия 24+
 - **npm**: версия 10+
 - **Linux / Windows / macOS**
+
+В Linux штатный запуск требует работающего Chromium sandbox: разрешённых user namespaces либо корректно установленного SUID helper. Установщик `.deb` настраивает helper. Автоматического отключения sandbox при ошибке больше нет.
 
 ### Быстрый старт из исходного кода
 
@@ -342,4 +343,4 @@ src/
 
 ## 📄 Лицензия
 
-Проект распространяется под свободной лицензией **MIT**. Подробности в файле [LICENSE](LICENSE).
+В `package.json` указана лицензия **MIT**. Отдельный файл LICENSE пока отсутствует; его оформление и сведения о правообладателе остаются задачей перед публичным выпуском.

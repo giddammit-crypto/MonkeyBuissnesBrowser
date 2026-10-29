@@ -109,7 +109,7 @@ describe('VPN Server Health Check Engine', () => {
           host: 'nl124.staticvaultcdn.xyz',
           port: 443,
           servername: 'nl124.staticvaultcdn.xyz',
-          rejectUnauthorized: false,
+          rejectUnauthorized: true,
         }),
       );
       engine.destroy();

@@ -1112,10 +1112,19 @@ export class BrowserController {
         ytProc.isPaused = false;
         entry.isPaused = false;
       } else if (action === 'cancel') {
-        try { ytProc.child.kill('SIGTERM'); } catch {}
-        this.ytDlpProcesses.delete(downloadId);
-      this.mediaCookieCleanup?.get(downloadId)?.();
+        // Mark cancellation before native callbacks can report the process exit.
         entry.state = 'cancelled';
+        if (ytProc.isPaused) { try { ytProc.child.kill('SIGCONT'); } catch {} }
+        try { ytProc.child.kill('SIGTERM'); } catch {}
+        const terminationTimer = setTimeout(() => {
+          if (ytProc.child.exitCode === null && ytProc.child.signalCode === null) {
+            try { ytProc.child.kill('SIGKILL'); } catch {}
+          }
+        }, 2000);
+        terminationTimer.unref();
+        ytProc.child.once('close', () => clearTimeout(terminationTimer));
+        this.ytDlpProcesses.delete(downloadId);
+        this.mediaCookieCleanup?.get(downloadId)?.();
         entry.isLive = false;
         entry.isPaused = false;
         entry.canResume = false;
@@ -1165,7 +1174,9 @@ export class BrowserController {
     if (index !== -1) {
       const entry = this.downloads[index];
       if (deleteFile && entry.path && fs.existsSync(entry.path)) {
-        try { fs.unlinkSync(entry.path); } catch {}
+        try { fs.unlinkSync(entry.path); } catch (error) {
+          throw new Error(`Не удалось удалить файл. Запись загрузки сохранена: ${error instanceof Error ? error.message : 'ошибка файловой системы'}`);
+        }
       }
       this.downloads.splice(index, 1);
       this.persistDownloads(true);
@@ -2382,8 +2393,12 @@ export class BrowserController {
         releaseCookies();
         this.ytDlpProcesses.delete(id);
         entry.isLive = false;
-        entry.state = 'interrupted';
-        entry.error = this.userFacingMediaDownloadError(message, isAudio);
+        entry.isPaused = false;
+        entry.canResume = false;
+        if (entry.state !== 'cancelled') {
+          entry.state = 'interrupted';
+          entry.error = this.userFacingMediaDownloadError(message, isAudio);
+        }
         this.persistDownloads(true);
         this.emitSnapshot();
       };
@@ -2438,6 +2453,12 @@ export class BrowserController {
         entry.isLive = false;
         entry.canResume = false;
         entry.finishedAt = Date.now();
+        entry.isPaused = false;
+        if (entry.state === 'cancelled') {
+          this.persistDownloads(true);
+          this.emitSnapshot();
+          return;
+        }
         if (code === 0) {
           entry.state = 'completed';
           let finalSize = 0;
@@ -3623,7 +3644,12 @@ export class BrowserController {
   private persistDownloads(immediate = false): void {
     const persist = () => {
       this.downloadPersistTimer = undefined;
-      this.stores.downloads.set(this.downloads.filter((entry) => !entry.isPrivate).slice(0, 100));
+      try {
+        this.stores.downloads.set(this.downloads.filter((entry) => !entry.isPrivate).slice(0, 100));
+      } catch {
+        // Disk errors must not escape a timer or interrupt controller teardown.
+        console.error("Could not save downloads; the previous disk snapshot is preserved.");
+      }
     };
     if (immediate) { if (this.downloadPersistTimer) clearTimeout(this.downloadPersistTimer); persist(); }
     else if (!this.downloadPersistTimer) this.downloadPersistTimer = setTimeout(persist, 1000);
@@ -4389,8 +4415,13 @@ export class BrowserController {
     const saved = this.stores.settings.get().restoreSession !== false ? buildStoredSession([...this.tabs.values()].map((tab) => this.toSnapshot(tab)), this.activeTabId) : { tabs: [], activeIndex: 0 };
     const signature = JSON.stringify(saved);
     if (signature === this.sessionSignature) return;
-    this.sessionSignature = signature;
-    this.stores.session.set(saved);
+    try {
+      this.stores.session.set(saved);
+      this.sessionSignature = signature;
+    } catch {
+      // Keep the previous signature so a later snapshot/close retries the write.
+      console.error("Could not save browser session; the previous disk snapshot is preserved.");
+    }
   }
 
   private emitSnapshot(): void {
@@ -4566,6 +4597,9 @@ export class BrowserController {
     messages: VoodooChatMessage[],
     tabContext?: { url?: string; title?: string; chatText?: string }
   ): Promise<VoodooChatResponse> {
+    if (this.tabs.get(this.activeTabId)?.isPrivate) {
+      return { reply: 'Вуду недоступен на приватной вкладке. Переключитесь на обычную вкладку, чтобы отправить запрос AI-провайдеру.', error: 'private_tab' };
+    }
     this.cancelVoodooRequest();
     const requestController = new AbortController();
     this.voodooAbortController = requestController;
@@ -4582,7 +4616,7 @@ export class BrowserController {
         keys: settings.voodooKeys,
         model: settings.voodooModel,
         baseUrl: settings.voodooBaseUrl,
-        tabContext,
+        tabContext: this.tabs.get(this.activeTabId)?.isPrivate ? undefined : tabContext,
         signal: requestController.signal,
         onProgress: (message) => {
           if (requestController.signal.aborted) return;
@@ -4627,6 +4661,11 @@ export class BrowserController {
     try {
       signal?.throwIfAborted();
       const pageTools = ['read_page', 'get_page_elements', 'click_element', 'fill_input', 'scroll_page', 'execute_script', 'press_key', 'wait_for_element', 'navigate_history', 'analyze_page_data'];
+      const activeOnlyTool = ['get_active_dialog', 'open_url', 'search_web'].includes(toolName);
+      const privateTarget = this.tabs.get(String((activeOnlyTool ? this.activeTabId : args.tab_id || this.activeTabId) || '').trim());
+      if ((pageTools.includes(toolName) || ['get_active_dialog', 'switch_tab', 'close_tab', 'open_url', 'search_web'].includes(toolName)) && privateTarget?.isPrivate) {
+        return { success: false, error: 'Вуду не имеет доступа к приватным вкладкам. Откройте нужную страницу в обычной вкладке и повторите запрос.' };
+      }
       if (pageTools.includes(toolName)) {
         const tabId = String(args.tab_id || this.activeTabId || '').trim();
         const tab = this.tabs.get(tabId);
@@ -4695,7 +4734,7 @@ export class BrowserController {
         }
 
         case 'list_tabs': {
-          const tabList = Array.from(this.tabs.values()).map((t) => ({
+          const tabList = Array.from(this.tabs.values()).filter(t => !t.isPrivate).map((t) => ({
             id: t.id,
             title: t.title || 'Новая вкладка',
             url: t.url,
@@ -4830,10 +4869,14 @@ export class BrowserController {
             return { success: false, error: 'Вкладка недоступна для анализа элементов', summary: '❌ Элементы недоступны' };
           }
           const filterType = String(args.type || 'all');
-          const elements = await tab.view.webContents.executeJavaScript(`
-            (function(type) {
+          const start = typeof args.start === 'number' && Number.isFinite(args.start) ? Math.max(0, Math.min(10000, Math.floor(args.start))) : 0;
+          const requestedLimit = typeof args.limit === 'number' && Number.isFinite(args.limit) ? Math.max(1, Math.min(100, Math.floor(args.limit))) : 30;
+          const limit = Math.min(requestedLimit, 10000 - start);
+          const observed = await tab.view.webContents.executeJavaScript(`
+            (function(type, maximum) {
               try {
                 const results = [];
+                const groups = { button: [], link: [], input: [] };
                 const isVisible = function(el) {
                   const r = el.getBoundingClientRect();
                   const style = window.getComputedStyle(el);
@@ -4867,11 +4910,12 @@ export class BrowserController {
                       disabled: Boolean(b.disabled || b.getAttribute('aria-disabled') === 'true'),
                       id: b.id || undefined,
                     });
-                    if (results.length >= 30) break;
+                    if (results.length >= maximum) break;
                   }
                 }
 
-                if ((type === 'all' || type === 'links') && results.length < 30) {
+                groups.button = results.splice(0);
+                if (type === 'all' || type === 'links') {
                   const links = Array.from(document.querySelectorAll('a[href]'));
                   for (const a of links) {
                     if (!isVisible(a)) continue;
@@ -4885,11 +4929,12 @@ export class BrowserController {
                       href: a.href,
                       selector: selectorFor(a),
                     });
-                    if (results.length >= 30) break;
+                    if (results.length >= maximum) break;
                   }
                 }
 
-                if ((type === 'all' || type === 'inputs') && results.length < 30) {
+                groups.link = results.splice(0);
+                if (type === 'all' || type === 'inputs') {
                   const inputs = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="button"]):not([type="submit"]), textarea, select, [contenteditable="true"]'));
                   for (const inp of inputs) {
                     if (!isVisible(inp)) continue;
@@ -4906,20 +4951,30 @@ export class BrowserController {
                       disabled: Boolean(inp.disabled || inp.readOnly),
                       currentValue: inp.type === 'password' ? '[скрыто]' : (inp.value || inp.innerText || '').slice(0, 30),
                     });
-                    if (results.length >= 30) break;
+                    if (results.length >= maximum) break;
                   }
                 }
 
+                groups.input = results.splice(0);
+                for (let i = 0; i < maximum; i++) {
+                  for (const group of [groups.input, groups.button, groups.link]) {
+                    if (group[i]) results.push(group[i]);
+                    if (results.length >= maximum) return results;
+                  }
+                }
                 return results;
               } catch (e) {
                 return [];
               }
-            })(${JSON.stringify(filterType)})
+            })(${JSON.stringify(filterType)}, ${start + limit + 1})
           `, true);
 
+          const elements = observed.slice(start, start + limit);
+          const truncated = observed.length > start + limit;
+          const scanLimitReached = truncated && start + limit >= 10000;
           return {
             success: true,
-            result: { elements, count: elements.length },
+            result: { elements, count: elements.length, start, next_start: truncated && !scanLimitReached ? start + limit : null, truncated, scan_limit_reached: scanLimitReached },
             summary: `🔍 Найдено ${elements.length} интерактивных элементов на странице`,
           };
         }
@@ -5807,8 +5862,8 @@ export class BrowserController {
 
   async extractActiveTabChatContext(): Promise<{ text: string; source: string; count: number }> {
     const activeTab = this.tabs.get(this.activeTabId);
-    if (!activeTab || !activeTab.view || activeTab.view.webContents.isDestroyed() || activeTab.isInternal) {
-      return { text: '', source: 'none', count: 0 };
+    if (!activeTab || activeTab.isPrivate || !activeTab.view || activeTab.view.webContents.isDestroyed() || activeTab.isInternal) {
+      return { text: '', source: activeTab?.isPrivate ? 'private' : 'none', count: 0 };
     }
 
     const contents = activeTab.view.webContents;
