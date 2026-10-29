@@ -32,6 +32,9 @@ import type {
   CleanTargetOptions,
   StorageMetrics,
   CleanResult,
+  UpdateAssetInfo,
+  UpdateCheckResult,
+  UpdateDownloadProgress,
 } from './types';
 
 export interface ChromeBounds {
@@ -157,6 +160,10 @@ export interface BrowserApi {
   moveVoodoo(deltaX: number, deltaY: number): Promise<void>;
   resizeVoodoo(width: number, height: number, deltaX?: number, deltaY?: number): Promise<void>;
   resetVoodooPosition(): Promise<void>;
+  checkForUpdates(manual?: boolean): Promise<UpdateCheckResult>;
+  downloadUpdate(assetUrl?: string, customFilename?: string): Promise<{ success: boolean; filePath?: string; error?: string }>;
+  openDownloadedUpdate(filePath: string): Promise<boolean>;
+  getUpdateStatus(): Promise<{ lastCheck?: UpdateCheckResult; downloadProgress?: UpdateDownloadProgress }>;
   onSnapshotChanged(callback: (snapshot: BrowserSnapshot) => void): () => void;
   onTabEvent(callback: (event: { type: string; tab?: TabSnapshot; message?: string; data?: unknown }) => void): () => void;
   onBrowsecSnapshot(callback: (snapshot: BrowsecState) => void): () => void;

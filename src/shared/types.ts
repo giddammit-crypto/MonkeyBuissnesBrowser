@@ -148,6 +148,37 @@ export interface BrowserSettings {
   voodooBaseUrl?: string;
   voodooSttKey?: string;
   neverSavePasswordOrigins?: string[];
+  autoCheckUpdates?: boolean;
+}
+
+export interface UpdateAssetInfo {
+  name: string;
+  downloadUrl: string;
+  size: number;
+  contentType: string;
+}
+
+export interface UpdateCheckResult {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  releaseName?: string;
+  releaseNotes?: string;
+  publishedAt?: string;
+  htmlUrl?: string;
+  assets: UpdateAssetInfo[];
+  recommendedAsset?: UpdateAssetInfo;
+  checkedAt: number;
+  error?: string;
+}
+
+export interface UpdateDownloadProgress {
+  status: 'idle' | 'downloading' | 'completed' | 'error';
+  percent: number;
+  transferredBytes: number;
+  totalBytes: number;
+  savePath?: string;
+  error?: string;
 }
 
 export interface TranscribeAudioResult {

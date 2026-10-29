@@ -115,6 +115,10 @@ const api: BrowserApi = {
   moveVoodoo: (deltaX, deltaY) => ipcRenderer.invoke('browser:move-voodoo', deltaX, deltaY),
   resizeVoodoo: (width, height, deltaX, deltaY) => ipcRenderer.invoke('browser:resize-voodoo', width, height, deltaX, deltaY),
   resetVoodooPosition: () => ipcRenderer.invoke('browser:reset-voodoo-position'),
+  checkForUpdates: (manual) => ipcRenderer.invoke('browser:check-for-updates', manual),
+  downloadUpdate: (assetUrl, customFilename) => ipcRenderer.invoke('browser:download-update', assetUrl, customFilename),
+  openDownloadedUpdate: (filePath) => ipcRenderer.invoke('browser:open-downloaded-update', filePath),
+  getUpdateStatus: () => ipcRenderer.invoke('browser:get-update-status'),
   onSnapshotChanged: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof callback>[0]) => callback(snapshot);
     ipcRenderer.on('browser:snapshot', listener);

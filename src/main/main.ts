@@ -298,6 +298,10 @@ function registerIpc(): void {
   ipcMain.handle('browser:move-voodoo', (event, deltaX: number, deltaY: number) => requireShell(event).moveVoodoo(deltaX, deltaY));
   ipcMain.handle('browser:resize-voodoo', (event, width: number, height: number, deltaX?: number, deltaY?: number) => requireShell(event).resizeVoodoo(width, height, deltaX, deltaY));
   ipcMain.handle('browser:reset-voodoo-position', (event) => requireShell(event).resetVoodooPosition());
+  ipcMain.handle('browser:check-for-updates', (event, manual?: boolean) => requireShell(event).checkForUpdates(manual));
+  ipcMain.handle('browser:download-update', (event, assetUrl?: string, customFilename?: string) => requireShell(event).downloadUpdate(assetUrl, customFilename));
+  ipcMain.handle('browser:open-downloaded-update', (event, filePath: string) => requireShell(event).openDownloadedUpdate(filePath));
+  ipcMain.handle('browser:get-update-status', (event) => requireShell(event).getUpdateStatus());
   ipcMain.handle('window:minimize', (event) => requireShell(event).minimizeWindow());
   ipcMain.handle('window:toggle-maximize', (event) => requireShell(event).toggleMaximizeWindow());
   ipcMain.handle('window:toggle-fullscreen', (event) => requireShell(event).toggleFullScreen());

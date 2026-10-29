@@ -103,6 +103,7 @@ import SiteErrorPage from "./SiteErrorPage";
 import PrivacyDashboard from "./PrivacyDashboard";
 import TaskManagerModal from "./TaskManagerModal";
 import ClickAndCleanModal from "./ClickAndCleanModal";
+import { UpdateModal } from "./UpdateModal";
 import SavePasswordPrompt from "./SavePasswordPrompt";
 import { QrCodePopover } from "./QrCodePopover";
 import { ReaderView } from "./ReaderView";
@@ -345,6 +346,8 @@ function App(): React.JSX.Element {
   const [tabSearchOpen, setTabSearchOpen] = useState(false);
   const [taskManagerOpen, setTaskManagerOpen] = useState(false);
   const [clickCleanOpen, setClickCleanOpen] = useState(false);
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [hasAvailableUpdate, setHasAvailableUpdate] = useState(false);
   const [voodooOpen, setVoodooOpen] = useState(false);
   const [pendingPasswordOffer, setPendingPasswordOffer] = useState<SavePasswordOffer | null>(null);
   const [siteCredentials, setSiteCredentials] = useState<ImportedPasswordSummary[]>([]);
@@ -521,6 +524,19 @@ function App(): React.JSX.Element {
       }
       if (event.type === "toggle-click-and-clean") {
         setClickCleanOpen((prev) => !prev);
+        setPopover(null);
+        return;
+      }
+      if (event.type === "update-available") {
+        setHasAvailableUpdate(true);
+        setToast({
+          tone: "info",
+          message: "Доступно обновление soulm8te. Нажмите меню, чтобы скачать.",
+        });
+        return;
+      }
+      if (event.type === "toggle-update-modal") {
+        setUpdateModalOpen((prev) => !prev);
         setPopover(null);
         return;
       }
@@ -707,6 +723,7 @@ function App(): React.JSX.Element {
     || taskManagerOpen
     || notesDrawerOpen
     || clickCleanOpen
+    || updateModalOpen
     || Boolean(pendingPasswordOffer)
     || workspaceOpen
     || findOpen;
@@ -1507,14 +1524,22 @@ function App(): React.JSX.Element {
           )}
           <button
             className={`icon-button ${popover === "menu" ? "selected" : ""}`}
-            title="Меню браузера"
+            title={hasAvailableUpdate ? "Доступно обновление soulm8te!" : "Меню браузера"}
             aria-label="Меню браузера"
             aria-expanded={popover === "menu"}
+            style={{ position: "relative" }}
             onClick={() =>
               setPopover((value) => (value === "menu" ? null : "menu"))
             }
           >
             <MoreHorizontal size={20} />
+            {hasAvailableUpdate && (
+              <span
+                className="update-notify-badge"
+                style={{ position: "absolute", top: 6, right: 6, margin: 0 }}
+                title="Доступно обновление"
+              />
+            )}
           </button>
         </div>
         {popover === "menu" && (
@@ -1643,6 +1668,15 @@ function App(): React.JSX.Element {
               detail="Ctrl+Shift+Del"
               onClick={() => {
                 setClickCleanOpen(true);
+                setPopover(null);
+              }}
+            />
+            <MenuAction
+              icon={<Download size={16} />}
+              label="Обновления"
+              detail={hasAvailableUpdate ? "Доступно!" : "GitHub"}
+              onClick={() => {
+                setUpdateModalOpen(true);
                 setPopover(null);
               }}
             />
@@ -2253,6 +2287,7 @@ function App(): React.JSX.Element {
               run={run}
               onDone={() => openPanel("home")}
               onPasswordFeedback={(message,isError)=>setToast({tone:isError?"error":"success",message})}
+              onCheckUpdates={() => setUpdateModalOpen(true)}
               onBeforePasswordFill={async()=>{
                 setPanel("home");setPopover(null);
                 await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
@@ -2296,6 +2331,17 @@ function App(): React.JSX.Element {
             });
           }}
           onError={showError}
+        />
+      )}
+      {updateModalOpen && (
+        <UpdateModal
+          onDismiss={() => setUpdateModalOpen(false)}
+          onFeedback={(message, isError) => {
+            setToast({
+              tone: isError ? "error" : "success",
+              message,
+            });
+          }}
         />
       )}
       {pendingPasswordOffer && (
@@ -4041,12 +4087,14 @@ function SettingsPanel({
   onDone,
   onBeforePasswordFill,
   onPasswordFeedback,
+  onCheckUpdates,
 }: {
   snapshot: BrowserSnapshot;
   run: (promise: Promise<unknown>) => void;
   onDone: () => void;
   onBeforePasswordFill: () => Promise<void>;
   onPasswordFeedback: (message:string,isError?:boolean) => void;
+  onCheckUpdates?: () => void;
 }): React.JSX.Element {
   const [proxy, setProxy] = useState(snapshot.privacy?.proxy ?? "");
   const [busy, setBusy] = useState(false);
@@ -5034,15 +5082,35 @@ function SettingsPanel({
             </div>
           </div>
         </div>
-        <div className="about-card">
-          <div className="about-icon-wrapper">
-            <img className="about-brand-icon" src={chloeIcon} alt="soulm8te" />
-            <span className="about-led-indicator" title="Detroit Android LED status: active" />
+        <div className="about-card" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div className="about-icon-wrapper">
+              <img className="about-brand-icon" src={chloeIcon} alt="soulm8te" />
+              <span className="about-led-indicator" title="Detroit Android LED status: active" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <strong>soulm8te Browser</strong>
+              <p>Ваш цифровой союзник · Detroit: Become Human</p>
+              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.9.0</small>
+            </div>
+            <button
+              className="action-button secondary"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, padding: "8px 14px", cursor: "pointer" }}
+              onClick={() => onCheckUpdates?.()}
+            >
+              <Download size={15} />
+              <span>Проверить обновления</span>
+            </button>
           </div>
-          <div>
-            <strong>soulm8te Browser</strong>
-            <p>Ваш цифровой союзник · Detroit: Become Human</p>
-            <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.8.1</small>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 10, borderTop: "1px solid var(--border, rgba(255,255,255,0.08))" }}>
+            <label className="checkbox-label" style={{ fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, color: "var(--text-muted)" }}>
+              <input
+                type="checkbox"
+                checked={settings.autoCheckUpdates !== false}
+                onChange={(e) => update({ autoCheckUpdates: e.target.checked })}
+              />
+              Автоматически проверять обновления на GitHub
+            </label>
           </div>
         </div>
       </div>

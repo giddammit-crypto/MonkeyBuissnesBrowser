@@ -50,6 +50,7 @@ const defaultSettings: BrowserSettings = {
   voodooModel: 'qwen/qwen3.8-max:free',
   voodooContextWindowTokens: requestedContextWindow(),
   voodooBaseUrl: 'https://api.xkiro.com/v1',
+  autoCheckUpdates: true,
 };
 
 const defaultWorkspaces: WorkspaceEntry[] = [
@@ -236,6 +237,7 @@ function normalizeSettings(value: unknown): BrowserSettings {
     voodooModel: typeof raw.voodooModel === 'string' && raw.voodooModel.trim() ? raw.voodooModel.trim() : 'qwen/qwen3.8-max:free',
     voodooBaseUrl: typeof raw.voodooBaseUrl === 'string' && raw.voodooBaseUrl.trim() ? raw.voodooBaseUrl.trim() : 'https://api.xkiro.com/v1',
     voodooSttKey: typeof raw.voodooSttKey === 'string' && raw.voodooSttKey.trim() ? raw.voodooSttKey.trim() : undefined,
+    autoCheckUpdates: typeof raw.autoCheckUpdates === 'boolean' ? raw.autoCheckUpdates : true,
   };
 }
 

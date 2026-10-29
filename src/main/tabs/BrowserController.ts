@@ -76,6 +76,9 @@ import type {
   CleanTargetOptions,
   StorageMetrics,
   CleanResult,
+  UpdateAssetInfo,
+  UpdateCheckResult,
+  UpdateDownloadProgress,
 } from '../../shared/types';
 import { BrowserStores, buildStoredSession, defaultBrowsecCountries, defaultReaderSettings } from '../persistence/BrowserStores';
 import { PasswordStore } from '../persistence/PasswordStore';
@@ -83,6 +86,7 @@ import { fillSavedCredential } from '../passwords/PasswordAutofill';
 import { BrowserDataImporter, type ImportedCookie } from '../import/BrowserDataImporter';
 import { VoodooAiService } from '../services/VoodooAiService';
 import { DownloadThumbnailQueue, renderDownloadThumbnail } from '../services/DownloadThumbnailQueue';
+import { UpdateService } from '../services/UpdateService';
 
 const shellPreloadPath = path.resolve(__dirname, '../../preload/shell-preload.js');
 const pagePreloadPath = path.resolve(__dirname, '../../preload/page-preload.js');
@@ -148,6 +152,7 @@ export class BrowserController {
   readonly memoryManager = new MemoryManager();
   readonly vpn = new VpnConfigStore(app.getPath('userData'));
   readonly voodooService = new VoodooAiService();
+  readonly updateService: UpdateService;
   private readonly voodooModelCatalog = new VoodooModelCatalog();
   window?: BaseWindow;
   shellView?: WebContentsView;
@@ -277,6 +282,15 @@ export class BrowserController {
         },
       });
     });
+
+    this.updateService = new UpdateService(
+      (event) => {
+        if (this.disposed) return;
+        this.shellView?.webContents.send('browser:event', event);
+      },
+      () => this.stores.settings.get().autoCheckUpdates !== false,
+    );
+    this.updateService.startAutoCheckTimer();
   }
 
   setListeners(
@@ -6217,7 +6231,27 @@ export class BrowserController {
     }
   }
 
+  async checkForUpdates(manual = false): Promise<UpdateCheckResult> {
+    return this.updateService.checkForUpdates(manual);
+  }
+
+  async downloadUpdate(assetUrl?: string, customFilename?: string): Promise<{ success: boolean; filePath?: string; error?: string }> {
+    return this.updateService.downloadUpdate(assetUrl, customFilename);
+  }
+
+  async openDownloadedUpdate(filePath: string): Promise<boolean> {
+    return this.updateService.openDownloadedUpdate(filePath);
+  }
+
+  getUpdateStatus(): { lastCheck?: UpdateCheckResult; downloadProgress?: UpdateDownloadProgress } {
+    return {
+      lastCheck: this.updateService.getLastCheck(),
+      downloadProgress: this.updateService.getDownloadProgress(),
+    };
+  }
+
   private dispose(): void {
+    this.updateService?.stopAutoCheckTimer();
     this.voodooModelCatalog?.dispose();
     if (this.disposed) return;
     this.persistSession();
