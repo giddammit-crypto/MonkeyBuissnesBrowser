@@ -5129,7 +5129,7 @@ function SettingsPanel({
             <div style={{ flex: 1 }}>
               <strong>soulm8te Browser</strong>
               <p>Ваш цифровой союзник · Detroit: Become Human</p>
-              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.9.4</small>
+              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.9.5</small>
             </div>
             <button
               className="action-button secondary"

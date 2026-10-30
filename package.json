@@ -1,6 +1,6 @@
 {
   "name": "soulm8te",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "description": "soulm8te — Electron browser with private sessions, tab sleeping and native Chromium tabs.",
   "main": "dist/main/main/main.js",
   "author": {

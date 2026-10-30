@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.4-blue?style=for-the-badge" alt="Version 0.9.4" />
+  <img src="https://img.shields.io/badge/version-0.9.5-blue?style=for-the-badge" alt="Version 0.9.5" />
   <img src="https://img.shields.io/badge/Electron-45.0-blueviolet?style=for-the-badge" alt="Electron 45" />
   <img src="https://img.shields.io/badge/React-19-cyan?style=for-the-badge" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-7.0-blue?style=for-the-badge" alt="TypeScript" />
@@ -238,7 +238,7 @@
   - Пункт **«Обновления»** в главном меню браузера (`⋯`).
   - Кнопка **«Проверить обновления»** в разделе «Настройки».
 - **Стильный Cyberpunk интерфейс (Update Modal):**
-  - Сравнение текущей и новой версии (`v0.9.3` → `v0.9.4`).
+  - Сравнение текущей и новой версии (`v0.9.4` → `v0.9.5`).
   - Полный список изменений (Release Notes) прямо с GitHub.
   - Автоматический подбор оптимального пакета под операционную систему:
     - **Linux:** `.deb` для Astra Linux / Ubuntu / Debian или `.AppImage`.

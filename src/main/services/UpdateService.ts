@@ -123,7 +123,7 @@ export class UpdateService {
   }
 
   async checkForUpdates(manual = false): Promise<UpdateCheckResult> {
-    const currentVersion = app?.getVersion ? app.getVersion() : '0.9.4';
+    const currentVersion = app?.getVersion ? app.getVersion() : '0.9.5';
     try {
       const releaseData = await this.fetchLatestRelease();
       const tagName = releaseData.tag_name || '';
@@ -188,7 +188,7 @@ export class UpdateService {
 
   private httpGetJson(urlStr: string): Promise<any> {
     return new Promise((resolve, reject) => {
-      const currentVersion = app?.getVersion ? app.getVersion() : '0.9.4';
+      const currentVersion = app?.getVersion ? app.getVersion() : '0.9.5';
       const options = {
         headers: {
           'User-Agent': `soulm8te-browser/${currentVersion}`,
@@ -318,7 +318,7 @@ export class UpdateService {
     }
 
     const client = parsedUrl.protocol === 'http:' ? http : https;
-    const currentVersion = app?.getVersion ? app.getVersion() : '0.9.4';
+    const currentVersion = app?.getVersion ? app.getVersion() : '0.9.5';
 
     const req = client.get(urlStr, {
       headers: {
