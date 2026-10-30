@@ -182,6 +182,47 @@ describe('BrowserController native view lifecycle', () => {
     expect(controller.window.setFullScreen).toHaveBeenCalledWith(false);
   });
 
+  it('expands tab to full window bounds in HTML fullscreen without changing OS window fullscreen state', () => {
+    const { controller, page, tab } = fixture();
+    controller.window.isFullScreen = () => false;
+    controller.htmlFullscreenTabId = tab.id;
+    controller.applyBounds(tab);
+    expect(page.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 1000, height: 800 });
+    expect(controller.window.setFullScreen).not.toHaveBeenCalled();
+  });
+
+  it('exits HTML fullscreen on Escape without toggling window.setFullScreen', () => {
+    const { controller, page, tab } = fixture();
+    controller.htmlFullscreenTabId = tab.id;
+    page.webContents.executeJavaScript = vi.fn().mockResolvedValue(undefined);
+    controller.refreshViewBounds = vi.fn();
+    controller.notifyFullscreenChange = vi.fn();
+    controller.emitSnapshot = vi.fn();
+
+    let handler: any;
+    controller.installShortcuts({ id: 1, on: (_name: string, listener: any) => { handler = listener; } });
+    const event = { preventDefault: vi.fn() };
+    handler(event, { type: 'keyDown', key: 'Escape' });
+
+    expect(controller.htmlFullscreenTabId).toBeUndefined();
+    expect(controller.window.setFullScreen).not.toHaveBeenCalled();
+    expect(page.webContents.executeJavaScript).toHaveBeenCalled();
+  });
+
+  it('leaveHtmlFullscreen restores state without touching window.setFullScreen', () => {
+    const { controller, tab } = fixture();
+    controller.htmlFullscreenTabId = tab.id;
+    controller.refreshViewBounds = vi.fn();
+    controller.notifyFullscreenChange = vi.fn();
+    controller.emitSnapshot = vi.fn();
+
+    controller.leaveHtmlFullscreen();
+    expect(controller.htmlFullscreenTabId).toBeUndefined();
+    expect(controller.window.setFullScreen).not.toHaveBeenCalled();
+    expect(controller.refreshViewBounds).toHaveBeenCalled();
+    expect(controller.notifyFullscreenChange).toHaveBeenCalledWith(false);
+  });
+
   it('updates tab zoom factor with Chrome zoom steps on tabAction', async () => {
     const { controller, page, tab } = fixture();
     page.webContents.getZoomFactor = vi.fn(() => 1.0);

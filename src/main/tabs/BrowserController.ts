@@ -252,7 +252,6 @@ export class BrowserController {
   private disposed = false;
   private popoverOpen = false;
   private htmlFullscreenTabId?: string;
-  private fullscreenBeforeVideo = false;
   private privateSession?: Electron.Session;
   private privateProxy = '';
   private privateProxyReady: Promise<void> = Promise.resolve();
@@ -3681,18 +3680,14 @@ export class BrowserController {
     });
     contents.on('enter-html-full-screen', () => {
       if (tab.id !== this.activeTabId || !this.window) return;
-      this.fullscreenBeforeVideo = this.window.isFullScreen();
       this.htmlFullscreenTabId = tab.id;
-      this.window.setFullScreen(true);
       this.refreshViewBounds();
-      this.notifyFullscreenChange(true);
+      this.notifyFullscreenChange(Boolean(this.window && !this.window.isDestroyed() && this.window.isFullScreen()));
       if (this.stores) this.emitSnapshot();
     });
     contents.on('leave-html-full-screen', () => {
       if (this.htmlFullscreenTabId === tab.id) {
         this.leaveHtmlFullscreen();
-        this.notifyFullscreenChange(Boolean(this.window && !this.window.isDestroyed() && this.window.isFullScreen()));
-        if (this.stores) this.emitSnapshot();
       }
     });
     contents.on('found-in-page', (_event, result) => { if (tab.id === this.activeTabId) this.eventListener?.({ type: 'find-result', message: `${result.activeMatchOrdinal} / ${result.matches}` }); });
@@ -3913,16 +3908,21 @@ export class BrowserController {
   }
 
   private exitPageFullscreen(): void {
-    if (!this.htmlFullscreenTabId) return;
-    const contents = this.tabs.get(this.htmlFullscreenTabId)?.view?.webContents;
+    const tabId = this.htmlFullscreenTabId;
+    if (!tabId) return;
+    const contents = this.tabs.get(tabId)?.view?.webContents;
     this.leaveHtmlFullscreen();
-    if (contents && !contents.isDestroyed()) void contents.executeJavaScript('if (document.fullscreenElement) document.exitFullscreen();').catch(() => undefined);
+    if (contents && !contents.isDestroyed()) {
+      void contents.executeJavaScript('if (document.fullscreenElement) document.exitFullscreen();').catch(() => undefined);
+    }
   }
 
   private leaveHtmlFullscreen(): void {
+    if (!this.htmlFullscreenTabId) return;
     this.htmlFullscreenTabId = undefined;
-    if (this.window && !this.window.isDestroyed()) this.window.setFullScreen(this.fullscreenBeforeVideo);
     this.refreshViewBounds();
+    this.notifyFullscreenChange(Boolean(this.window && !this.window.isDestroyed() && this.window.isFullScreen()));
+    if (this.stores) this.emitSnapshot();
   }
 
   private handleDownload(item: Electron.DownloadItem, webContents: Electron.WebContents, sourceSession?: Electron.Session): void {
