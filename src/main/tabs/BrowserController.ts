@@ -4691,7 +4691,7 @@ export class BrowserController {
         this.shellView?.webContents.focus();
         this.eventListener?.({ type: 'toggle-click-and-clean' });
       });
-      else if (modifier && key === 'l') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'focus-address' }); });
+      else if ((modifier && key === 'l') || (input.alt && !modifier && !input.shift && (key === 'd' || key === 'в')) || key === 'f6') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'focus-address' }); });
       else if (modifier && input.shift && key === 'a') run(() => {
         this.exitPageFullscreen();
         this.shellView?.webContents.focus();
@@ -4722,12 +4722,14 @@ export class BrowserController {
         const selected = visible[key === '9' ? visible.length - 1 : Number(key) - 1];
         if (selected) this.activateTab(selected.id);
       });
-      else if (modifier && key === 'tab') run(() => {
+      else if ((input.control || modifier) && (key === 'tab' || key === 'pagedown' || key === 'pageup')) run(() => {
         const tabs = [...this.tabs.values()]
           .filter((entry) => entry.workspaceId === this.activeWorkspaceId && entry.isPrivate === tab?.isPrivate)
           .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+        if (tabs.length === 0) return;
         const index = tabs.findIndex((entry) => entry.id === this.activeTabId);
-        const next = tabs[(index + (input.shift ? -1 : 1) + tabs.length) % tabs.length];
+        const isBack = input.shift || key === 'pageup';
+        const next = tabs[(index + (isBack ? -1 : 1) + tabs.length) % tabs.length];
         if (next) this.activateTab(next.id);
       });
       else if (input.alt && key === 'arrowleft' && tab) run(() => { void this.goBack(tab.id); });

@@ -25,6 +25,7 @@ import {
   History,
   Image,
   KeyRound,
+  Layers,
   LoaderCircle,
   LockKeyhole,
   Menu,
@@ -362,6 +363,7 @@ function App(): React.JSX.Element {
   const viewportRef = useRef<HTMLDivElement>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const originalAddressRef = useRef<string>("");
+  const omniboxJustFocusedRef = useRef(false);
   const suggestionsListRef = useRef<HTMLDivElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
   const [optimisticTabId, setOptimisticTabId] = useState<string | null>(null);
@@ -379,6 +381,7 @@ function App(): React.JSX.Element {
   const currentTab = (optimisticTabId ? snapshot?.tabs.find((t) => t.id === optimisticTabId) : null) ?? snapshot?.tabs.find(
     (tab) => tab.id === snapshot.activeTabId,
   );
+  const isPrivate = currentTab?.isPrivate ?? false;
   useEffect(() => setSplitControlsOpen(false), [currentTab?.id, panel]);
   const canDownloadVideo = Boolean(currentTab?.canDownloadMedia);
   const hasActiveDownloads = Boolean(
@@ -403,13 +406,25 @@ function App(): React.JSX.Element {
   const [omniboxQuery, setOmniboxQuery] = useState("");
   const omniboxSuggestions = useMemo(() => {
     if (!editingAddress || !omniboxQuery.trim()) return [];
+    const tabsForOmnibox = snapshot?.tabs
+      ?.filter((t) => t.isPrivate === isPrivate)
+      ?.map((t) => ({
+        id: t.id,
+        title: t.title,
+        url: t.url,
+        favicon: t.favicon,
+        isAudible: t.isAudible,
+        isMuted: t.isMuted,
+      }));
     return getOmniboxSuggestions(omniboxQuery, {
+      tabs: tabsForOmnibox,
+      currentTabId: currentTab?.id,
       history: snapshot?.history,
       bookmarks: snapshot?.bookmarks,
       searchEngineUrl: snapshot?.settings?.searchEngine,
       maxResults: 7,
     });
-  }, [editingAddress, omniboxQuery, snapshot?.history, snapshot?.bookmarks, snapshot?.settings?.searchEngine]);
+  }, [editingAddress, omniboxQuery, snapshot?.tabs, snapshot?.history, snapshot?.bookmarks, snapshot?.settings?.searchEngine, isPrivate, currentTab?.id]);
 
   useEffect(() => {
     if (selectedSuggestionIndex >= 0 && suggestionsListRef.current) {
@@ -459,6 +474,19 @@ function App(): React.JSX.Element {
     },
     [showError],
   );
+  const activateTab = useCallback(
+    (id: string) => {
+      setPanel("home");
+      setOptimisticTabId(id);
+      run(
+        window.browserApi.activateTab(id).catch((error) => {
+          setOptimisticTabId((pending) => (pending === id ? null : pending));
+          throw error;
+        }),
+      );
+    },
+    [run],
+  );
   const refreshPrivacyDashboard = useCallback(async () => {
     setPrivacyDashboardLoading(true);
     setPrivacyDashboardError("");
@@ -500,8 +528,16 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const remove = window.browserApi.onTabEvent((event) => {
       if (event.type === "focus-address") {
-        addressRef.current?.focus();
-        addressRef.current?.select();
+        const focusAndSelect = () => {
+          const input = addressRef.current;
+          if (input) {
+            setEditingAddress(true);
+            input.focus({ preventScroll: true });
+            input.select();
+          }
+        };
+        focusAndSelect();
+        requestAnimationFrame(focusAndSelect);
         return;
       }
       if (event.type === "toggle-task-manager") {
@@ -731,7 +767,6 @@ function App(): React.JSX.Element {
   useEffect(() => {
     void window.browserApi.setPopoverOpen(isPopoverOpen || panel !== "home");
   }, [isPopoverOpen, panel]);
-  const isPrivate = currentTab?.isPrivate ?? false;
   const bookmarked = snapshot?.bookmarks.some(
     (bookmark) => bookmark.url === currentTab?.url,
   ) ?? false;
@@ -910,8 +945,22 @@ function App(): React.JSX.Element {
       } else if (modifier && key === "0") {
         event.preventDefault();
         if (currentTab) action("zoom-reset");
-      } else if ((modifier && key === "l") || key === "f6") {
+      } else if (modifier && (key === "tab" || key === "pagedown" || key === "pageup")) {
         event.preventDefault();
+        if (snapshot) {
+          const visible = snapshot.tabs
+            .filter((entry) => entry.workspaceId === (currentTab?.workspaceId ?? "personal") && entry.isPrivate === isPrivate)
+            .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+          if (visible.length > 0) {
+            const index = visible.findIndex((entry) => entry.id === currentTab?.id);
+            const isBack = event.shiftKey || key === "pageup";
+            const next = visible[(index + (isBack ? -1 : 1) + visible.length) % visible.length];
+            if (next) run(window.browserApi.activateTab(next.id));
+          }
+        }
+      } else if ((modifier && key === "l") || key === "f6" || (event.altKey && !modifier && !event.shiftKey && (key === "d" || key === "в"))) {
+        event.preventDefault();
+        setEditingAddress(true);
         addressRef.current?.focus();
         addressRef.current?.select();
       } else if (modifier && !event.shiftKey && !event.altKey && /^[1-9]$/.test(key) && snapshot) {
@@ -1022,14 +1071,7 @@ function App(): React.JSX.Element {
           setTabSearchOpen((open) => !open);
           setPopover(null);
         }}
-        onActivate={(id) => {
-          setPanel("home");
-          setOptimisticTabId(id);
-          run(window.browserApi.activateTab(id).catch((error) => {
-            setOptimisticTabId((pending) => pending === id ? null : pending);
-            throw error;
-          }));
-        }}
+        onActivate={activateTab}
         onClose={(id) => run(window.browserApi.closeTab(id))}
         onCreate={() => createTab()}
       />
@@ -1086,7 +1128,11 @@ function App(): React.JSX.Element {
               selectedSuggestionIndex < omniboxSuggestions.length
             ) {
               const target = omniboxSuggestions[selectedSuggestionIndex];
-              navigate(target.url);
+              if (target.kind === "tab" && target.tabId) {
+                activateTab(target.tabId);
+              } else {
+                navigate(target.url);
+              }
             } else {
               navigate(address);
             }
@@ -1126,17 +1172,25 @@ function App(): React.JSX.Element {
             onChange={(event) => {
               const val = event.target.value;
               setAddress(val);
-              originalAddressRef.current = val;
               setOmniboxQuery(val);
               setSelectedSuggestionIndex(-1);
             }}
-            onFocus={() => {
+            onFocus={(event) => {
               setEditingAddress(true);
               originalAddressRef.current = address;
               setOmniboxQuery(address);
               setSelectedSuggestionIndex(-1);
+              omniboxJustFocusedRef.current = true;
+              event.currentTarget.select();
+            }}
+            onMouseUp={(event) => {
+              if (omniboxJustFocusedRef.current) {
+                omniboxJustFocusedRef.current = false;
+                event.preventDefault();
+              }
             }}
             onBlur={(event) => {
+              omniboxJustFocusedRef.current = false;
               const related = event.relatedTarget as HTMLElement | null;
               if (related?.closest(".omnibox")) return;
               setTimeout(() => {
@@ -1157,11 +1211,11 @@ function App(): React.JSX.Element {
                       : -1;
                   setSelectedSuggestionIndex(next);
                   if (next === -1) {
-                    setAddress(originalAddressRef.current);
+                    setAddress(omniboxQuery || originalAddressRef.current);
                   } else {
                     const item = omniboxSuggestions[next];
                     const preview =
-                      item.kind === "search" ? originalAddressRef.current : item.url;
+                      item.kind === "search" ? (omniboxQuery || originalAddressRef.current) : item.url;
                     setAddress(preview);
                   }
                   return;
@@ -1175,11 +1229,11 @@ function App(): React.JSX.Element {
                       : selectedSuggestionIndex - 1;
                   setSelectedSuggestionIndex(next);
                   if (next === -1) {
-                    setAddress(originalAddressRef.current);
+                    setAddress(omniboxQuery || originalAddressRef.current);
                   } else {
                     const item = omniboxSuggestions[next];
                     const preview =
-                      item.kind === "search" ? originalAddressRef.current : item.url;
+                      item.kind === "search" ? (omniboxQuery || originalAddressRef.current) : item.url;
                     setAddress(preview);
                   }
                   return;
@@ -1187,11 +1241,16 @@ function App(): React.JSX.Element {
                 if (event.key === "Escape") {
                   event.preventDefault();
                   if (selectedSuggestionIndex !== -1) {
-                    setAddress(originalAddressRef.current);
+                    setAddress(omniboxQuery);
                     setSelectedSuggestionIndex(-1);
                     return;
                   }
-                  setAddress(originalAddressRef.current);
+                  if (address !== originalAddressRef.current) {
+                    setAddress(originalAddressRef.current);
+                    setOmniboxQuery(originalAddressRef.current);
+                    addressRef.current?.select();
+                    return;
+                  }
                   setEditingAddress(false);
                   setSelectedSuggestionIndex(-1);
                   addressRef.current?.blur();
@@ -1204,7 +1263,11 @@ function App(): React.JSX.Element {
                   ) {
                     event.preventDefault();
                     const target = omniboxSuggestions[selectedSuggestionIndex];
-                    navigate(target.url);
+                    if (target.kind === "tab" && target.tabId) {
+                      activateTab(target.tabId);
+                    } else {
+                      navigate(target.url);
+                    }
                     setEditingAddress(false);
                     setSelectedSuggestionIndex(-1);
                     addressRef.current?.blur();
@@ -1213,7 +1276,12 @@ function App(): React.JSX.Element {
                 }
               } else if (event.key === "Escape") {
                 event.preventDefault();
-                setAddress(originalAddressRef.current);
+                if (address !== originalAddressRef.current) {
+                  setAddress(originalAddressRef.current);
+                  setOmniboxQuery(originalAddressRef.current);
+                  addressRef.current?.select();
+                  return;
+                }
                 setEditingAddress(false);
                 setSelectedSuggestionIndex(-1);
                 addressRef.current?.blur();
@@ -1226,6 +1294,24 @@ function App(): React.JSX.Element {
             autoComplete="off"
           />
           <div className="omnibox-tools" role="group" aria-label="Действия со страницей">
+          {editingAddress && address.length > 0 && (
+            <button
+              type="button"
+              className="omnibox-clear-btn"
+              title="Очистить адрес"
+              aria-label="Очистить адрес"
+              tabIndex={-1}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setAddress("");
+                setOmniboxQuery("");
+                setSelectedSuggestionIndex(-1);
+                addressRef.current?.focus();
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
           {siteCredentials.length > 0 && currentTab && !currentTab.isInternal && (
             <button
               type="button"
@@ -1385,13 +1471,30 @@ function App(): React.JSX.Element {
                   className={`omnibox-suggestion-item ${index === selectedSuggestionIndex ? "selected" : ""}`}
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    navigate(item.url);
+                    if (item.kind === "tab" && item.tabId) {
+                      run(window.browserApi.activateTab(item.tabId));
+                    } else {
+                      navigate(item.url);
+                    }
                     setEditingAddress(false);
                     setSelectedSuggestionIndex(-1);
                   }}
                 >
                   <span className="omnibox-suggestion-icon">
-                    {item.kind === "popular" ? (
+                    {item.kind === "tab" ? (
+                      item.favicon ? (
+                        <img
+                          src={item.favicon}
+                          alt=""
+                          className="omnibox-suggestion-favicon"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLElement).style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <Layers size={16} />
+                      )
+                    ) : item.kind === "popular" ? (
                       <Globe2 size={16} />
                     ) : item.kind === "bookmark" ? (
                       <Star size={16} fill="currentColor" />
@@ -1403,7 +1506,25 @@ function App(): React.JSX.Element {
                   </span>
                   <span className="omnibox-suggestion-title">{item.title}</span>
                   <span className="omnibox-suggestion-domain">{item.domain}</span>
-                  <span className={`omnibox-suggestion-badge badge-${item.kind}`}>{item.badge}</span>
+                  {item.kind === "tab" ? (
+                    <button
+                      type="button"
+                      className="omnibox-switch-btn"
+                      title="Переключиться на эту вкладку"
+                      tabIndex={-1}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        if (item.tabId) run(window.browserApi.activateTab(item.tabId));
+                        setEditingAddress(false);
+                        setSelectedSuggestionIndex(-1);
+                      }}
+                    >
+                      Переключиться
+                    </button>
+                  ) : (
+                    <span className={`omnibox-suggestion-badge badge-${item.kind}`}>{item.badge}</span>
+                  )}
                 </div>
               ))}
             </div>
@@ -2603,6 +2724,18 @@ function TabStrip({
               }
             }}
             onContextMenu={(event) => { event.preventDefault(); void window.browserApi.showTabMenu(tab.id).catch(console.error); }}
+            onMouseDown={(event) => {
+              if (event.button === 1) {
+                event.preventDefault();
+              }
+            }}
+            onAuxClick={(event) => {
+              if (event.button === 1) {
+                event.preventDefault();
+                event.stopPropagation();
+                onClose(tab.id);
+              }
+            }}
             className={`tab-container ${tab.id === snapshot.activeTabId ? "active" : ""} ${tab.isPrivate ? "private-tab" : ""} ${tab.isPinned ? "pinned-tab" : ""} ${tab.lifecycle === "hibernated" ? "sleeping-tab" : ""} ${draggingId === tab.id ? "dragging-tab" : ""} ${dragOver?.id === tab.id ? (dragOver.side === "left" ? "drag-over-left" : "drag-over-right") : ""}`}
           >
             <button
@@ -5129,7 +5262,7 @@ function SettingsPanel({
             <div style={{ flex: 1 }}>
               <strong>soulm8te Browser</strong>
               <p>Ваш цифровой союзник · Detroit: Become Human</p>
-              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.9.5</small>
+              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.9.6</small>
             </div>
             <button
               className="action-button secondary"

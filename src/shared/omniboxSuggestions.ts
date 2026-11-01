@@ -1,7 +1,7 @@
 import type { BookmarkEntry, HistoryEntry } from './types';
 import { isSafeWebUrl } from './omnibox';
 
-export type SuggestionKind = 'popular' | 'bookmark' | 'history' | 'search';
+export type SuggestionKind = 'tab' | 'popular' | 'bookmark' | 'history' | 'search';
 
 export interface OmniboxSuggestion {
   id: string;
@@ -10,6 +10,19 @@ export interface OmniboxSuggestion {
   url: string;
   domain: string;
   badge: string;
+  tabId?: string;
+  favicon?: string;
+  isAudible?: boolean;
+  isMuted?: boolean;
+}
+
+export interface OmniboxTabItem {
+  id: string;
+  title?: string;
+  url: string;
+  favicon?: string;
+  isAudible?: boolean;
+  isMuted?: boolean;
 }
 
 interface PopularSiteDef {
@@ -63,14 +76,16 @@ function extractDomain(url: string): string {
 export function getOmniboxSuggestions(
   rawInput: string,
   options?: {
+    tabs?: OmniboxTabItem[];
+    currentTabId?: string;
     history?: HistoryEntry[];
     bookmarks?: BookmarkEntry[];
     searchEngineUrl?: string;
     maxResults?: number;
   }
 ): OmniboxSuggestion[] {
-  const query = rawInput.trim();
-  if (!query) return [];
+  const rawTrimmed = rawInput.trim();
+  if (!rawTrimmed) return [];
 
   // Keep the contract bounded even when a caller passes an invalid limit. A
   // usable omnibox always retains one search fallback at minimum.
@@ -78,18 +93,91 @@ export function getOmniboxSuggestions(
   const maxResults = Number.isFinite(requestedMaxResults)
     ? Math.max(1, Math.floor(requestedMaxResults))
     : 7;
+
+  // Check for Chromium tab-search prefix: '%'
+  const isTabSearchPrefix = rawTrimmed.startsWith('%');
+  const query = isTabSearchPrefix ? rawTrimmed.slice(1).trim() : rawTrimmed;
+
+  // In non-tab mode, query cannot be empty because rawTrimmed was checked.
+  // In tab mode ('%'), query can be empty, which lists all open tabs.
   const qLower = query.toLowerCase().replace(/^(?:https?:\/\/)?(?:www\.)?/, '');
   const configuredSearchBase = options?.searchEngineUrl || 'https://yandex.ru/search/?text=';
   // Suggestions are rendered as navigation targets. Do not let a malformed or
   // javascript: search-engine setting turn a suggestion into script execution.
   const searchBase = isSafeWebUrl(configuredSearchBase) ? configuredSearchBase : 'https://yandex.ru/search/?text=';
-  const searchUrl = `${searchBase}${encodeURIComponent(query)}`;
+  const searchUrl = `${searchBase}${encodeURIComponent(query || rawTrimmed)}`;
   const searchDomain = extractDomain(searchBase);
 
   const seenUrls = new Set<string>();
   const suggestions: OmniboxSuggestion[] = [];
 
-  // 1. Match popular sites
+  // 1. Match Open Tabs (highest ranking priority)
+  if (options?.tabs && options.tabs.length > 0) {
+    const scoredTabs: Array<{ tab: OmniboxTabItem; score: number }> = [];
+
+    for (const tab of options.tabs) {
+      if (!tab.url) continue;
+      const tabTitle = (tab.title || '').toLowerCase();
+      const tabUrl = tab.url.toLowerCase();
+      const tabDomain = extractDomain(tab.url).toLowerCase();
+
+      let score = 0;
+      if (isTabSearchPrefix && !qLower) {
+        score = 100;
+      } else if (qLower) {
+        if (tabDomain === qLower) {
+          score = 120;
+        } else if (tabDomain.startsWith(qLower)) {
+          score = 110;
+        } else if (tabTitle.startsWith(qLower)) {
+          score = 105;
+        } else if (tabDomain.includes(qLower)) {
+          score = 95;
+        } else if (tabTitle.includes(qLower)) {
+          score = 90;
+        } else if (tabUrl.includes(qLower)) {
+          score = 85;
+        }
+      }
+
+      if (score > 0) {
+        if (options?.currentTabId && tab.id === options.currentTabId) {
+          score = Math.max(1, score - 35);
+        }
+        scoredTabs.push({ tab, score });
+      }
+    }
+
+    scoredTabs.sort((a, b) => b.score - a.score);
+
+    const tabLimit = isTabSearchPrefix ? maxResults : maxResults - 1;
+    for (const { tab } of scoredTabs) {
+      if (suggestions.length >= tabLimit) break;
+      const norm = tab.url.toLowerCase().replace(/\/$/, '');
+      if (!seenUrls.has(norm)) {
+        seenUrls.add(norm);
+        suggestions.push({
+          id: `tab-${tab.id}`,
+          kind: 'tab',
+          title: tab.title || extractDomain(tab.url),
+          url: tab.url,
+          domain: extractDomain(tab.url),
+          badge: 'Вкладка',
+          tabId: tab.id,
+          favicon: tab.favicon,
+          isAudible: tab.isAudible,
+          isMuted: tab.isMuted,
+        });
+      }
+    }
+  }
+
+  // If user explicitly entered tab search mode via '%', return only tab suggestions
+  if (isTabSearchPrefix) {
+    return suggestions.slice(0, maxResults);
+  }
+
+  // 2. Match popular sites
   const scoredSites: Array<{ site: PopularSiteDef; score: number }> = [];
   for (const site of POPULAR_SITES) {
     const domain = site.domain.toLowerCase();

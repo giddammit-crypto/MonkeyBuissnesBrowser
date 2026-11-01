@@ -8,7 +8,7 @@ import { BrowserController } from '../../src/main/tabs/BrowserController';
 
 function fixture() {
   const view = () => ({
-    webContents: { isDestroyed: () => false, setBackgroundThrottling: vi.fn(), send: vi.fn(), focus: vi.fn() },
+    webContents: { isDestroyed: () => false, setBackgroundThrottling: vi.fn(), send: vi.fn(), focus: vi.fn(), setAudioMuted: vi.fn() },
     setBounds: vi.fn(), setVisible: vi.fn(),
   });
   const shell = view();
@@ -286,6 +286,75 @@ describe('BrowserController native view lifecycle', () => {
     // 4. neverSavePasswordForOrigin
     await controller.neverSavePasswordForOrigin('https://bank.com');
     expect(controller.neverSaveOrigins.has('https://bank.com')).toBe(true);
+  });
+
+  it('dispatches focus-address event on Alt+D, F6, and Ctrl+L shortcuts', () => {
+    const { controller, shell } = fixture();
+    let handler: any;
+    controller.exitPageFullscreen = vi.fn();
+    const eventListener = vi.fn();
+    controller.eventListener = eventListener;
+    controller.installShortcuts({ id: 1, on: (_name: string, listener: any) => { handler = listener; } });
+    const event = { preventDefault: vi.fn() };
+
+    // Alt+D (Chromium address focus shortcut)
+    handler(event, { type: 'keyDown', key: 'd', alt: true, control: false, meta: false, shift: false });
+    expect(controller.exitPageFullscreen).toHaveBeenCalledTimes(1);
+    expect(shell.webContents.focus).toHaveBeenCalled();
+    expect(eventListener).toHaveBeenCalledWith({ type: 'focus-address' });
+
+    // F6 (Chromium address focus shortcut)
+    handler(event, { type: 'keyDown', key: 'F6', alt: false, control: false, meta: false, shift: false });
+    expect(controller.exitPageFullscreen).toHaveBeenCalledTimes(2);
+    expect(eventListener).toHaveBeenCalledWith({ type: 'focus-address' });
+
+    // Ctrl+L (Universal Chromium address focus shortcut)
+    const modifierKey = process.platform === 'darwin' ? { meta: true, control: false } : { control: true, meta: false };
+    handler(event, { type: 'keyDown', key: 'l', alt: false, shift: false, ...modifierKey });
+    expect(controller.exitPageFullscreen).toHaveBeenCalledTimes(3);
+    expect(eventListener).toHaveBeenCalledWith({ type: 'focus-address' });
+  });
+
+  it('navigates across tabs on Ctrl+1..9 shortcuts in installShortcuts', () => {
+    const { controller } = fixture();
+    const tab1 = { id: 'tab-1', workspaceId: 'personal', isPrivate: false, isPinned: false };
+    const tab2 = { id: 'tab-2', workspaceId: 'personal', isPrivate: false, isPinned: true };
+    const tab3 = { id: 'tab-3', workspaceId: 'personal', isPrivate: false, isPinned: false };
+    controller.tabs = new Map([
+      ['tab-1', tab1],
+      ['tab-2', tab2],
+      ['tab-3', tab3],
+    ]);
+    controller.activeTabId = 'tab-1';
+    controller.activateTab = vi.fn();
+
+    let handler: any;
+    controller.installShortcuts({ id: 1, on: (_name: string, listener: any) => { handler = listener; } });
+    const event = { preventDefault: vi.fn() };
+    const modifierKey = process.platform === 'darwin' ? { meta: true, control: false } : { control: true, meta: false };
+
+    // Pinned tab-2 comes first in order (index 0 for key '1')
+    handler(event, { type: 'keyDown', key: '1', alt: false, shift: false, ...modifierKey });
+    expect(controller.activateTab).toHaveBeenCalledWith('tab-2');
+
+    // Ctrl+9 always jumps to the last visible tab (tab-3)
+    handler(event, { type: 'keyDown', key: '9', alt: false, shift: false, ...modifierKey });
+    expect(controller.activateTab).toHaveBeenCalledWith('tab-3');
+  });
+
+  it('toggles tab audio mute state and sets audio muted on webContents', async () => {
+    const { controller, page, tab } = fixture();
+    controller.emitSnapshot = vi.fn();
+
+    expect(tab.isMuted).toBeFalsy();
+    await controller.tabAction(tab.id, 'mute');
+    expect(tab.isMuted).toBe(true);
+    expect(page.webContents.setAudioMuted).toHaveBeenCalledWith(true);
+    expect(controller.emitSnapshot).toHaveBeenCalled();
+
+    await controller.tabAction(tab.id, 'mute');
+    expect(tab.isMuted).toBe(false);
+    expect(page.webContents.setAudioMuted).toHaveBeenCalledWith(false);
   });
 });
 
