@@ -1294,16 +1294,19 @@ function App(): React.JSX.Element {
             autoComplete="off"
           />
           <div className="omnibox-tools" role="group" aria-label="Действия со страницей">
-          {editingAddress && address.length > 0 && (
+          {address.length > 0 && (
             <button
               type="button"
               className="omnibox-clear-btn"
-              title="Очистить адрес"
-              aria-label="Очистить адрес"
+              title="Очистить адресную строку"
+              aria-label="Очистить адресную строку"
               tabIndex={-1}
               onMouseDown={(e) => {
                 e.preventDefault();
+              }}
+              onClick={() => {
                 setAddress("");
+                originalAddressRef.current = "";
                 setOmniboxQuery("");
                 setSelectedSuggestionIndex(-1);
                 addressRef.current?.focus();
@@ -1472,7 +1475,7 @@ function App(): React.JSX.Element {
                   onMouseDown={(e) => {
                     e.preventDefault();
                     if (item.kind === "tab" && item.tabId) {
-                      run(window.browserApi.activateTab(item.tabId));
+                      activateTab(item.tabId);
                     } else {
                       navigate(item.url);
                     }
@@ -1515,7 +1518,7 @@ function App(): React.JSX.Element {
                       onMouseDown={(e) => {
                         e.stopPropagation();
                         e.preventDefault();
-                        if (item.tabId) run(window.browserApi.activateTab(item.tabId));
+                        if (item.tabId) activateTab(item.tabId);
                         setEditingAddress(false);
                         setSelectedSuggestionIndex(-1);
                       }}
