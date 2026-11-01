@@ -2,9 +2,44 @@ import type { NavigationIntent } from './types';
 
 const SEARCH_URL = 'https://yandex.ru/search/?text=';
 
+export const SEARCH_ENGINES: Record<string, string> = {
+  g: 'https://www.google.com/search?q=',
+  google: 'https://www.google.com/search?q=',
+  y: 'https://yandex.ru/search/?text=',
+  ya: 'https://yandex.ru/search/?text=',
+  yandex: 'https://yandex.ru/search/?text=',
+  d: 'https://duckduckgo.com/?q=',
+  ddg: 'https://duckduckgo.com/?q=',
+};
+
 export function parseOmniboxInput(rawInput: string, searchUrl = SEARCH_URL): NavigationIntent {
   const input = rawInput.trim();
   if (!input) return { kind: 'invalid', reason: 'Введите адрес или поисковый запрос.' };
+
+  // Support internal browser schemes
+  if (/^(browser|chrome|about):/i.test(input)) {
+    const lower = input.toLowerCase();
+    if (lower === 'browser://newtab' || lower === 'chrome://newtab' || lower === 'about:blank') {
+      return { kind: 'url', url: lower === 'chrome://newtab' ? 'browser://newtab' : input };
+    }
+  }
+
+  // Force search prefix '?'
+  if (input.startsWith('?') && input.length > 1) {
+    const query = input.slice(1).trim();
+    const safeSearchUrl = isSafeWebUrl(searchUrl) ? searchUrl : SEARCH_URL;
+    return { kind: 'search', url: `${safeSearchUrl}${encodeURIComponent(query)}` };
+  }
+
+  // Search engine keyword prefixes: "g query", "y query", "ddg query"
+  const keywordMatch = input.match(/^([a-z]{1,6})\s+(.+)$/i);
+  if (keywordMatch) {
+    const enginePrefix = keywordMatch[1].toLowerCase();
+    const query = keywordMatch[2].trim();
+    if (SEARCH_ENGINES[enginePrefix]) {
+      return { kind: 'search', url: `${SEARCH_ENGINES[enginePrefix]}${encodeURIComponent(query)}` };
+    }
+  }
 
   // Detect host:port before URL(), which interprets localhost:4174 as a scheme.
   if (/^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?(?:[/?#].*)?$/i.test(input)) {

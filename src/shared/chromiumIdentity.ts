@@ -11,8 +11,9 @@ export interface ChromiumIdentity {
   fullVersionList: Array<{ brand: string; version: string }>;
 }
 
-export const CHROME_MAJOR_VERSION = '134';
-export const CHROME_FULL_VERSION = '134.0.0.0';
+const detectedChrome = (globalThis as { process?: { versions?: { chrome?: string } } }).process?.versions?.chrome;
+export const CHROME_MAJOR_VERSION = detectedChrome ? detectedChrome.split('.')[0] : '134';
+export const CHROME_FULL_VERSION = detectedChrome || `${CHROME_MAJOR_VERSION}.0.0.0`;
 
 export function getChromiumIdentity(platform?: string): ChromiumIdentity {
   const nodePlatform = (globalThis as { process?: { platform?: string } }).process?.platform;

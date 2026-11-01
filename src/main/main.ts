@@ -152,6 +152,14 @@ function registerIpc(): void {
   ipcMain.handle('page:get-autofill-credentials', (event, data: { origin: string; hostname?: string }) => {
     const c = BrowserController.findControllerForPage(event.sender.id);
     if (event.senderFrame !== event.sender.mainFrame || !c) return [];
+    if (event.senderFrame?.url) {
+      try {
+        const frameOrigin = new URL(event.senderFrame.url).origin;
+        if (frameOrigin !== data?.origin) return [];
+      } catch {
+        return [];
+      }
+    }
     return c.getPageAutofillCredentials(event.sender.id, data);
   });
   ipcMain.on('page:form-state', (event, dirty: unknown) => {
@@ -471,6 +479,12 @@ app.on('child-process-gone', (_event, details) => {
       void c.samplePerformance();
     }
   }
+});
+
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-attach-webview', (e) => {
+    e.preventDefault();
+  });
 });
 
 app.on('window-all-closed', () => {

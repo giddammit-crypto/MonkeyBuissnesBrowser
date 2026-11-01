@@ -54,13 +54,17 @@ export function GoogleAccountPopover({
   const handleAddAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!addEmail || !addEmail.includes("@")) return;
-    await window.browserApi.addGoogleAccount(
-      addEmail.trim(),
-      addName.trim() || undefined,
-    );
-    setAddEmail("");
-    setAddName("");
-    setShowAddForm(false);
+    try {
+      await window.browserApi.addGoogleAccount(
+        addEmail.trim(),
+        addName.trim() || undefined,
+      );
+      setAddEmail("");
+      setAddName("");
+      setShowAddForm(false);
+    } catch (err) {
+      console.error("Не удалось добавить аккаунт Google:", err);
+    }
   };
 
   return (
@@ -138,7 +142,7 @@ export function GoogleAccountPopover({
               key={acc.id}
               className={`google-account-item ${acc.id === activeAccount?.id ? "active" : ""}`}
               onClick={() => {
-                void window.browserApi.switchGoogleAccount(acc.id);
+                void window.browserApi.switchGoogleAccount(acc.id).catch(console.error);
               }}
             >
               <div className="google-account-item-left">
@@ -165,7 +169,7 @@ export function GoogleAccountPopover({
                 title="Удалить аккаунт"
                 onClick={(e) => {
                   e.stopPropagation();
-                  void window.browserApi.removeGoogleAccount(acc.id);
+                  void window.browserApi.removeGoogleAccount(acc.id).catch(console.error);
                 }}
               >
                 <Trash2 size={14} />

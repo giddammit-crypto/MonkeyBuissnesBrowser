@@ -765,7 +765,7 @@ function App(): React.JSX.Element {
     || findOpen;
   const hasActiveWebPage = panel === "home" && Boolean(currentTab && !currentTab.isInternal && currentTab.lifecycle !== "crashed");
   useEffect(() => {
-    void window.browserApi.setPopoverOpen(isPopoverOpen || panel !== "home");
+    void window.browserApi.setPopoverOpen(isPopoverOpen || panel !== "home").catch(() => {});
   }, [isPopoverOpen, panel]);
   const bookmarked = snapshot?.bookmarks.some(
     (bookmark) => bookmark.url === currentTab?.url,
@@ -884,56 +884,65 @@ function App(): React.JSX.Element {
         (activeElement instanceof HTMLElement && activeElement.isContentEditable);
 
       // Google Chrome keyboard shortcuts
+      const code = event.code || "";
+      const isKey = (latinKey: string, keyCode: string, cyrillicChar?: string): boolean => {
+        return key === latinKey || code === keyCode || (cyrillicChar ? key === cyrillicChar : false);
+      };
+
       if (modifier && event.shiftKey && (key === "delete" || key === "del" || key === "backspace")) {
         event.preventDefault();
         setClickCleanOpen((val) => !val);
         setPopover(null);
         return;
-      } else if (modifier && event.shiftKey && key === "v" && !isInputFocused) {
+      } else if (modifier && event.shiftKey && isKey("v", "KeyV", "м") && !isInputFocused) {
         event.preventDefault();
         const next = !voodooOpen;
         setVoodooOpen(next);
-        void window.browserApi.setVoodooOpen(next);
+        void window.browserApi.setVoodooOpen(next).catch(() => {});
         return;
-      } else if (modifier && event.shiftKey && (key === "n" || key === "p")) {
+      } else if (modifier && event.shiftKey && (isKey("n", "KeyN", "т") || isKey("p", "KeyP", "з"))) {
         event.preventDefault();
         createTab(true);
-      } else if (modifier && !event.shiftKey && key === "p") {
+      } else if (modifier && !event.shiftKey && isKey("p", "KeyP", "з")) {
         event.preventDefault();
         action("print");
-      } else if (modifier && event.shiftKey && key === "t") {
+      } else if (modifier && event.shiftKey && isKey("t", "KeyT", "е")) {
         event.preventDefault();
         setPopover(null);
         run(window.browserApi.reopenClosedTab());
-      } else if (modifier && key === "t") {
+      } else if (modifier && isKey("t", "KeyT", "е")) {
         event.preventDefault();
         createTab();
-      } else if (modifier && key === "w") {
+      } else if (modifier && isKey("w", "KeyW", "ц")) {
         event.preventDefault();
         if (currentTab) run(window.browserApi.closeTab(currentTab.id));
-      } else if (modifier && key === "h") {
+      } else if (modifier && isKey("h", "KeyH", "р")) {
         event.preventDefault();
         openPanel("history");
-      } else if (modifier && key === "j") {
+      } else if (modifier && isKey("j", "KeyJ", "о")) {
         event.preventDefault();
         openPanel("downloads");
-      } else if (modifier && key === "d" && !isInputFocused) {
+      } else if (modifier && isKey("d", "KeyD", "в") && !isInputFocused) {
         event.preventDefault();
         if (currentTab) run(window.browserApi.toggleBookmark(currentTab.id));
-      } else if (modifier && key === "f" && !isInputFocused) {
+      } else if (modifier && isKey("f", "KeyF", "а") && !isInputFocused) {
         event.preventDefault();
         setFindOpen(true);
         setPanel("home");
         setPopover(null);
-      } else if ((modifier && event.altKey && key === "r") || key === "f9") {
+        setTimeout(() => {
+          findRef.current?.focus();
+          findRef.current?.select();
+        }, 10);
+      } else if ((modifier && event.altKey && isKey("r", "KeyR", "к")) || key === "f9") {
         event.preventDefault();
         if (currentTab && !currentTab.isInternal) {
           run(window.browserApi.toggleReaderMode(currentTab.id));
         }
-      } else if (modifier && event.altKey && key === "n") {
+      } else if (modifier && event.altKey && isKey("n", "KeyN", "т")) {
         event.preventDefault();
         setNotesDrawerOpen((val) => !val);
-      } else if ((modifier && !event.altKey && key === "r") || key === "f5") {
+      } else if ((modifier && !event.altKey && isKey("r", "KeyR", "к")) || key === "f5") {
         event.preventDefault();
         if (currentTab) run(window.browserApi.reload(currentTab.id));
       } else if (modifier && (key === "+" || key === "=")) {
@@ -958,7 +967,7 @@ function App(): React.JSX.Element {
             if (next) run(window.browserApi.activateTab(next.id));
           }
         }
-      } else if ((modifier && key === "l") || key === "f6" || (event.altKey && !modifier && !event.shiftKey && (key === "d" || key === "в"))) {
+      } else if ((modifier && isKey("l", "KeyL", "д")) || key === "f6" || (event.altKey && !modifier && !event.shiftKey && (key === "d" || key === "в" || code === "KeyD"))) {
         event.preventDefault();
         setEditingAddress(true);
         addressRef.current?.focus();
@@ -1147,15 +1156,20 @@ function App(): React.JSX.Element {
               <span>Инкогнито</span>
             </span>
           )}
-          <span
-            className="omnibox-leading"
+          <button
+            type="button"
+            className="omnibox-leading omnibox-security-button"
             title={
               isPrivate
-                ? "Приватная вкладка"
+                ? "Приватная вкладка · Сведения о защите"
                 : currentTab?.url.startsWith("https:")
-                  ? "Соединение HTTPS"
-                  : "Адрес страницы"
+                  ? "Безопасное соединение HTTPS · Сведения о сайте и сертификате"
+                  : "Сведения о сайте и защите"
             }
+            aria-label="Сведения о сайте и защите"
+            onClick={() => {
+              setPopover((val) => (val === "protection" ? null : "protection"));
+            }}
           >
             {isPrivate ? (
               <Shield size={16} />
@@ -1164,7 +1178,7 @@ function App(): React.JSX.Element {
             ) : (
               <Search size={17} />
             )}
-          </span>
+          </button>
           <input
             ref={addressRef}
             data-omnibox
@@ -1245,12 +1259,7 @@ function App(): React.JSX.Element {
                     setSelectedSuggestionIndex(-1);
                     return;
                   }
-                  if (address !== originalAddressRef.current) {
-                    setAddress(originalAddressRef.current);
-                    setOmniboxQuery(originalAddressRef.current);
-                    addressRef.current?.select();
-                    return;
-                  }
+                  setAddress(originalAddressRef.current);
                   setEditingAddress(false);
                   setSelectedSuggestionIndex(-1);
                   addressRef.current?.blur();
@@ -1276,12 +1285,7 @@ function App(): React.JSX.Element {
                 }
               } else if (event.key === "Escape") {
                 event.preventDefault();
-                if (address !== originalAddressRef.current) {
-                  setAddress(originalAddressRef.current);
-                  setOmniboxQuery(originalAddressRef.current);
-                  addressRef.current?.select();
-                  return;
-                }
+                setAddress(originalAddressRef.current);
                 setEditingAddress(false);
                 setSelectedSuggestionIndex(-1);
                 addressRef.current?.blur();
@@ -1640,7 +1644,7 @@ function App(): React.JSX.Element {
               onClick={() => {
                 const next = !voodooOpen;
                 setVoodooOpen(next);
-                void window.browserApi.setVoodooOpen(next);
+                void window.browserApi.setVoodooOpen(next).catch(() => {});
               }}
             >
               <img src={voodooAvatar} alt="Вуду" className="voodoo-toolbar-avatar" />
@@ -1782,7 +1786,7 @@ function App(): React.JSX.Element {
               detail="Ctrl+Shift+V"
               onClick={() => {
                 setVoodooOpen(true);
-                void window.browserApi.setVoodooOpen(true);
+                void window.browserApi.setVoodooOpen(true).catch(() => {});
                 setPopover(null);
               }}
             />
@@ -2067,6 +2071,12 @@ function App(): React.JSX.Element {
                 if (text)
                   run(window.browserApi.findInPage(currentTab.id, text));
                 else run(window.browserApi.stopFindInPage(currentTab.id));
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                find(!event.shiftKey);
               }
             }}
             placeholder="Найти на странице"
@@ -2533,6 +2543,7 @@ function TabStrip({
   onClose: (id: string) => void;
   onCreate: () => void;
 }): React.JSX.Element {
+  const stripRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const dragHandledRef = useRef(false);
   const dragStartPosRef = useRef({ screenX: 0, screenY: 0, clientX: 0, clientY: 0 });
@@ -2549,6 +2560,7 @@ function TabStrip({
   const dynamicActiveTabWidth = unpinnedCount <= 10 ? 240 : Math.max(160, Math.round(240 - (unpinnedCount - 10) * 8.5));
   useEffect(() => {
     const list = listRef.current;
+    const strip = stripRef.current;
     if (!list) return;
     const update = () => {
       const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
@@ -2568,19 +2580,22 @@ function TabStrip({
     observer.observe(list);
     list.addEventListener("scroll", update, { passive: true });
     const scrollWithWheel = (event: WheelEvent) => {
-      if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY) ||
-          list.scrollWidth <= list.clientWidth) return;
+      if (event.ctrlKey) return;
+      if (list.scrollWidth <= list.clientWidth) return;
+      const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+      if (delta === 0) return;
       event.preventDefault();
-      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 24
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 32
         : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? list.clientWidth : 1;
-      list.scrollLeft += event.deltaY * unit;
+      list.scrollLeft += delta * unit;
     };
-    list.addEventListener("wheel", scrollWithWheel, { passive: false });
+    const targetElement = strip || list;
+    targetElement.addEventListener("wheel", scrollWithWheel, { passive: false });
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       list.removeEventListener("scroll", update);
-      list.removeEventListener("wheel", scrollWithWheel);
+      targetElement.removeEventListener("wheel", scrollWithWheel);
     };
   }, [snapshot.activeTabId, tabs.length]);
   useEffect(() => {
@@ -2610,7 +2625,7 @@ function TabStrip({
       [next]?.focus();
   };
   return (
-    <div className="tab-strip">
+    <div className="tab-strip" ref={stripRef}>
       {hasOverflow && (
         <button
           className="tab-scroll-button"
@@ -2784,19 +2799,24 @@ function TabStrip({
                   className={`tab-audio-button ${tab.isMuted ? "muted" : "audible"}`}
                   title={tab.isMuted ? "Включить звук на вкладке" : "Отключить звук на вкладке"}
                   aria-label={tab.isMuted ? "Включить звук" : "Отключить звук"}
+                  onMouseDown={(event) => {
+                    event.stopPropagation();
+                    event.preventDefault();
+                  }}
+                  onAuxClick={(event) => {
+                    event.stopPropagation();
+                    event.preventDefault();
+                  }}
                   onClick={(event) => {
                     event.stopPropagation();
+                    event.preventDefault();
                     void window.browserApi.tabAction(tab.id, "mute").catch(console.error);
                   }}
                 >
                   {tab.isMuted ? (
-                    <VolumeX size={13} />
+                    <VolumeX size={13} className="tab-audio-icon muted" />
                   ) : (
-                    <div className="tab-equalizer" aria-hidden="true" title="Воспроизводится звук">
-                      <span className="tab-equalizer-bar" />
-                      <span className="tab-equalizer-bar" />
-                      <span className="tab-equalizer-bar" />
-                    </div>
+                    <Volume2 size={13} className="tab-audio-icon audible" />
                   )}
                 </button>
               )}
@@ -3587,7 +3607,7 @@ function DownloadsPanel({
               className="google-btn-primary"
               style={{ width: "auto", padding: "0 14px", height: "32px", fontSize: "12px" }}
               onClick={() => {
-                void window.browserApi.downloadMediaUrl(currentTabUrl, undefined, false);
+                void window.browserApi.downloadMediaUrl(currentTabUrl, undefined, false).catch(console.error);
               }}
             >
               <Download size={14} />
@@ -3597,7 +3617,7 @@ function DownloadsPanel({
               className="google-btn-secondary"
               style={{ width: "auto", padding: "0 12px", height: "32px", fontSize: "12px" }}
               onClick={() => {
-                void window.browserApi.downloadMediaUrl(currentTabUrl, undefined, true);
+                void window.browserApi.downloadMediaUrl(currentTabUrl, undefined, true).catch(console.error);
               }}
             >
               <Music2 size={14} />
@@ -5265,7 +5285,7 @@ function SettingsPanel({
             <div style={{ flex: 1 }}>
               <strong>soulm8te Browser</strong>
               <p>Ваш цифровой союзник · Detroit: Become Human</p>
-              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.9.6</small>
+              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.9.7</small>
             </div>
             <button
               className="action-button secondary"

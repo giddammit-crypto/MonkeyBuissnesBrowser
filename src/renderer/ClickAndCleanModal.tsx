@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Broom,
@@ -204,17 +204,20 @@ export const ClickAndCleanModal: React.FC<ClickAndCleanModalProps> = ({
     void fetchMetrics();
   }, [fetchMetrics]);
 
+  const isCleaningRef = useRef(isCleaning);
+  isCleaningRef.current = isCleaning;
+
   // Handle escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !isCleaning) {
+      if (e.key === "Escape" && !isCleaningRef.current) {
         e.preventDefault();
         onDismiss();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onDismiss, isCleaning]);
+  }, [onDismiss]);
 
   // Preset selector
   const handleSelectPreset = (presetId: CleanPresetId) => {

@@ -51,12 +51,12 @@
   --surface-subtle: #eff2f5;
   --chrome: #e9edf1;
   --text: #20252b;
-  --text-secondary: #58636f;
-  --text-muted: #68727e;
+  --text-secondary: #475569;
+  --text-muted: #3e4753;
   --border: #e3e7ec;
   --border-strong: #c8d0d9;
-  --accent: #35678f;
-  --signal: #8cbce8;
+  --accent: #245279;
+  --signal: #0b63b5;
   --accent-soft: #e7f0f8;
   --accent-contrast: #ffffff;
   --warm: #c9ab90;
@@ -593,9 +593,6 @@ select {
   font-size: 9px;
   color: var(--text-muted);
 }
-.pinned-tab {
-  flex-basis: 180px;
-}
 .toolbar {
   position: absolute;
   top: 88px;
@@ -624,6 +621,17 @@ select {
   border-radius: 8px;
   flex-shrink: 0;
   color: var(--text-secondary);
+  transition: background-color 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+              color 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.12s ease;
+}
+.icon-button:active:not(:disabled) {
+  transform: scale(0.92);
+}
+.tab-scroll-button:disabled {
+  opacity: 0.28;
+  pointer-events: none;
+  cursor: default;
 }
 .icon-button:hover:not(:disabled) {
   background: var(--surface-subtle);
@@ -965,12 +973,16 @@ select {
   letter-spacing: 0.3px;
 }
 .omnibox-suggestion-badge.badge-tab {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
+  background: rgba(0, 210, 255, 0.15);
+  color: #00d2ff;
+  border: 1px solid rgba(0, 210, 255, 0.3);
+  box-shadow: 0 0 8px rgba(0, 210, 255, 0.2);
 }
 :root[data-theme="light"] .omnibox-suggestion-badge.badge-tab {
-  background: rgba(5, 150, 105, 0.12);
-  color: #047857;
+  background: rgba(2, 132, 199, 0.12);
+  color: #0284c7;
+  border: 1px solid rgba(2, 132, 199, 0.25);
+  box-shadow: none;
 }
 .omnibox-suggestion-badge.badge-popular {
   background: rgba(59, 130, 246, 0.15);
@@ -1010,7 +1022,7 @@ select {
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 50%;
+  border-radius: 6px;
   border: none;
   background: transparent;
   color: var(--text-muted);
@@ -1021,36 +1033,68 @@ select {
 .omnibox-clear-btn:hover {
   background: var(--surface-subtle);
   color: var(--text);
+  box-shadow: 0 0 8px rgba(0, 210, 255, 0.25);
+}
+.omnibox-clear-btn:active {
+  transform: scale(0.92);
+}
+.omnibox.omnibox-private .omnibox-clear-btn {
+  color: #9d8ab8;
+}
+.omnibox.omnibox-private .omnibox-clear-btn:hover {
+  background: rgba(168, 85, 247, 0.2);
+  color: #f1ecf9;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.4);
 }
 .omnibox-switch-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   font-size: 11px;
   font-weight: 600;
   padding: 3px 10px;
   border-radius: 6px;
-  border: 1px solid rgba(16, 185, 129, 0.35);
-  background: rgba(16, 185, 129, 0.12);
-  color: #34d399;
+  border: 1px solid rgba(0, 210, 255, 0.35);
+  background: rgba(0, 210, 255, 0.12);
+  color: var(--signal, #00d2ff);
   cursor: pointer;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 8px rgba(0, 210, 255, 0.18);
+  letter-spacing: 0.2px;
 }
 .omnibox-switch-btn:hover {
-  background: #10b981;
-  color: #0f172a;
-  border-color: #10b981;
-  box-shadow: 0 0 10px rgba(16, 185, 129, 0.35);
+  background: rgba(0, 210, 255, 0.24);
+  color: #ffffff;
+  border-color: rgba(0, 210, 255, 0.7);
+  box-shadow: 0 0 14px rgba(0, 210, 255, 0.45);
+  transform: translateY(-0.5px);
+}
+.omnibox-switch-btn:active {
+  transform: translateY(0) scale(0.96);
+}
+.omnibox.omnibox-private .omnibox-switch-btn {
+  color: #d8b4fe;
+  background: rgba(168, 85, 247, 0.18);
+  border-color: rgba(192, 132, 252, 0.45);
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.3);
+}
+.omnibox.omnibox-private .omnibox-switch-btn:hover {
+  background: rgba(168, 85, 247, 0.32);
+  border-color: #c084fc;
+  box-shadow: 0 0 16px rgba(168, 85, 247, 0.6);
+  color: #ffffff;
 }
 :root[data-theme="light"] .omnibox-switch-btn {
-  border-color: rgba(5, 150, 105, 0.3);
-  background: rgba(5, 150, 105, 0.1);
-  color: #047857;
+  border-color: rgba(2, 132, 199, 0.3);
+  background: rgba(2, 132, 199, 0.1);
+  color: #0284c7;
+  box-shadow: none;
 }
 :root[data-theme="light"] .omnibox-switch-btn:hover {
-  background: #059669;
+  background: #0284c7;
   color: #ffffff;
+  border-color: #0284c7;
 }
 .omnibox-suggestion-favicon {
   width: 16px;
@@ -4210,7 +4254,7 @@ select:focus-visible {
     margin-right: 2px !important;
   }
 }
-@container (max-width: 90px) {
+@container (max-width: 140px) {
   .tab-container:not(.active):not(:hover) .tab-close {
     display: none !important;
   }
@@ -6320,35 +6364,62 @@ select:focus-visible {
   transform: scale(1.04);
 }
 
-/* Tab Audio / Mute Button */
+/* Tab Audio / Mute Button - Cyberpunk / Detroit style */
 .tab-audio-button {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  margin-right: 4px;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  z-index: 2;
 }
 .tab-audio-button:hover {
-  background: var(--border);
+  background: var(--surface-subtle);
   color: var(--text);
+  border-color: var(--border);
 }
 .tab-audio-button.audible {
-  color: var(--accent);
-  animation: tab-audio-pulse 1.8s infinite ease-in-out;
+  color: var(--signal, #00d2ff);
+  filter: drop-shadow(0 0 4px rgba(0, 210, 255, 0.5));
+  animation: tab-audio-pulse 2s infinite ease-in-out;
+}
+.tab-audio-button.audible:hover {
+  background: rgba(0, 210, 255, 0.16);
+  border-color: rgba(0, 210, 255, 0.4);
+  color: #ffffff;
+  filter: drop-shadow(0 0 8px rgba(0, 210, 255, 0.85));
 }
 .tab-audio-button.muted {
-  color: #ef4444;
+  color: #f43f5e;
+  filter: drop-shadow(0 0 4px rgba(244, 63, 94, 0.4));
+}
+.tab-audio-button.muted:hover {
+  background: rgba(244, 63, 94, 0.16);
+  border-color: rgba(244, 63, 94, 0.4);
+  color: #ff4d6d;
+  filter: drop-shadow(0 0 8px rgba(244, 63, 94, 0.75));
 }
 @keyframes tab-audio-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.65; transform: scale(1.12); }
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: drop-shadow(0 0 3px rgba(0, 210, 255, 0.4));
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.08);
+    filter: drop-shadow(0 0 7px rgba(0, 210, 255, 0.8));
+  }
 }
 
 /* ==========================================================================
@@ -7528,12 +7599,19 @@ select:focus-visible {
   margin-right: 4px;
 }
 .tab-container.pinned-tab:has(.tab-audio-button) .tab-favicon {
-  visibility: hidden;
+  visibility: visible !important;
 }
 .tab-container.pinned-tab .tab-audio-button {
   position: absolute;
-  inset: 50% auto auto 50%;
-  transform: translate(-50%, -50%);
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  inset: auto;
+  transform: none;
   margin: 0;
   animation: none;
 }
@@ -7605,9 +7683,7 @@ select:focus-visible {
 @media (max-width: 800px) {
   .omnibox-tools {
     max-width: 45%;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: thin;
+    overflow: visible;
     flex-shrink: 1;
   }
   .omnibox-tools .omnibox-media-btn {
@@ -7619,6 +7695,30 @@ select:focus-visible {
   .omnibox:focus-within .omnibox-tools {
     max-width: 35%;
   }
+}
+
+.omnibox:focus-within .omnibox-page-actions,
+.omnibox:focus-within .omnibox-media-actions,
+.omnibox:focus-within .omnibox-credentials-btn,
+.omnibox:focus-within .omnibox-zoom-badge {
+  display: none !important;
+}
+
+.omnibox-security-button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: inherit;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+.omnibox-security-button:hover {
+  background: var(--surface-subtle);
+  color: var(--accent);
 }
 
 /* Later branded button rules must not restore their desktop padding inside

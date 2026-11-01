@@ -153,6 +153,39 @@ export function isGoogleFederatedSignInRequest(requestUrl: string, topLevelUrl: 
   } catch { return false; }
 }
 
+export function isFederatedSSOSignInRequest(requestUrl: string, topLevelUrl: string): boolean {
+  try {
+    const request = new URL(requestUrl);
+    const top = new URL(topLevelUrl);
+    if (request.protocol !== 'https:' || top.protocol !== 'https:' || request.port || top.port || request.username || request.password || top.username || top.password) return false;
+    const host = request.hostname.toLowerCase();
+    const topHost = top.hostname.toLowerCase();
+    if (topHost.endsWith('.test') || topHost.endsWith('.example')) return false;
+
+    // VK ID
+    if (host === 'id.vk.com' || host === 'oauth.vk.com' || host === 'vk.com') {
+      return /^\/(?:authorize|oauth|auth|widget_auth)(?:\/|$)/i.test(request.pathname);
+    }
+    // Yandex ID / Passport
+    if (host === 'oauth.yandex.ru' || host === 'passport.yandex.ru') {
+      return /^\/(?:authorize|auth|am)(?:\/|$)/i.test(request.pathname);
+    }
+    // Apple ID
+    if (host === 'appleid.apple.com') {
+      return /^\/auth\//i.test(request.pathname);
+    }
+    // Telegram OAuth
+    if (host === 'oauth.telegram.org') {
+      return /^\/auth/i.test(request.pathname);
+    }
+    // Microsoft Entra / Live ID
+    if (host === 'login.microsoftonline.com' || host === 'login.live.com') {
+      return /^\/(?:common|consumers|organizations|[a-f0-9-]+)\/oauth2/i.test(request.pathname) || /^\/oauth20_/i.test(request.pathname);
+    }
+    return false;
+  } catch { return false; }
+}
+
 export function shouldStripThirdPartyCookies(input: {
   requestUrl: string;
   topLevelUrl: string;
@@ -173,7 +206,8 @@ export function shouldStripThirdPartyCookies(input: {
   if (!input.isPrivate && input.googleSignInCompatibility !== false && (
     isGoogleFederatedSignInRequest(input.requestUrl, input.topLevelUrl) ||
     isGoogleYouTubeSignInRequest(input.requestUrl, input.topLevelUrl) ||
-    isPinterestSignInOrVerification(input.requestUrl, input.topLevelUrl)
+    isPinterestSignInOrVerification(input.requestUrl, input.topLevelUrl) ||
+    isFederatedSSOSignInRequest(input.requestUrl, input.topLevelUrl)
   )) return false;
   return requestSite !== topSite;
 }
@@ -192,7 +226,8 @@ export function canRequestStorageAccess(input: {
       (input.googleSignInCompatibility !== false && (
         isGoogleFederatedSignInRequest(request.href, top.href) ||
         isGoogleYouTubeSignInRequest(request.href, top.href) ||
-        isPinterestSignInOrVerification(request.href, top.href)
+        isPinterestSignInOrVerification(request.href, top.href) ||
+        isFederatedSSOSignInRequest(request.href, top.href)
       ));
   } catch { return false; }
 }

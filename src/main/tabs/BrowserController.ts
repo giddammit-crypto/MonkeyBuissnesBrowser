@@ -1274,7 +1274,7 @@ export class BrowserController {
   stopFindInPage(tabId: string): void {
     this.findQueries.delete(tabId);
     const contents = this.tabs.get(tabId)?.view?.webContents;
-    if (contents && !contents.isDestroyed()) contents.stopFindInPage('clearSelection');
+    if (contents && !contents.isDestroyed()) contents.stopFindInPage('keepSelection');
   }
 
   controlDownload(downloadId: string, action: DownloadAction): void {
@@ -1409,12 +1409,20 @@ export class BrowserController {
 
   async goBack(tabId: string): Promise<void> {
     const tab = this.tabs.get(tabId);
-    if (tab?.view?.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack();
+    if (tab?.view?.webContents.navigationHistory.canGoBack()) {
+      tab.view.webContents.navigationHistory.goBack();
+      this.updateNavigationState(tab);
+      this.emitSnapshot();
+    }
   }
 
   async goForward(tabId: string): Promise<void> {
     const tab = this.tabs.get(tabId);
-    if (tab?.view?.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward();
+    if (tab?.view?.webContents.navigationHistory.canGoForward()) {
+      tab.view.webContents.navigationHistory.goForward();
+      this.updateNavigationState(tab);
+      this.emitSnapshot();
+    }
   }
 
   async reload(tabId: string, ignoreCache = false): Promise<void> {
@@ -1465,6 +1473,14 @@ export class BrowserController {
     if (!tab || tab.id === this.activeTabId || tab.isInternal || tab.isPictureInPicture || !tab.view) return false;
     const eligible = this.memoryManager.canHibernate(tabId, 0);
     if (!eligible.allowed) return false;
+    if (tab.view && !tab.view.webContents.isDestroyed()) {
+      try {
+        const scroll = await tab.view.webContents.executeJavaScript('({ x: window.scrollX, y: window.scrollY })');
+        if (scroll && typeof scroll.x === 'number' && typeof scroll.y === 'number') {
+          (tab as any).savedScroll = scroll;
+        }
+      } catch {}
+    }
     this.detachView(tab);
     tab.lifecycle = 'hibernated';
     this.memoryManager.updateTab(tab.id, { lifecycle: 'hibernated', active: false, loading: false, audible: false, capturing: false });
@@ -1477,6 +1493,13 @@ export class BrowserController {
     if (!tab || tab.lifecycle !== 'hibernated') return;
     tab.lifecycle = 'background';
     this.attachWebContents(tab, tab.url);
+    const savedScroll = (tab as any).savedScroll;
+    if (savedScroll && tab.view && !tab.view.webContents.isDestroyed()) {
+      const contents = tab.view.webContents;
+      contents.once('did-finish-load', () => {
+        void contents.executeJavaScript(`window.scrollTo(${savedScroll.x}, ${savedScroll.y})`).catch(() => {});
+      });
+    }
     this.memoryManager.updateTab(tab.id, { lifecycle: 'background', loading: true });
     this.activateTab(tabId);
     this.emitSnapshot();
@@ -2228,6 +2251,7 @@ export class BrowserController {
   async saveCredential(origin: string, username: string, password: string): Promise<{ success: boolean; id: string; updated: boolean }> {
     const { id, updated } = this.passwords.save(origin, username, password);
     this.shellView?.webContents.send('browser:event', { type: 'passwords-changed' });
+    this.eventListener?.({ type: 'passwords-changed' });
     this.emitSnapshot();
     return { success: true, id, updated };
   }
@@ -3282,7 +3306,7 @@ export class BrowserController {
       ...popupOptions?.webPreferences,
       session: tabSession, preload: pagePreloadPath, nodeIntegration: false,
       contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false,
-      nodeIntegrationInSubFrames: true, nodeIntegrationInWorker: false, webviewTag: false,
+      nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false, webviewTag: false,
       backgroundThrottling: true, spellcheck: true,
     } });
     // Standard Chromium webview background is pure opaque white (#ffffff).
@@ -3545,7 +3569,7 @@ export class BrowserController {
               session: contents.session,
               preload: pagePreloadPath,
               nodeIntegration: false,
-              nodeIntegrationInSubFrames: true,
+              nodeIntegrationInSubFrames: false,
               nodeIntegrationInWorker: false,
               contextIsolation: true,
               sandbox: true,
@@ -3568,7 +3592,7 @@ export class BrowserController {
             session: contents.session,
             preload: pagePreloadPath,
             nodeIntegration: false,
-            nodeIntegrationInSubFrames: true,
+            nodeIntegrationInSubFrames: false,
             nodeIntegrationInWorker: false,
             contextIsolation: true,
             sandbox: true,
@@ -3619,6 +3643,8 @@ export class BrowserController {
     };
     const resetTabMediaAndReader = () => {
       clearCapturedMedia();
+      tab.isAudible = false;
+      this.memoryManager.updateTab(tab.id, { audible: false });
       tab.hasVideoMedia = false;
       tab.hasDownloadableMedia = false;
       tab.isReaderAvailable = false;
@@ -3655,7 +3681,13 @@ export class BrowserController {
       this.emitSnapshot();
     });
     contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame || errorCode === -3) return;
+      if (!isMainFrame) return;
+      if (errorCode === -3) {
+        tab.isLoading = false;
+        this.memoryManager.updateTab(tab.id, { loading: false });
+        this.emitSnapshot();
+        return;
+      }
       tab.isLoading = false;
       tab.lifecycle = 'crashed';
       tab.lastError = { errorCode, errorDescription, validatedURL };
@@ -3666,6 +3698,12 @@ export class BrowserController {
       this.memoryManager.updateTab(tab.id, { loading: false, lifecycle: 'crashed' });
       this.eventListener?.({ type: 'navigation-error', tab: this.toSnapshot(tab), message: `${errorDescription}: ${validatedURL}` });
       this.refreshViewBounds();
+      this.emitSnapshot();
+    });
+    contents.on('audio-state-changed', (event) => {
+      const audible = Boolean((event as any)?.audible);
+      tab.isAudible = audible;
+      this.memoryManager.updateTab(tab.id, { audible });
       this.emitSnapshot();
     });
     contents.on('media-started-playing', () => {
@@ -4310,6 +4348,7 @@ export class BrowserController {
     const canDownloadMedia = Boolean(!tab.isInternal && (tab.hasDownloadableMedia || isVideoSite || Boolean(stream?.video) || Boolean(stream?.audio)));
     return {
       ...snapshot,
+      isAudioPlaying: Boolean(tab.isAudible),
       canDownloadMedia,
       isReaderAvailable: Boolean(!tab.isInternal && tab.isReaderAvailable),
       isReaderActive: Boolean(!tab.isInternal && tab.isReaderActive),
@@ -4669,6 +4708,10 @@ export class BrowserController {
     contents.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown') return;
       const key = input.key.toLowerCase();
+      const code = input.code || '';
+      const isKey = (latinKey: string, keyCode: string, cyrillicChar?: string): boolean => {
+        return key === latinKey || code === keyCode || (cyrillicChar ? key === cyrillicChar : false);
+      };
       const modifier = process.platform === 'darwin' ? input.meta : input.control;
       const tab = this.tabs.get(this.activeTabId);
       const run = (action: () => void) => { event.preventDefault(); action(); };
@@ -4676,7 +4719,7 @@ export class BrowserController {
         this.memoryManager.markInteraction(tab.id);
         // Cross-origin iframe form events do not bubble to the main preload.
         // Conservatively preserve any page where text editing keys were used.
-        if ((!modifier && !input.alt && (input.key.length === 1 || ['backspace', 'delete'].includes(key))) || (modifier && key === 'v')) {
+        if ((!modifier && !input.alt && (input.key.length === 1 || ['backspace', 'delete'].includes(key))) || (modifier && isKey('v', 'KeyV', 'м'))) {
           this.memoryManager.updateTab(tab.id, { hasFormEdits: true });
         }
       }
@@ -4684,15 +4727,15 @@ export class BrowserController {
         this.shellView?.webContents.focus();
         this.eventListener?.({ type: 'toggle-task-manager' });
       });
-      else if (modifier && input.shift && key === 'v') run(() => {
+      else if (modifier && input.shift && isKey('v', 'KeyV', 'м')) run(() => {
         this.toggleVoodoo();
       });
       else if (modifier && input.shift && (key === 'delete' || key === 'backspace')) run(() => {
         this.shellView?.webContents.focus();
         this.eventListener?.({ type: 'toggle-click-and-clean' });
       });
-      else if ((modifier && key === 'l') || (input.alt && !modifier && !input.shift && (key === 'd' || key === 'в')) || key === 'f6') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'focus-address' }); });
-      else if (modifier && input.shift && key === 'a') run(() => {
+      else if ((modifier && isKey('l', 'KeyL', 'д')) || (input.alt && !modifier && !input.shift && (key === 'd' || key === 'в' || code === 'KeyD')) || key === 'f6') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'focus-address' }); });
+      else if (modifier && input.shift && isKey('a', 'KeyA', 'ф')) run(() => {
         this.exitPageFullscreen();
         this.shellView?.webContents.focus();
         // The user can request search immediately after activation, before the
@@ -4700,18 +4743,18 @@ export class BrowserController {
         this.snapshotListener?.(this.getSnapshot());
         this.eventListener?.({ type: 'show-tab-search' });
       });
-      else if (modifier && input.shift && key === 't') run(() => { void this.reopenClosedTab(); });
-      else if (modifier && input.shift && (key === 'n' || key === 'p')) run(() => { void this.createTab({ isPrivate: true }); });
-      else if (modifier && key === 't') run(() => { void this.createTab(); });
-      else if (modifier && key === 'w' && tab) run(() => { void this.closeTab(tab.id); });
-      else if (modifier && key === 'd' && tab) run(() => { this.toggleBookmark(tab.id); });
-      else if (modifier && key === 'f') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-find' }); });
-      else if (modifier && key === 'h') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-history' }); });
-      else if (modifier && key === 'j') run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-downloads' }); });
-      else if (((modifier && input.shift && key === 'r') || (modifier && key === 'f5') || (input.shift && key === 'f5')) && tab) run(() => { void this.reload(tab.id, true); });
-      else if ((modifier && input.alt && key === 'r' || key === 'f9') && tab && !tab.isInternal) run(() => { void this.toggleReaderMode(tab.id); });
-      else if ((modifier && key === 'r' || key === 'f5') && tab) run(() => { void this.reload(tab.id, false); });
-      else if (modifier && key === 'p' && tab) run(() => { void this.tabAction(tab.id, 'print'); });
+      else if (modifier && input.shift && isKey('t', 'KeyT', 'е')) run(() => { void this.reopenClosedTab(); });
+      else if (modifier && input.shift && (isKey('n', 'KeyN', 'т') || isKey('p', 'KeyP', 'з'))) run(() => { void this.createTab({ isPrivate: true }); });
+      else if (modifier && isKey('t', 'KeyT', 'е')) run(() => { void this.createTab(); });
+      else if (modifier && isKey('w', 'KeyW', 'ц') && tab) run(() => { void this.closeTab(tab.id); });
+      else if (modifier && isKey('d', 'KeyD', 'в') && tab) run(() => { this.toggleBookmark(tab.id); });
+      else if (modifier && isKey('f', 'KeyF', 'а')) run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-find' }); });
+      else if (modifier && isKey('h', 'KeyH', 'р')) run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-history' }); });
+      else if (modifier && isKey('j', 'KeyJ', 'о')) run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-downloads' }); });
+      else if (((modifier && input.shift && isKey('r', 'KeyR', 'к')) || (modifier && key === 'f5') || (input.shift && key === 'f5')) && tab) run(() => { void this.reload(tab.id, true); });
+      else if ((modifier && input.alt && isKey('r', 'KeyR', 'к') || key === 'f9') && tab && !tab.isInternal) run(() => { void this.toggleReaderMode(tab.id); });
+      else if ((modifier && isKey('r', 'KeyR', 'к') || key === 'f5') && tab) run(() => { void this.reload(tab.id, false); });
+      else if (modifier && isKey('p', 'KeyP', 'з') && tab) run(() => { void this.tabAction(tab.id, 'print'); });
       else if (modifier && ['+', '=', '-', '0'].includes(key) && tab) run(() => { void this.tabAction(tab.id, key === '0' ? 'zoom-reset' : key === '-' ? 'zoom-out' : 'zoom-in'); });
       // Familiar Chromium shortcuts: Ctrl/Cmd+1..8 selects a visible tab,
       // Ctrl/Cmd+9 selects the last. Respect workspace and privacy boundaries.
@@ -6090,7 +6133,17 @@ export class BrowserController {
   async openPath(targetPath: string): Promise<string> {
     const clean = String(targetPath || '').trim();
     if (!clean) return 'Пустой путь';
-    return shell.openPath(clean);
+    const resolved = path.resolve(clean);
+    try {
+      const downloads = app.getPath('downloads');
+      const userData = app.getPath('userData');
+      const home = app.getPath('home');
+      const allowed = resolved.startsWith(downloads) || resolved.startsWith(userData) || resolved.startsWith(home);
+      if (!allowed) return 'Открытие файлов за пределами пользовательских директорий запрещено';
+    } catch {
+      // In headless/test environments where app.getPath might fail, fall back to safe check
+    }
+    return shell.openPath(resolved);
   }
 
   async testVoodooKey(key: string): Promise<{ success: boolean; latencyMs?: number; error?: string }> {

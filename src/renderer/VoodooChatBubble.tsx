@@ -216,7 +216,11 @@ export default function VoodooChatBubble({
     const next = !isOpen;
     if (standalone) {
       setIsOpenState(next);
-      await window.browserApi.setVoodooOpen(next);
+      try {
+        await window.browserApi.setVoodooOpen(next);
+      } catch (err) {
+        console.error('Не удалось изменить состояние окна Вуду:', err);
+      }
     } else {
       propsOnToggleOpen?.();
     }
@@ -225,17 +229,29 @@ export default function VoodooChatBubble({
   const closeWindow = useCallback(async () => {
     if (standalone) {
       setIsOpenState(false);
-      await window.browserApi.setVoodooOpen(false);
+      try {
+        await window.browserApi.setVoodooOpen(false);
+      } catch (err) {
+        console.error('Не удалось закрыть окно Вуду:', err);
+      }
     } else {
       propsOnClose?.();
     }
   }, [standalone, propsOnClose]);
 
   const hideBubble = useCallback(async () => {
-    await window.browserApi.updateSettings({ voodooBubbleVisible: false });
+    try {
+      await window.browserApi.updateSettings({ voodooBubbleVisible: false });
+    } catch (err) {
+      console.error('Не удалось скрыть значок Вуду:', err);
+    }
     if (standalone) {
       setIsOpenState(false);
-      await window.browserApi.setVoodooOpen(false);
+      try {
+        await window.browserApi.setVoodooOpen(false);
+      } catch (err) {
+        console.error('Не удалось закрыть окно Вуду:', err);
+      }
     } else {
       propsOnHideBubble?.();
     }
@@ -266,7 +282,9 @@ export default function VoodooChatBubble({
         setModelLabel(snapshot.settings.voodooModel || 'ИИ агент');
         historyBudgetRef.current = snapshot.settings.voodooContextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
       }
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error('Не удалось получить снимок браузера для Вуду:', err);
+    });
     const unsubscribe = window.browserApi.onSnapshotChanged((snapshot) => {
       setModelLabel(snapshot.settings.voodooModel || 'ИИ агент');
       historyBudgetRef.current = snapshot.settings.voodooContextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
@@ -535,11 +553,15 @@ export default function VoodooChatBubble({
   };
 
   const handleInsertReply = async (text: string, key: string) => {
-    const success = await window.browserApi.insertTextIntoActiveTab(text);
-    if (success) {
-      setInsertedKey(key);
-      setTimeout(() => setInsertedKey(null), 2500);
-    } else {
+    try {
+      const success = await window.browserApi.insertTextIntoActiveTab(text);
+      if (success) {
+        setInsertedKey(key);
+        setTimeout(() => setInsertedKey(null), 2500);
+      } else {
+        handleCopyReply(text, key);
+      }
+    } catch {
       handleCopyReply(text, key);
     }
   };
@@ -874,7 +896,7 @@ export default function VoodooChatBubble({
       if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
         hasMovedRef.current = true;
         dragStartRef.current = { x: moveEvent.screenX, y: moveEvent.screenY };
-        void window.browserApi.moveVoodoo(dx, dy);
+        void window.browserApi.moveVoodoo(dx, dy).catch(() => {});
       }
     };
 
@@ -902,7 +924,7 @@ export default function VoodooChatBubble({
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
         hasMovedRef.current = true;
         dragStartRef.current = { x: moveEvent.screenX, y: moveEvent.screenY };
-        void window.browserApi.moveVoodoo(dx, dy);
+        void window.browserApi.moveVoodoo(dx, dy).catch(() => {});
       }
     };
 
@@ -965,7 +987,7 @@ export default function VoodooChatBubble({
 
       currentW = targetW;
       currentH = targetH;
-      void window.browserApi.resizeVoodoo(targetW, targetH, deltaX, deltaY);
+      void window.browserApi.resizeVoodoo(targetW, targetH, deltaX, deltaY).catch(() => {});
     };
 
     const onMouseUp = () => {
@@ -1065,7 +1087,7 @@ export default function VoodooChatBubble({
                 className="voodoo-header-btn"
                 title="Сбросить позицию в правый нижний угол"
                 aria-label="Сбросить позицию окна Вуду"
-                onClick={() => void window.browserApi.resetVoodooPosition()}
+                onClick={() => void window.browserApi.resetVoodooPosition().catch(() => {})}
               >
                 <Move size={14} />
               </button>

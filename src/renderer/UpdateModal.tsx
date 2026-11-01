@@ -134,7 +134,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ onDismiss, onFeedback 
 
   const openGitHub = () => {
     const url = checkResult?.htmlUrl || 'https://github.com/giddammit-crypto/MonkeyBuissnesBrowser/releases';
-    void window.browserApi.createTab({ url });
+    void window.browserApi.createTab({ url }).catch(console.error);
     onDismiss();
   };
 
@@ -173,7 +173,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ onDismiss, onFeedback 
           <div className="update-version-card">
             <div className="version-item">
               <span className="version-label">Текущая версия</span>
-              <span className="version-value">v{checkResult?.currentVersion || '0.9.6'}</span>
+              <span className="version-value">v{checkResult?.currentVersion || '0.9.7'}</span>
             </div>
             <div className="version-arrow">
               <ArrowRight size={20} />
@@ -181,7 +181,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ onDismiss, onFeedback 
             <div className="version-item" style={{ textAlign: 'right' }}>
               <span className="version-label">Новая версия</span>
               <span className="version-value" style={{ color: hasUpdate ? '#00e5ff' : '#4ade80' }}>
-                v{checkResult?.latestVersion || checkResult?.currentVersion || '0.9.6'}
+                v{checkResult?.latestVersion || checkResult?.currentVersion || '0.9.7'}
               </span>
             </div>
           </div>

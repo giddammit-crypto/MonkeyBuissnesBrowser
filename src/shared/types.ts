@@ -10,6 +10,7 @@ export interface TabSnapshot {
   canGoForward: boolean;
   isMuted: boolean;
   isAudible?: boolean;
+  isAudioPlaying?: boolean;
   isPinned: boolean;
   isPrivate: boolean;
   isInternal: boolean;
