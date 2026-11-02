@@ -4630,7 +4630,7 @@ function SettingsPanel({
               <strong>Установленная версия</strong>
               <small>Если здесь нет новых настроек, запущена старая сборка. После обновления GitHub приложение нужно пересобрать и переустановить.</small>
             </span>
-            <strong>soulm8te 0.8.1</strong>
+            <strong>soulm8te 0.9.7</strong>
           </div>
           <label className="setting-row">
             <span><strong>Стиль оформления</strong><small>Отдельный стиль Detroit · Хлоя или Cyberpunk. Исходные темы не изменяются.</small></span>
