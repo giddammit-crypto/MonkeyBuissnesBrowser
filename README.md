@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.7-blue?style=for-the-badge" alt="Version 0.9.7" />
+  <img src="https://img.shields.io/badge/version-0.9.9-blue?style=for-the-badge" alt="Version 0.9.9" />
   <img src="https://img.shields.io/badge/Electron-45.0-blueviolet?style=for-the-badge" alt="Electron 45" />
   <img src="https://img.shields.io/badge/React-19-cyan?style=for-the-badge" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-7.0-blue?style=for-the-badge" alt="TypeScript" />

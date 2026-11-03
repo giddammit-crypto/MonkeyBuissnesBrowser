@@ -30,8 +30,11 @@ import {
   Navigation,
   FilePlus,
   ListChecks,
+  Languages,
+  HelpCircle,
+  Zap,
 } from 'lucide-react';
-import type { TabSnapshot, VoodooChatMessage } from '../shared/types';
+import type { TabSnapshot, VoodooChatMessage, VoodooTabContext } from '../shared/types';
 import MarkdownView from './MarkdownView';
 import { boundVoodooHistory, compactVoodooMessage, restoreVoodooHistory, serializeVoodooHistory } from '../shared/voodooHistory';
 
@@ -364,19 +367,20 @@ export default function VoodooChatBubble({
 
   const handleSendMessage = useCallback(async (
     textToSend?: string,
-    contextOverride?: { url?: string; title?: string; chatText?: string }
+    contextOverride?: VoodooTabContext
   ) => {
     const prompt = (textToSend || input).trim();
     if (!prompt || loading || abortControllerRef.current) return;
     followMessagesRef.current = true;
 
+    const contextSnippet = contextOverride?.selectedText || contextOverride?.chatText || (contextOverride?.cleanText ? contextOverride.cleanText.slice(0, 80) : undefined);
     const userMessage: VoodooChatMessage = {
       id: generateId('user'),
       role: 'user',
       content: prompt,
       timestamp: Date.now(),
-      analyzedContext: contextOverride?.chatText
-        ? (contextOverride.chatText.length > 60 ? `${contextOverride.chatText.slice(0, 60)}…` : contextOverride.chatText)
+      analyzedContext: contextSnippet
+        ? (contextSnippet.length > 60 ? `${contextSnippet.slice(0, 60)}…` : contextSnippet)
         : undefined,
     };
 
@@ -449,7 +453,44 @@ export default function VoodooChatBubble({
     });
   }, [currentTab, handleSendMessage]);
 
-  // Listen to IPC events from main process (context menu "Анализировать с ВуДу", hotkey, etc.)
+  const handleExecuteQuickAction = useCallback(async (
+    action: 'summary' | 'tldr' | 'translate' | 'explain' | 'facts',
+    presetContext?: VoodooTabContext
+  ) => {
+    if (loading) return;
+    try {
+      let pageCtx = presetContext;
+      if (!pageCtx || (!pageCtx.cleanText && !pageCtx.chatText)) {
+        pageCtx = await window.browserApi.getActiveTabPageContext(6000);
+      }
+      const pageTitle = pageCtx?.title || currentTab?.title || 'текущая страница';
+
+      let prompt = '';
+      switch (action) {
+        case 'summary':
+          prompt = `Сделай краткую структурированную выжимку страницы «${pageTitle}»: 3 ключевых мысли и главный вывод.`;
+          break;
+        case 'tldr':
+          prompt = `Выдели самое главное (TL;DR) из страницы «${pageTitle}» в 2-3 ёмких предложениях.`;
+          break;
+        case 'translate':
+          prompt = `Переведи основной текст страницы «${pageTitle}» на русский язык с сохранением структуры.`;
+          break;
+        case 'explain':
+          prompt = `Объясни суть этого материала и сложные термины простыми словами, понятными каждому, используя аналогии.`;
+          break;
+        case 'facts':
+          prompt = `Найди и выпиши из страницы «${pageTitle}» все ключевые факты, важные цифры, даты, имена и практические выводы в виде списка.`;
+          break;
+      }
+
+      await handleSendMessage(prompt, pageCtx);
+    } catch (e) {
+      console.warn('Failed to execute quick action:', e);
+    }
+  }, [loading, currentTab, handleSendMessage]);
+
+  // Listen to IPC events from main process (context menu "Анализировать с ВуДу", quick action, hotkey, etc.)
   useEffect(() => {
     const removeListener = window.browserApi?.onTabEvent?.((event) => {
       if (event.type === 'voodoo-agent-progress' && abortControllerRef.current) {
@@ -464,6 +505,16 @@ export default function VoodooChatBubble({
           }
         }
         void handleAnalyzeCustomText(event.message);
+      } else if (event.type === 'voodoo-quick-action' && (event as any).action) {
+        if (!isOpen) {
+          if (standalone) {
+            setIsOpenState(true);
+            void window.browserApi.setVoodooOpen(true);
+          } else {
+            propsOnToggleOpen?.();
+          }
+        }
+        void handleExecuteQuickAction((event as any).action, (event as any).pageContext);
       } else if (event.type === 'voodoo-set-open') {
         const shouldOpen = event.message === 'true';
         if (standalone) {
@@ -477,7 +528,7 @@ export default function VoodooChatBubble({
     return () => {
       removeListener?.();
     };
-  }, [isOpen, standalone, propsOnToggleOpen, handleAnalyzeCustomText, toggleOpen]);
+  }, [isOpen, standalone, propsOnToggleOpen, handleAnalyzeCustomText, handleExecuteQuickAction, toggleOpen]);
 
   const handleAnalyzeActiveChat = async () => {
     if (loading) return;
@@ -507,19 +558,8 @@ export default function VoodooChatBubble({
     }
   };
 
-  const handleAnalyzePageSummary = async () => {
-    if (loading) return;
-    try {
-      const chatCtx = await window.browserApi.extractActiveTabChatContext();
-      const prompt = `Кратко расскажи, о чём эта страница («${currentTab?.title || 'текущая страница'}») и выдели 3 ключевых мысли.`;
-      await handleSendMessage(prompt, {
-        url: currentTab?.url,
-        title: currentTab?.title,
-        chatText: chatCtx?.text,
-      });
-    } catch (e) {
-      console.warn('Failed to analyze page summary:', e);
-    }
+  const handleAnalyzePageSummary = () => {
+    void handleExecuteQuickAction('summary');
   };
 
   const handleCopyReply = async (text: string, key: string) => {
@@ -1114,36 +1154,39 @@ export default function VoodooChatBubble({
           <div className="voodoo-quick-actions">
             <button
               className="voodoo-pill primary"
-              onClick={() => {
-                if (input.trim()) {
-                  void handleSendMessage(`Найди в интернете: ${input.trim()}`);
-                } else {
-                  void handleSendMessage('Найди в интернете актуальные главные новости за сегодня');
-                }
-              }}
+              onClick={() => void handleExecuteQuickAction('summary')}
               disabled={loading}
-              title="Поиск через автономного агента браузера"
+              title="Сделать выжимку страницы: 3 ключевых мысли и главный вывод"
             >
-              <Globe size={12} />
-              <span>🌐 Поиск</span>
+              <Zap size={12} />
+              <span>⚡ Выжимка</span>
             </button>
             <button
               className="voodoo-pill"
-              onClick={handleAnalyzePageSummary}
+              onClick={() => void handleExecuteQuickAction('translate')}
               disabled={loading}
-              title="Прочитать открытую страницу и выделить суть"
+              title="Перевести страницу на русский язык"
             >
-              <FileText size={12} />
-              <span>📄 Прочитать страницу</span>
+              <Languages size={12} />
+              <span>🌐 Перевод</span>
             </button>
             <button
               className="voodoo-pill"
-              onClick={() => void handleSendMessage('Покажи список всех моих открытых вкладок')}
+              onClick={() => void handleExecuteQuickAction('explain')}
               disabled={loading}
-              title="Показать все открытые вкладки браузера"
+              title="Объяснить суть материала и сложные термины простыми словами"
             >
-              <Layers size={12} />
-              <span>📑 Мои вкладки</span>
+              <HelpCircle size={12} />
+              <span>💡 Объяснить</span>
+            </button>
+            <button
+              className="voodoo-pill"
+              onClick={() => void handleExecuteQuickAction('facts')}
+              disabled={loading}
+              title="Извлечь ключевые факты, цифры, даты и выводы"
+            >
+              <ListChecks size={12} />
+              <span>🎯 Факты</span>
             </button>
             <button
               className="voodoo-pill"
@@ -1152,7 +1195,7 @@ export default function VoodooChatBubble({
               title="Прочитать последние сообщения активного диалога и предложить варианты ответа"
             >
               <MessageSquare size={12} />
-              <span>🔍 Анализ диалога</span>
+              <span>💬 Диалог</span>
             </button>
             <button
               className={`voodoo-pill ${isListening ? 'listening primary' : ''}`}
@@ -1162,6 +1205,15 @@ export default function VoodooChatBubble({
             >
               {isListening ? <Square size={12} className="voodoo-mic-active-pulse" /> : <Mic size={12} />}
               <span>{isListening ? 'Слушаю...' : '🎙️ Голос'}</span>
+            </button>
+            <button
+              className="voodoo-pill"
+              onClick={() => void handleSendMessage('Покажи список всех моих открытых вкладок')}
+              disabled={loading}
+              title="Показать все открытые вкладки браузера"
+            >
+              <Layers size={12} />
+              <span>📑 Вкладки</span>
             </button>
             <button
               className="voodoo-pill"

@@ -21,9 +21,35 @@ export function createYouTubeAdBlockPolicyGate(start: () => (() => void) | undef
 // Chromium 134 native Chrome stealth injection for sandboxed preloads
 const STEALTH_SCRIPT = `(function() {
   try {
+    const nativeFns = new WeakSet();
+    const origToString = Function.prototype.toString;
+    function markNative(fn, name) {
+      if (name) {
+        try { Object.defineProperty(fn, 'name', { value: name, configurable: true }); } catch {}
+      }
+      try { nativeFns.add(fn); } catch {}
+      return fn;
+    }
+
+    try {
+      const patchedToString = function toString() {
+        if (nativeFns.has(this)) {
+          return 'function ' + (this.name || '') + '() { [native code] }';
+        }
+        return origToString.call(this);
+      };
+      nativeFns.add(patchedToString);
+      Object.defineProperty(Function.prototype, 'toString', {
+        value: patchedToString,
+        writable: true,
+        configurable: true,
+      });
+    } catch {}
+
+    const getWebdriver = markNative(() => false, 'get webdriver');
     try {
       Object.defineProperty(Navigator.prototype, 'webdriver', {
-        get: () => false,
+        get: getWebdriver,
         configurable: true,
         enumerable: true,
       });
@@ -31,7 +57,7 @@ const STEALTH_SCRIPT = `(function() {
     try {
       if (typeof navigator !== 'undefined') {
         Object.defineProperty(navigator, 'webdriver', {
-          get: () => false,
+          get: getWebdriver,
           configurable: true,
           enumerable: true,
         });
@@ -50,35 +76,43 @@ const STEALTH_SCRIPT = `(function() {
     const brandPlatform = isWin ? 'Windows' : isMac ? 'macOS' : 'Linux';
     const platformVersion = isWin ? '10.0.0' : isMac ? '15.0.0' : '6.6.0';
 
+    const getUa = markNative(() => ua, 'get userAgent');
+    const getAppVer = markNative(() => appVer, 'get appVersion');
+    const getPlat = markNative(() => plat, 'get platform');
+    const getVendor = markNative(() => 'Google Inc.', 'get vendor');
+
     Object.defineProperty(Navigator.prototype, 'userAgent', {
-      get: () => ua,
+      get: getUa,
       configurable: true,
       enumerable: true,
     });
     Object.defineProperty(Navigator.prototype, 'appVersion', {
-      get: () => appVer,
+      get: getAppVer,
       configurable: true,
       enumerable: true,
     });
     Object.defineProperty(Navigator.prototype, 'platform', {
-      get: () => plat,
+      get: getPlat,
       configurable: true,
       enumerable: true,
     });
     Object.defineProperty(Navigator.prototype, 'vendor', {
-      get: () => 'Google Inc.',
+      get: getVendor,
       configurable: true,
       enumerable: true,
     });
 
+    const chromeVer = '134.0.0.0';
+    const chromeMajor = '134';
+
     const brands = [
-      { brand: 'Chromium', version: '134' },
-      { brand: 'Google Chrome', version: '134' },
+      { brand: 'Chromium', version: chromeMajor },
+      { brand: 'Google Chrome', version: chromeMajor },
       { brand: 'Not:A-Brand', version: '24' },
     ];
     const fullVersionList = [
-      { brand: 'Chromium', version: '134.0.0.0' },
-      { brand: 'Google Chrome', version: '134.0.0.0' },
+      { brand: 'Chromium', version: chromeVer },
+      { brand: 'Google Chrome', version: chromeVer },
       { brand: 'Not:A-Brand', version: '24.0.0.0' },
     ];
 
@@ -97,7 +131,7 @@ const STEALTH_SCRIPT = `(function() {
         if (hints.includes('bitness')) result.bitness = '64';
         if (hints.includes('model')) result.model = '';
         if (hints.includes('platformVersion')) result.platformVersion = platformVersion;
-        if (hints.includes('uaFullVersion')) result.uaFullVersion = '134.0.0.0';
+        if (hints.includes('uaFullVersion')) result.uaFullVersion = chromeVer;
         if (hints.includes('fullVersionList')) result.fullVersionList = fullVersionList;
         return Promise.resolve(result);
       }
@@ -111,15 +145,25 @@ const STEALTH_SCRIPT = `(function() {
     }
 
     try {
-      Object.defineProperty(NavigatorUAData.prototype, Symbol.toStringTag, {
+      const proto = NavigatorUAData.prototype;
+      const brandsDesc = Object.getOwnPropertyDescriptor(proto, 'brands');
+      if (brandsDesc && brandsDesc.get) markNative(brandsDesc.get, 'get brands');
+      const mobileDesc = Object.getOwnPropertyDescriptor(proto, 'mobile');
+      if (mobileDesc && mobileDesc.get) markNative(mobileDesc.get, 'get mobile');
+      const platformDesc = Object.getOwnPropertyDescriptor(proto, 'platform');
+      if (platformDesc && platformDesc.get) markNative(platformDesc.get, 'get platform');
+      if (proto.getHighEntropyValues) markNative(proto.getHighEntropyValues, 'getHighEntropyValues');
+      if (proto.toJSON) markNative(proto.toJSON, 'toJSON');
+      Object.defineProperty(proto, Symbol.toStringTag, {
         value: 'NavigatorUAData',
         configurable: true,
       });
     } catch {}
 
     const uaDataInstance = new NavigatorUAData();
+    const getUaData = markNative(() => uaDataInstance, 'get userAgentData');
     Object.defineProperty(Navigator.prototype, 'userAgentData', {
-      get: () => uaDataInstance,
+      get: getUaData,
       configurable: true,
       enumerable: true,
     });
@@ -132,23 +176,23 @@ const STEALTH_SCRIPT = `(function() {
         isInstalled: false,
         InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
         RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
-        getDetails: function() { return null; },
-        getIsInstalled: function() { return false; },
-        installState: function(cb) { if (typeof cb === 'function') cb('not_installed'); },
+        getDetails: markNative(function getDetails() { return null; }, 'getDetails'),
+        getIsInstalled: markNative(function getIsInstalled() { return false; }, 'getIsInstalled'),
+        installState: markNative(function installState(cb) { if (typeof cb === 'function') cb('not_installed'); }, 'installState'),
       };
     }
     if (!window.chrome.csi) {
-      window.chrome.csi = function() {
+      window.chrome.csi = markNative(function csi() {
         return {
           startE: performance.timeOrigin,
           onloadT: performance.timeOrigin,
           pageT: performance.now(),
           tran: 15,
         };
-      };
+      }, 'csi');
     }
     if (!window.chrome.loadTimes) {
-      window.chrome.loadTimes = function() {
+      window.chrome.loadTimes = markNative(function loadTimes() {
         return {
           requestTime: performance.timeOrigin / 1000,
           startLoadTime: performance.timeOrigin / 1000,
@@ -162,7 +206,7 @@ const STEALTH_SCRIPT = `(function() {
           wasAlternateProtocolAvailable: false,
           connectionInfo: 'h2',
         };
-      };
+      }, 'loadTimes');
     }
   } catch {}
 })();`;

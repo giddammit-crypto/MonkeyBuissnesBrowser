@@ -123,8 +123,8 @@ function FindProxyForURL(url, host) {
     return "DIRECT";
   }
 
-  // 2. IPv6 Unique Local and Link-Local Addresses
-  if (typeof isInNetEx !== "undefined") {
+  // 2. IPv6 Unique Local and Link-Local Addresses (only check if host is an IPv6 literal to avoid synchronous DNS leaks)
+  if (typeof isInNetEx !== "undefined" && host.indexOf(":") !== -1) {
     try {
       if (isInNetEx(host, "fc00::/7") || isInNetEx(host, "fe80::/10")) {
         return "DIRECT";

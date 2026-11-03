@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import type { ServerProfile } from '../../shared/types';
 import { generateWireGuardConfigText } from './WireGuardParser';
 
@@ -30,7 +31,9 @@ export class NetworkManagerBackend {
   public async isAvailable(): Promise<boolean> {
     try {
       const res = await runNmcli(['general', 'status'], 3000);
-      return res.stdout.toLowerCase().includes('connected') || res.stdout.toLowerCase().includes('подключено');
+      // A running NetworkManager is available even when the machine currently
+      // has no active connection (nmcli reports "disconnected" in that case).
+      return typeof res.stdout === 'string';
     } catch {
       return false;
     }
@@ -44,9 +47,12 @@ export class NetworkManagerBackend {
       customDnsServers?: string[];
     } = {}
   ): Promise<{ connectionId: string; interfaceName: string }> {
-    // Linux kernel interface names must be <= 15 characters (IFNAMSIZ-1) and alphanumeric
-    const cleanId = profile.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 9) || '0';
-    const connName = `lsec_${cleanId}`;
+    // Connection names are not kernel interface names. Keep a readable prefix
+    // but include a stable hash so two profiles with the same prefix cannot
+    // delete or replace each other.
+    const cleanId = profile.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) || '0';
+    const suffix = crypto.createHash('sha256').update(profile.id).digest('hex').slice(0, 8);
+    const connName = `lsec_${cleanId}_${suffix}`;
     const tempDir = os.tmpdir();
     const tempFile = path.join(tempDir, `${connName}.conf`);
 
@@ -97,11 +103,7 @@ export class NetworkManagerBackend {
       modifications.push('ipv6.method', 'disabled');
     }
 
-    try {
-      await runNmcli(modifications);
-    } catch (err) {
-      console.warn('[NetworkManagerBackend] Warning applying connection modifications:', err);
-    }
+    await runNmcli(modifications);
 
     this.activeConnectionId = connName;
     this.activeInterface = connName;

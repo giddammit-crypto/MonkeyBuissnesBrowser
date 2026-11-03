@@ -246,4 +246,98 @@ describe('VoodooAiService', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('seamlessly rotates to next key when encountering 502 or 503 server error on multi-key configuration', async () => {
+    const service = new VoodooAiService();
+    const key1 = 'sk-xt-server-error-key';
+    const key2 = 'sk-xt-server-backup-working-key';
+
+    let fetchCount = 0;
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, options: any) => {
+      fetchCount++;
+      const auth = options.headers?.Authorization || '';
+      if (auth.includes('server-error-key')) {
+        return {
+          ok: false,
+          status: 503,
+          text: async () => JSON.stringify({ error: { message: 'Service Temporarily Unavailable' } }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: 'Успешный ответ от резервного ключа после сбоя 503.',
+              },
+            },
+          ],
+        }),
+      };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const res = await service.chat(
+        [{ id: '1', role: 'user', content: 'Привет', timestamp: Date.now() }],
+        { keys: [key1, key2] }
+      );
+
+      expect(fetchCount).toBe(2);
+      expect(res.reply).toBe('Успешный ответ от резервного ключа после сбоя 503.');
+      expect(res.keyIndexUsed).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('injects rich page context (title, url, metaDescription, headings, cleanText) with context protection', async () => {
+    const service = new VoodooAiService();
+    const workingKey = 'sk-xt-test-ctx-key';
+    let interceptedBody: any;
+
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, options: any) => {
+      interceptedBody = JSON.parse(options.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [{ message: { content: 'Страница успешно проанализирована.' } }],
+        }),
+      };
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const res = await service.chat(
+        [{ id: '1', role: 'user', content: 'О чём эта страница?', timestamp: Date.now() }],
+        {
+          keys: [workingKey],
+          tabContext: {
+            title: 'Интересная статья об искусственном интеллекте',
+            url: 'https://example.com/ai-article',
+            metaDescription: 'Полное руководство по современным LLM и нейросетям.',
+            headings: ['Введение в LLM', 'Архитектура трансформеров', 'Будущее автономных агентов'],
+            cleanText: 'Текст статьи: Искусственный интеллект активно развивается...',
+          },
+        }
+      );
+
+      expect(res.error).toBeUndefined();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const userContextMsg = interceptedBody.messages.find((m: any) =>
+        typeof m.content === 'string' && m.content.includes('Недоверенные данные активной вкладки')
+      );
+      expect(userContextMsg).toBeDefined();
+      expect(userContextMsg.content).toContain('Интересная статья об искусственном интеллекте');
+      expect(userContextMsg.content).toContain('https://example.com/ai-article');
+      expect(userContextMsg.content).toContain('Полное руководство по современным LLM');
+      expect(userContextMsg.content).toContain('Введение в LLM');
+      expect(userContextMsg.content).toContain('Текст статьи: Искусственный интеллект');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

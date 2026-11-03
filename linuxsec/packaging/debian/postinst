@@ -3,6 +3,14 @@ set -e
 
 case "$1" in
   configure)
+    # Only members of this group may control the privileged firewall daemon.
+    if ! getent group linuxsec >/dev/null 2>&1; then
+      groupadd --system linuxsec
+    fi
+    if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ] && id "${SUDO_USER}" >/dev/null 2>&1; then
+      usermod -a -G linuxsec "${SUDO_USER}" || true
+    fi
+
     # Install PolicyKit policy if not present
     if [ -d /usr/share/polkit-1/actions ] && [ -f /opt/Linuxsec/resources/packaging/polkit/org.linuxsec.policy ]; then
       cp /opt/Linuxsec/resources/packaging/polkit/org.linuxsec.policy /usr/share/polkit-1/actions/

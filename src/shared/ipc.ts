@@ -26,6 +26,7 @@ import type {
   SaveNoteInput,
   VoodooChatMessage,
   VoodooChatResponse,
+  VoodooTabContext,
   VoodooKeyStatusItem,
   VoodooCheckAllKeysResult,
   TranscribeAudioResult,
@@ -51,6 +52,8 @@ export interface BrowserApi {
   getSnapshot(): Promise<BrowserSnapshot>;
   getPrivacyDashboard(tabId?: string): Promise<PrivacyDashboardSnapshot>;
   createTab(input?: { url?: string; isPrivate?: boolean }): Promise<TabSnapshot>;
+  openNewWindow(url?: string): Promise<void>;
+  openPrivateWindow(url?: string): Promise<void>;
   activateTab(tabId: string): Promise<void>;
   openCurrentPageExternally(tabId: string): Promise<void>;
   setSiteCookieException(tabId: string, allow: boolean): Promise<void>;
@@ -149,13 +152,15 @@ export interface BrowserApi {
   togglePinNote(id: string): Promise<NoteEntry | null>;
   createNoteFromTab(tabId: string, textSnippet?: string): Promise<NoteEntry>;
   cancelVoodooRequest(): Promise<void>;
-  sendVoodooMessage(messages: VoodooChatMessage[], tabContext?: { url?: string; title?: string; chatText?: string }): Promise<VoodooChatResponse>;
+  sendVoodooMessage(messages: VoodooChatMessage[], tabContext?: VoodooTabContext): Promise<VoodooChatResponse>;
   testVoodooKey(key: string): Promise<{ success: boolean; latencyMs?: number; error?: string }>;
   checkAllVoodooKeys(): Promise<VoodooCheckAllKeysResult>;
   getVoodooKeysStatus(): Promise<VoodooKeyStatusItem[]>;
   transcribeAudio(audioBase64: string, mimeType?: string): Promise<TranscribeAudioResult>;
   openPath(targetPath: string): Promise<string>;
   extractActiveTabChatContext(): Promise<{ text: string; source: string; count: number }>;
+  getActiveTabPageContext(maxLength?: number): Promise<VoodooTabContext>;
+  triggerVoodooQuickAction(action: 'summary' | 'tldr' | 'translate' | 'explain' | 'facts'): Promise<void>;
   insertTextIntoActiveTab(text: string): Promise<boolean>;
   setVoodooOpen(open: boolean): Promise<void>;
   moveVoodoo(deltaX: number, deltaY: number): Promise<void>;

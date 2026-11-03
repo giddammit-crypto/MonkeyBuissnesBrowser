@@ -128,18 +128,16 @@ export class VpnCoordinator extends EventEmitter {
 
       // 4. Apply Kill Switch and IPv6 protection via daemon if available & enabled
       if (settings.killSwitchEnabled) {
-        try {
-          await this.daemon.enableKillSwitch(this.interfaceName, profile.endpoint);
-        } catch (err) {
-          console.warn('[VpnCoordinator] Kill Switch daemon unavailable:', err);
+        const response = await this.daemon.enableKillSwitch(this.interfaceName, profile.endpoint);
+        if (!response.success) {
+          throw new Error(response.error || 'Kill Switch daemon rejected the request');
         }
       }
 
       if (settings.ipv6LeakProtection) {
-        try {
-          await this.daemon.blockIpv6();
-        } catch {
-          // Ignore if daemon not running
+        const response = await this.daemon.blockIpv6();
+        if (!response.success) {
+          throw new Error(response.error || 'IPv6 leak protection daemon rejected the request');
         }
       }
 

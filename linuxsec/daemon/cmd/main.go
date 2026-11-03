@@ -5,19 +5,25 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 )
 
 const (
-	SocketPath = "/run/linuxsec/daemon.sock"
-	SocketDir  = "/run/linuxsec"
+	SocketPath  = "/run/linuxsec/daemon.sock"
+	SocketDir   = "/run/linuxsec"
+	SocketGroup = "linuxsec"
 )
+
+var interfaceNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,15}$`)
 
 type Request struct {
 	Action     string   `json:"action"`
@@ -33,11 +39,12 @@ type Response struct {
 }
 
 type DaemonServer struct {
-	mu          sync.Mutex
-	killSwitch  bool
-	ipv6Blocked bool
-	vpnIface    string
-	endpointIP  string
+	mu                   sync.Mutex
+	killSwitch           bool
+	ipv6Blocked          bool
+	originalIPv6Disabled *string
+	vpnIface             string
+	endpointIP           string
 }
 
 func main() {
@@ -47,8 +54,18 @@ func main() {
 
 	server := &DaemonServer{}
 
-	if err := os.MkdirAll(SocketDir, 0755); err != nil {
+	if err := os.MkdirAll(SocketDir, 0750); err != nil {
 		log.Fatalf("Failed to create socket directory: %v", err)
+	}
+	if group, err := lookupGroupGid(SocketGroup); err == nil {
+		if err := os.Chown(SocketDir, os.Getuid(), group); err != nil {
+			log.Printf("Failed to set socket directory group: %v", err)
+		}
+		if err := os.Chmod(SocketDir, 0770); err != nil {
+			log.Printf("Failed to set socket directory permissions: %v", err)
+		}
+	} else {
+		_ = os.Chmod(SocketDir, 0700)
 	}
 
 	// Remove stale socket if exists
@@ -61,16 +78,27 @@ func main() {
 	defer os.Remove(SocketPath)
 	defer listener.Close()
 
-	// Set socket permissions so desktop users can interact with it
-	if err := os.Chmod(SocketPath, 0666); err != nil {
+	// The socket is intentionally group-accessible, never world-accessible.
+	// Packaging creates the linuxsec group and adds the desktop user to it.
+	if err := os.Chmod(SocketPath, 0660); err != nil {
 		log.Printf("Failed to chmod socket: %v", err)
+	}
+	if group, err := lookupGroupGid(SocketGroup); err == nil {
+		if err := os.Chown(SocketPath, os.Getuid(), group); err != nil {
+			log.Printf("Failed to set socket group: %v", err)
+		}
+	} else {
+		log.Printf("Socket group %q is unavailable; keeping the socket restricted to its owner: %v", SocketGroup, err)
+		if err := os.Chmod(SocketPath, 0600); err != nil {
+			log.Printf("Failed to restrict socket: %v", err)
+		}
 	}
 
 	log.Printf("linuxsecd daemon started on %s", SocketPath)
 
 	// Clean up on termination signals
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
 		<-sigCh
 		log.Println("Shutting down linuxsecd, cleaning up firewall...")
@@ -159,6 +187,13 @@ func (s *DaemonServer) handleConnection(conn net.Conn) {
 }
 
 func (s *DaemonServer) applyKillSwitch(vpnIface, endpointIP string) error {
+	if vpnIface != "" && !interfaceNamePattern.MatchString(vpnIface) {
+		return fmt.Errorf("invalid VPN interface name")
+	}
+	host, err := endpointHost(endpointIP)
+	if err != nil {
+		return err
+	}
 	log.Printf("Applying Kill Switch for iface=%s, endpoint=%s", vpnIface, endpointIP)
 
 	// Clean any previous rules first
@@ -175,13 +210,12 @@ add rule inet linuxsec_ks output ct state established,related accept
 add rule inet linuxsec_ks output udp dport 67-68 accept
 add rule inet linuxsec_ks output udp sport 67-68 accept
 `)
-		if endpointIP != "" {
-			// Extract host without port
-			host := endpointIP
-			if idx := strings.LastIndex(host, ":"); idx != -1 {
-				host = host[:idx]
+		if host != "" {
+			family := "ip"
+			if strings.Contains(host, ":") {
+				family = "ip6"
 			}
-			nftScript += fmt.Sprintf("add rule inet linuxsec_ks output ip daddr %s accept\n", host)
+			nftScript += fmt.Sprintf("add rule inet linuxsec_ks output %s daddr %s accept\n", family, host)
 		}
 		if vpnIface != "" {
 			nftScript += fmt.Sprintf("add rule inet linuxsec_ks output oifname \"%s*\" accept\n", vpnIface)
@@ -210,11 +244,7 @@ add rule inet linuxsec_ks output udp sport 67-68 accept
 		{"iptables", "-A", "LINUXSEC_KS", "-p", "udp", "--dport", "67:68", "--sport", "67:68", "-j", "ACCEPT"},
 	}
 
-	if endpointIP != "" {
-		host := endpointIP
-		if idx := strings.LastIndex(host, ":"); idx != -1 {
-			host = host[:idx]
-		}
+	if host != "" {
 		cmds = append(cmds, []string{"iptables", "-A", "LINUXSEC_KS", "-d", host, "-j", "ACCEPT"})
 	}
 
@@ -229,7 +259,11 @@ add rule inet linuxsec_ks output udp sport 67-68 accept
 	cmds = append(cmds, []string{"iptables", "-A", "LINUXSEC_KS", "-j", "DROP"})
 
 	for _, c := range cmds {
-		_ = exec.Command(c[0], c[1:]...).Run()
+		if err := exec.Command(c[0], c[1:]...).Run(); err != nil {
+			// Do not report a kill switch as active if even one rule failed.
+			_ = s.removeKillSwitch()
+			return fmt.Errorf("iptables command %q failed: %w", strings.Join(c, " "), err)
+		}
 	}
 
 	return nil
@@ -250,12 +284,28 @@ func (s *DaemonServer) removeKillSwitch() error {
 }
 
 func (s *DaemonServer) setIpv6Block(block bool) error {
+	const sysctlPath = "/proc/sys/net/ipv6/conf/all/disable_ipv6"
+	if block && s.originalIPv6Disabled == nil {
+		if value, err := os.ReadFile(sysctlPath); err == nil {
+			trimmed := strings.TrimSpace(string(value))
+			s.originalIPv6Disabled = &trimmed
+		}
+	}
+
 	val := "0"
 	if block {
 		val = "1"
+	} else if s.originalIPv6Disabled != nil {
+		val = *s.originalIPv6Disabled
 	}
 	cmd := exec.Command("sysctl", "-w", fmt.Sprintf("net.ipv6.conf.all.disable_ipv6=%s", val))
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	if !block {
+		s.originalIPv6Disabled = nil
+	}
+	return nil
 }
 
 func (s *DaemonServer) cleanup() {
@@ -267,5 +317,43 @@ func (s *DaemonServer) cleanup() {
 
 func init() {
 	// Ensure directory exists
-	_ = os.MkdirAll(filepath.Dir(SocketPath), 0755)
+	_ = os.MkdirAll(filepath.Dir(SocketPath), 0750)
+}
+
+func lookupGroupGid(name string) (int, error) {
+	group, err := os.ReadFile(filepath.Join("/etc/group"))
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(group), "\n") {
+		parts := strings.Split(line, ":")
+		if len(parts) >= 3 && parts[0] == name {
+			gid, err := strconv.Atoi(parts[2])
+			if err != nil {
+				return 0, fmt.Errorf("invalid gid for group %q", name)
+			}
+			return gid, nil
+		}
+	}
+	return 0, fmt.Errorf("group %q not found", name)
+}
+
+func endpointHost(endpoint string) (string, error) {
+	if endpoint == "" {
+		return "", nil
+	}
+	host := endpoint
+	if h, port, err := net.SplitHostPort(endpoint); err == nil {
+		if _, err := strconv.ParseUint(port, 10, 16); err != nil || port == "0" {
+			return "", fmt.Errorf("invalid VPN endpoint port")
+		}
+		host = h
+	} else if strings.Count(endpoint, ":") == 1 {
+		return "", fmt.Errorf("invalid VPN endpoint")
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return "", fmt.Errorf("invalid VPN endpoint IP")
+	}
+	return addr.String(), nil
 }

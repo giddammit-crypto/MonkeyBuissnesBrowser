@@ -23,7 +23,14 @@ const builtInRules: FilterRule[] = [
   { token: 'stats.g.doubleclick.net', kind: 'host' },
   { token: 'admob.com', kind: 'host' },
   { token: '2mdn.net', kind: 'host' },
+  { token: 'google-analytics.com', kind: 'host' },
+  { token: 'ssl.google-analytics.com', kind: 'host' },
+  { token: 'googletagmanager.com', kind: 'host' },
   // Yandex advertising & metrics
+  { token: 'mc.yandex.ru', kind: 'host' },
+  { token: 'mc.yandex.com', kind: 'host' },
+  { token: 'mc.webvisor.com', kind: 'host' },
+  { token: 'mc.webvisor.org', kind: 'host' },
   { token: 'an.yandex.ru', kind: 'host' },
   { token: 'yabs.yandex.ru', kind: 'host' },
   { token: 'adstat.yandex.ru', kind: 'host' },
@@ -58,6 +65,18 @@ const builtInRules: FilterRule[] = [
   { token: 'moatads.com', kind: 'host' },
   { token: 'advertising.com', kind: 'host' },
   { token: 'adtechus.com', kind: 'host' },
+  // Telemetry, heatmap & keylogger trackers
+  { token: 'connect.facebook.net', kind: 'host' },
+  { token: 'clarity.ms', kind: 'host' },
+  { token: 'hotjar.com', kind: 'host' },
+  { token: 'static.hotjar.com', kind: 'host' },
+  { token: 'analytics.tiktok.com', kind: 'host' },
+  { token: 'segment.io', kind: 'host' },
+  { token: 'api.segment.io', kind: 'host' },
+  { token: 'amplitude.com', kind: 'host' },
+  // Cookie consent banner trackers
+  { token: 'consent.cookiebot.com', kind: 'host' },
+  { token: 'cdn.cookielaw.org', kind: 'host' },
   // Path rules
   { token: '/ads/', kind: 'path' },
   { token: '/adserver/', kind: 'path' },

@@ -120,4 +120,27 @@ describe('VpnCoordinator State Machine', () => {
     expect(status.state).toBe('error');
     expect(status.errorMessage).toContain('Connection activation timeout');
   });
+
+  it('does not report connected when kill switch setup is rejected', async () => {
+    settingsStore.updateSettings({ killSwitchEnabled: true, ipv6LeakProtection: false });
+    vi.mocked(mockDaemon.enableKillSwitch).mockResolvedValueOnce({ success: false, error: 'permission denied' });
+
+    await coordinator.connect(testProfile);
+
+    const status = coordinator.getStatus();
+    expect(status.state).toBe('error');
+    expect(status.errorMessage).toContain('permission denied');
+    expect(mockNm.deactivate).toHaveBeenCalled();
+    expect(mockNm.deleteConnection).toHaveBeenCalled();
+  });
+
+  it('does not report connected when IPv6 protection is rejected', async () => {
+    settingsStore.updateSettings({ ipv6LeakProtection: true });
+    vi.mocked(mockDaemon.blockIpv6).mockResolvedValueOnce({ success: false, error: 'daemon unavailable' });
+
+    await coordinator.connect(testProfile);
+
+    expect(coordinator.getStatus().state).toBe('error');
+    expect(coordinator.getStatus().errorMessage).toContain('daemon unavailable');
+  });
 });

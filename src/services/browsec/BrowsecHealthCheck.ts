@@ -1,5 +1,6 @@
 import tls from 'node:tls';
 import { isIP } from 'node:net';
+import { getChromeUserAgent } from '../../shared/chromiumIdentity';
 import { BROWSEC_COUNTRIES } from './browsecData';
 import type { BrowsecCountry, BrowsecServer, ServerHealthEntry, VpnHealthStatus, VpnServerHealth } from './types';
 
@@ -261,8 +262,9 @@ export class BrowsecHealthCheckEngine {
           }
 
           try {
+            const ua = getChromeUserAgent();
             socket.write(
-              'CONNECT 1.1.1.1:443 HTTP/1.1\r\nHost: 1.1.1.1:443\r\nProxy-Connection: keep-alive\r\nUser-Agent: soulm8te-vpn-probe/1.0\r\n\r\n',
+              `CONNECT 1.1.1.1:443 HTTP/1.1\r\nHost: 1.1.1.1:443\r\nProxy-Connection: keep-alive\r\nUser-Agent: ${ua}\r\n\r\n`,
             );
           } catch (writeErr: any) {
             finish(false, Math.max(1, Date.now() - startTime), writeErr?.message || 'Failed to send HTTP CONNECT');

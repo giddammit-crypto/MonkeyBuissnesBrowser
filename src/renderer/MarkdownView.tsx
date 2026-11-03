@@ -5,6 +5,69 @@ interface MarkdownViewProps {
   className?: string;
 }
 
+function highlightCode(code: string): React.ReactNode {
+  const lines = code.split('\n');
+  return lines.map((line, lineIdx) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('//') || trimmed.startsWith('#')) {
+      return (
+        <span key={lineIdx} className="voodoo-token-cm">
+          {line}{lineIdx < lines.length - 1 ? '\n' : ''}
+        </span>
+      );
+    }
+    const parts: React.ReactNode[] = [];
+    const tokenRegex = /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(\b(?:const|let|var|function|return|import|export|from|class|if|else|for|while|try|catch|async|await|new|this|typeof|interface|type)\b)|(\b\d+(?:\.\d+)?\b)/g;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = tokenRegex.exec(line)) !== null) {
+      if (m.index > last) {
+        parts.push(line.slice(last, m.index));
+      }
+      if (m[1]) {
+        parts.push(<span key={m.index} className="voodoo-token-str">{m[1]}</span>);
+      } else if (m[2]) {
+        parts.push(<span key={m.index} className="voodoo-token-kw">{m[2]}</span>);
+      } else if (m[3]) {
+        parts.push(<span key={m.index} className="voodoo-token-num">{m[3]}</span>);
+      }
+      last = tokenRegex.lastIndex;
+    }
+    if (last < line.length) {
+      parts.push(line.slice(last));
+    }
+    return (
+      <span key={lineIdx}>
+        {parts}{lineIdx < lines.length - 1 ? '\n' : ''}
+      </span>
+    );
+  });
+}
+
+function CodeBlock({ code, lang }: { code: string; lang?: string }): React.JSX.Element {
+  const [copied, setCopied] = React.useState(false);
+  const handleCopy = () => {
+    void navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  };
+
+  return (
+    <div className="voodoo-code-block-wrapper">
+      <div className="voodoo-code-header">
+        <span className="voodoo-code-lang">{lang || 'code'}</span>
+        <button className="voodoo-code-copy-btn" onClick={handleCopy} title="Копировать код">
+          {copied ? 'Скопировано! ✓' : 'Копировать'}
+        </button>
+      </div>
+      <pre className="voodoo-pre">
+        <code>{highlightCode(code)}</code>
+      </pre>
+    </div>
+  );
+}
+
 /**
  * Parses inline markdown: bold, italic, strikethrough, inline code, and links.
  */
@@ -132,12 +195,11 @@ export default function MarkdownView({ content, className = '' }: MarkdownViewPr
       if (inCodeBlock) {
         // End code block
         elements.push(
-          <div key={`codeblock-${i}`} className="voodoo-code-block-wrapper">
-            {codeBlockLang && <span className="voodoo-code-lang">{codeBlockLang}</span>}
-            <pre className="voodoo-pre">
-              <code>{codeBlockLines.join('\n')}</code>
-            </pre>
-          </div>
+          <CodeBlock
+            key={`codeblock-${i}`}
+            code={codeBlockLines.join('\n')}
+            lang={codeBlockLang}
+          />
         );
         codeBlockLines = [];
         codeBlockLang = '';

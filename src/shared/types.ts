@@ -157,6 +157,7 @@ export interface UpdateAssetInfo {
   downloadUrl: string;
   size: number;
   contentType: string;
+  sha256?: string;
 }
 
 export interface UpdateCheckResult {
@@ -461,6 +462,17 @@ export interface VoodooToolDefinition {
   };
 }
 
+export interface VoodooTabContext {
+  url?: string;
+  title?: string;
+  metaDescription?: string;
+  headings?: string[];
+  cleanText?: string;
+  selectedText?: string;
+  chatText?: string;
+  totalLength?: number;
+}
+
 export interface VoodooChatMessage {
   contextUsage?: VoodooContextUsage;
   executedActionCount?: number;
@@ -551,6 +563,5 @@ export interface CleanResult {
   metricsAfter: StorageMetrics;
   error?: string;
 }
-
 
 

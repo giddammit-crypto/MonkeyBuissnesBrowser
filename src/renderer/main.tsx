@@ -900,7 +900,13 @@ function App(): React.JSX.Element {
         setVoodooOpen(next);
         void window.browserApi.setVoodooOpen(next).catch(() => {});
         return;
-      } else if (modifier && event.shiftKey && (isKey("n", "KeyN", "т") || isKey("p", "KeyP", "з"))) {
+      } else if (modifier && event.shiftKey && isKey("n", "KeyN", "т")) {
+        event.preventDefault();
+        run(window.browserApi.openPrivateWindow());
+      } else if (modifier && !event.shiftKey && !event.altKey && isKey("n", "KeyN", "т")) {
+        event.preventDefault();
+        run(window.browserApi.openNewWindow());
+      } else if (modifier && event.shiftKey && isKey("p", "KeyP", "з")) {
         event.preventDefault();
         createTab(true);
       } else if (modifier && !event.shiftKey && isKey("p", "KeyP", "з")) {
@@ -1259,6 +1265,12 @@ function App(): React.JSX.Element {
                     setSelectedSuggestionIndex(-1);
                     return;
                   }
+                  if (address !== originalAddressRef.current) {
+                    setAddress(originalAddressRef.current);
+                    setOmniboxQuery("");
+                    setSelectedSuggestionIndex(-1);
+                    return;
+                  }
                   setAddress(originalAddressRef.current);
                   setEditingAddress(false);
                   setSelectedSuggestionIndex(-1);
@@ -1442,6 +1454,21 @@ function App(): React.JSX.Element {
                   }}
                 >
                   <QrCode size={15} />
+                </button>
+              )}
+              {currentTab.url && !currentTab.isInternal && !currentTab.isPrivate && snapshot.settings.voodooEnabled !== false && (
+                <button
+                  type="button"
+                  className="omnibox-action-btn omnibox-voodoo-summary-btn"
+                  title="Суммаризировать страницу (Вуду AI) · 1 клик"
+                  aria-label="Суммаризировать страницу"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setVoodooOpen(true);
+                    void window.browserApi.triggerVoodooQuickAction('summary');
+                  }}
+                >
+                  <Sparkles size={15} />
                 </button>
               )}
             </div>
@@ -1682,6 +1709,24 @@ function App(): React.JSX.Element {
               label="Новая вкладка"
               detail="Ctrl+T"
               onClick={() => createTab()}
+            />
+            <MenuAction
+              icon={<Plus size={16} />}
+              label="Новое окно"
+              detail="Ctrl+N"
+              onClick={() => {
+                setPopover(null);
+                run(window.browserApi.openNewWindow());
+              }}
+            />
+            <MenuAction
+              icon={<Shield size={16} />}
+              label="Новое приватное окно"
+              detail="Ctrl+Shift+N"
+              onClick={() => {
+                setPopover(null);
+                run(window.browserApi.openPrivateWindow());
+              }}
             />
             <MenuAction
               icon={<Shield size={16} />}
@@ -2319,11 +2364,27 @@ function App(): React.JSX.Element {
               aria-label="Помощь со входом Google"
             >
               <LockKeyhole size={20} />
-              <div>
+              <div style={{ flex: 1 }}>
                 <strong>{authNotice.title}</strong>
                 <p>{authNotice.message}</p>
               </div>
-              <button className="icon-button" aria-label="Скрыть помощь со входом Google" title="Скрыть" onClick={() => setAuthNoticeDismissed(true)}><X size={16}/></button>
+              <button
+                className="action-button secondary"
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, padding: "6px 12px", cursor: "pointer", whiteSpace: "nowrap" }}
+                onClick={() => {
+                  run(window.browserApi.openCurrentPageExternally(currentTab.id));
+                }}
+              >
+                <ExternalLink size={15} /> Открыть в системном браузере
+              </button>
+              <button
+                className="icon-button"
+                aria-label="Скрыть помощь со входом Google"
+                title="Скрыть помощь"
+                onClick={() => setAuthNoticeDismissed(true)}
+              >
+                <X size={16} />
+              </button>
             </section>
           )}
         <div
@@ -2674,6 +2735,7 @@ function TabStrip({
                 clientX: event.clientX,
                 clientY: event.clientY,
               };
+              event.dataTransfer.setData("application/x-soulm8te-tab", tab.id);
               event.dataTransfer.setData("text/plain", tab.id);
               event.dataTransfer.effectAllowed = "move";
               setDraggingId(tab.id);
@@ -2711,32 +2773,32 @@ function TabStrip({
               }
             }}
             onDragEnd={(event) => {
-              const wasHandled = dragHandledRef.current || event.dataTransfer.dropEffect === "move";
+              const wasHandled = dragHandledRef.current;
               const sourceId = draggingId || tab.id;
               setDraggingId(null);
               setDragOver(null);
 
               if (!wasHandled && sourceId && tabs.length > 1) {
-                const finalScreenX = (event.screenX !== 0 || event.screenY !== 0)
-                  ? event.screenX
-                  : (window.screenX + event.clientX);
-                const finalScreenY = (event.screenX !== 0 || event.screenY !== 0)
-                  ? event.screenY
-                  : (window.screenY + event.clientY);
+                const stripRect = stripRef.current?.getBoundingClientRect() || listRef.current?.getBoundingClientRect();
+                const isClientOutside = !stripRect ||
+                  event.clientY > stripRect.bottom + 4 ||
+                  event.clientY < stripRect.top - 4 ||
+                  event.clientX < stripRect.left - 4 ||
+                  event.clientX > stripRect.right + 4;
 
-                const stripRect = listRef.current?.getBoundingClientRect();
-                const isOutside = !stripRect ||
-                  event.clientX < stripRect.left - 20 ||
-                  event.clientX > stripRect.right + 20 ||
-                  event.clientY < stripRect.top - 20 ||
-                  event.clientY > stripRect.bottom + 20;
-
-                const distance = Math.hypot(
-                  finalScreenX - dragStartPosRef.current.screenX,
-                  finalScreenY - dragStartPosRef.current.screenY,
+                const isWaylandEscape = event.clientX === 0 && event.clientY === 0 && (dragStartPosRef.current.clientX > 0 || dragStartPosRef.current.clientY > 0);
+                const clientDistance = Math.hypot(
+                  event.clientX - dragStartPosRef.current.clientX,
+                  event.clientY - dragStartPosRef.current.clientY,
                 );
 
-                if (isOutside && distance > 30) {
+                if (isWaylandEscape || (isClientOutside && (clientDistance > 12 || Math.abs(event.clientY - dragStartPosRef.current.clientY) > 10))) {
+                  const finalScreenX = (event.screenX !== 0 || event.screenY !== 0)
+                    ? event.screenX
+                    : (window.screenX + event.clientX);
+                  const finalScreenY = (event.screenX !== 0 || event.screenY !== 0)
+                    ? event.screenY
+                    : (window.screenY + event.clientY);
                   void window.browserApi.detachTab(sourceId, finalScreenX, finalScreenY).catch(console.error);
                 }
               }
@@ -4630,7 +4692,7 @@ function SettingsPanel({
               <strong>Установленная версия</strong>
               <small>Если здесь нет новых настроек, запущена старая сборка. После обновления GitHub приложение нужно пересобрать и переустановить.</small>
             </span>
-            <strong>soulm8te 0.9.7</strong>
+            <strong>soulm8te 0.9.9</strong>
           </div>
           <label className="setting-row">
             <span><strong>Стиль оформления</strong><small>Отдельный стиль Detroit · Хлоя или Cyberpunk. Исходные темы не изменяются.</small></span>
@@ -5285,7 +5347,7 @@ function SettingsPanel({
             <div style={{ flex: 1 }}>
               <strong>soulm8te Browser</strong>
               <p>Ваш цифровой союзник · Detroit: Become Human</p>
-              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.9.7</small>
+              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 0.9.9</small>
             </div>
             <button
               className="action-button secondary"

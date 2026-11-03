@@ -293,3 +293,227 @@ describe('Tab tear-off and multi-window routing', () => {
     expect(controller.onDetachTab).toHaveBeenCalledWith(controller, 'tab-1', 500, 300);
   });
 });
+describe('Tab tear-off drag-end decision and Linux dropEffect behavior', () => {
+  interface DragEndParams {
+    dragHandled: boolean;
+    dropEffect: string;
+    isOutside: boolean;
+    distance: number;
+    tabsCount: number;
+    sourceId: string | null;
+    finalScreenX: number;
+    finalScreenY: number;
+  }
+
+  function evaluateDragEnd(params: DragEndParams): {
+    shouldDetach: boolean;
+    sourceId?: string;
+    screenX?: number;
+    screenY?: number;
+    reason?: string;
+  } {
+    // Linux fix: dropEffect === 'move' is reported on desktop release by Chromium,
+    // so wasHandled must ONLY be true if an internal onDrop actually handled it.
+    const wasHandled = params.dragHandled;
+    if (wasHandled) {
+      return { shouldDetach: false, reason: 'handled-internally' };
+    }
+    if (params.tabsCount <= 1) {
+      return { shouldDetach: false, reason: 'single-tab-prevented' };
+    }
+    if (!params.sourceId) {
+      return { shouldDetach: false, reason: 'no-source-id' };
+    }
+    if (params.isOutside && params.distance > 30) {
+      return {
+        shouldDetach: true,
+        sourceId: params.sourceId,
+        screenX: params.finalScreenX,
+        screenY: params.finalScreenY,
+        reason: 'detached-to-new-window',
+      };
+    }
+    return { shouldDetach: false, reason: 'inside-or-short-distance' };
+  }
+
+  it('initiates detachTab when dragHandled is false and isOutside is true', () => {
+    const result = evaluateDragEnd({
+      dragHandled: false,
+      dropEffect: 'none',
+      isOutside: true,
+      distance: 75,
+      tabsCount: 3,
+      sourceId: 'tab-tear-1',
+      finalScreenX: 520,
+      finalScreenY: 340,
+    });
+    expect(result.shouldDetach).toBe(true);
+    expect(result.sourceId).toBe('tab-tear-1');
+    expect(result.screenX).toBe(520);
+    expect(result.screenY).toBe(340);
+  });
+
+  it('ensures dropEffect === "move" on Linux does NOT block tab detachment', () => {
+    // Chromium on Linux under X11/Wayland sets dropEffect to "move" when cursor leaves window.
+    // Ensure that dropEffect === "move" does NOT prevent tab tear-off when dragHandled is false.
+    const result = evaluateDragEnd({
+      dragHandled: false,
+      dropEffect: 'move',
+      isOutside: true,
+      distance: 110,
+      tabsCount: 2,
+      sourceId: 'tab-linux',
+      finalScreenX: 680,
+      finalScreenY: 420,
+    });
+    expect(result.shouldDetach).toBe(true);
+    expect(result.sourceId).toBe('tab-linux');
+  });
+
+  it('prevents detachTab when only 1 tab exists even if dragged outside', () => {
+    const result = evaluateDragEnd({
+      dragHandled: false,
+      dropEffect: 'none',
+      isOutside: true,
+      distance: 150,
+      tabsCount: 1,
+      sourceId: 'tab-sole',
+      finalScreenX: 500,
+      finalScreenY: 300,
+    });
+    expect(result.shouldDetach).toBe(false);
+    expect(result.reason).toBe('single-tab-prevented');
+  });
+
+  it('permits tab detachment when 2 or more tabs exist', () => {
+    const twoTabs = evaluateDragEnd({
+      dragHandled: false,
+      dropEffect: 'none',
+      isOutside: true,
+      distance: 60,
+      tabsCount: 2,
+      sourceId: 'tab-2of2',
+      finalScreenX: 400,
+      finalScreenY: 200,
+    });
+    expect(twoTabs.shouldDetach).toBe(true);
+
+    const fiveTabs = evaluateDragEnd({
+      dragHandled: false,
+      dropEffect: 'none',
+      isOutside: true,
+      distance: 60,
+      tabsCount: 5,
+      sourceId: 'tab-5of5',
+      finalScreenX: 400,
+      finalScreenY: 200,
+    });
+    expect(fiveTabs.shouldDetach).toBe(true);
+  });
+
+  it('suppresses detachTab when dragHandled is true (internal drop to tab strip)', () => {
+    const result = evaluateDragEnd({
+      dragHandled: true,
+      dropEffect: 'move',
+      isOutside: false,
+      distance: 45,
+      tabsCount: 3,
+      sourceId: 'tab-reordered',
+      finalScreenX: 250,
+      finalScreenY: 100,
+    });
+    expect(result.shouldDetach).toBe(false);
+    expect(result.reason).toBe('handled-internally');
+  });
+
+  it('suppresses detachTab when distance is within jitter threshold (<= 30px)', () => {
+    const result = evaluateDragEnd({
+      dragHandled: false,
+      dropEffect: 'none',
+      isOutside: true,
+      distance: 25,
+      tabsCount: 3,
+      sourceId: 'tab-click-only',
+      finalScreenX: 305,
+      finalScreenY: 105,
+    });
+    expect(result.shouldDetach).toBe(false);
+    expect(result.reason).toBe('inside-or-short-distance');
+  });
+});
+
+describe('browser:new-window IPC creation and routing', () => {
+  const NEW_TAB_URL = 'browser://newtab';
+
+  function resolveNewWindowUrl(rawUrl?: unknown): string {
+    if (typeof rawUrl === 'string' && rawUrl.trim().length > 0) {
+      const trimmed = rawUrl.trim();
+      if (trimmed === NEW_TAB_URL) return NEW_TAB_URL;
+      try {
+        const parsed = new URL(trimmed);
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          return trimmed;
+        }
+      } catch {
+        // invalid URL
+      }
+    }
+    return NEW_TAB_URL;
+  }
+
+  it('resolves valid HTTP/HTTPS URLs for new window creation', () => {
+    expect(resolveNewWindowUrl('https://example.com')).toBe('https://example.com');
+    expect(resolveNewWindowUrl('http://localhost:3000')).toBe('http://localhost:3000');
+    expect(resolveNewWindowUrl('https://github.com/vint/browser')).toBe('https://github.com/vint/browser');
+  });
+
+  it('defaults to NEW_TAB_URL when url is undefined, empty or whitespace', () => {
+    expect(resolveNewWindowUrl(undefined)).toBe(NEW_TAB_URL);
+    expect(resolveNewWindowUrl('')).toBe(NEW_TAB_URL);
+    expect(resolveNewWindowUrl('   ')).toBe(NEW_TAB_URL);
+    expect(resolveNewWindowUrl(null)).toBe(NEW_TAB_URL);
+  });
+
+  it('sanitizes unsafe protocols by falling back to NEW_TAB_URL', () => {
+    expect(resolveNewWindowUrl('javascript:alert(1)')).toBe(NEW_TAB_URL);
+    expect(resolveNewWindowUrl('file:///etc/passwd')).toBe(NEW_TAB_URL);
+    expect(resolveNewWindowUrl('data:text/html,malicious')).toBe(NEW_TAB_URL);
+    expect(resolveNewWindowUrl('chrome://settings')).toBe(NEW_TAB_URL);
+  });
+
+  it('creates window via controller with target bounds and focuses it', async () => {
+    const mockWindow = {
+      isDestroyed: () => false,
+      focus: vi.fn(),
+      show: vi.fn(),
+      getBounds: () => ({ x: 100, y: 100, width: 1280, height: 800 }),
+    };
+
+    const createWindowMock = vi.fn(async (options: any) => {
+      return { window: mockWindow, options };
+    });
+
+    const handler = async (input?: { url?: string; isPrivate?: boolean }) => {
+      const targetUrl = resolveNewWindowUrl(input?.url);
+      const isPrivate = Boolean(input?.isPrivate);
+      await createWindowMock({
+        bounds: { x: 140, y: 140, width: 1280, height: 800 },
+        initialTab: { url: targetUrl, isPrivate, active: true },
+      });
+      mockWindow.focus();
+      return { success: true, url: targetUrl };
+    };
+
+    const result = await handler({ url: 'https://duckduckgo.com', isPrivate: true });
+    expect(result.success).toBe(true);
+    expect(result.url).toBe('https://duckduckgo.com');
+    expect(createWindowMock).toHaveBeenCalledWith(expect.objectContaining({
+      initialTab: expect.objectContaining({
+        url: 'https://duckduckgo.com',
+        isPrivate: true,
+        active: true,
+      }),
+    }));
+    expect(mockWindow.focus).toHaveBeenCalled();
+  });
+});

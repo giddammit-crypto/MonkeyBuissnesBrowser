@@ -13,6 +13,8 @@ import { getChromeUserAgent } from '../shared/chromiumIdentity';
 import { BrowserController } from './tabs/BrowserController';
 import { registerSingleInstance } from './services/SingleInstance';
 
+const NEW_TAB_URL = 'browser://newtab';
+
 // Branding must not silently create a new profile. Test/explicit CLI profiles
 // remain authoritative and the installed browser keeps its original user data.
 if (!app.commandLine.hasSwitch('user-data-dir')) {
@@ -31,6 +33,9 @@ if (process.platform === 'linux') {
 }
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
+app.commandLine.appendSwitch('enable-features', 'DnsOverHttps');
+app.commandLine.appendSwitch('dns-over-https-mode', 'secure');
+app.commandLine.appendSwitch('dns-over-https-templates', 'https://cloudflare-dns.com/dns-query');
 
 app.on('certificate-error', (event, _webContents, _url, error, certificate, callback) => {
   const isAuthorityOrRevocation = error === 'net::ERR_CERT_AUTHORITY_INVALID' || error === 'net::ERR_CERT_UNABLE_TO_CHECK_REVOCATION';
@@ -131,6 +136,14 @@ function registerIpc(): void {
   ipcMain.handle('browser:create-tab', (event, input: { url?: string; isPrivate?: boolean } = {}) =>
     requireShell(event).createTab(input),
   );
+  ipcMain.handle('browser:open-new-window', async (event, url?: string) => {
+    const source = requireShell(event);
+    await openNewWindow(source, typeof url === 'string' ? url : undefined, false);
+  });
+  ipcMain.handle('browser:open-private-window', async (event, url?: string) => {
+    const source = requireShell(event);
+    await openNewWindow(source, typeof url === 'string' ? url : undefined, true);
+  });
   ipcMain.handle('browser:activate-tab', (event, tabId: string) => requireShell(event).activateTab(tabId));
   ipcMain.handle('browser:open-page-externally', (event, tabId: string) => requireShell(event).openCurrentPageExternally(tabId));
   ipcMain.handle('browser:set-site-cookie-exception', (event, tabId: string, allow: boolean) => requireShell(event).setSiteCookieException(tabId, allow));
@@ -324,6 +337,8 @@ function registerIpc(): void {
   ipcMain.handle('browser:transcribe-audio', (event, audioBase64: string, mimeType?: string) => requireShell(event).transcribeAudio(audioBase64, mimeType));
   ipcMain.handle('browser:open-path', (event, targetPath: string) => requireShell(event).openPath(targetPath));
   ipcMain.handle('browser:voodoo-extract-chat', (event) => requireShell(event).extractActiveTabChatContext());
+  ipcMain.handle('browser:voodoo-get-page-context', (event, maxLength?: number) => requireShell(event).getActiveTabPageContext(maxLength));
+  ipcMain.handle('browser:voodoo-trigger-quick-action', (event, action: 'summary' | 'tldr' | 'translate' | 'explain' | 'facts') => requireShell(event).triggerVoodooQuickAction(action));
   ipcMain.handle('browser:voodoo-insert-text', (event, text: string) => requireShell(event).insertTextIntoActiveTab(text));
   ipcMain.handle('browser:set-voodoo-open', (event, open: boolean) => requireShell(event).setVoodooOpen(open));
   ipcMain.handle('browser:move-voodoo', (event, deltaX: number, deltaY: number) => requireShell(event).moveVoodoo(deltaX, deltaY));
@@ -362,6 +377,61 @@ function setupController(c: BrowserController): void {
   c.onDetachTab = async (source, tabId, screenX, screenY) => {
     await detachTabToNewWindow(source, tabId, screenX, screenY);
   };
+  c.onOpenNewWindow = async (source, url, isPrivate) => {
+    await openNewWindow(source, url, isPrivate);
+  };
+}
+
+export async function openNewWindow(
+  source?: BrowserController,
+  url?: string,
+  isPrivate = false,
+): Promise<BrowserController> {
+  const sourceBounds = source?.window && !source.window.isDestroyed()
+    ? source.window.getBounds()
+    : { x: 100, y: 100, width: 1440, height: 900 };
+
+  let targetX = sourceBounds.x + 32;
+  let targetY = sourceBounds.y + 32;
+  let targetWidth = sourceBounds.width || 1440;
+  let targetHeight = sourceBounds.height || 900;
+
+  try {
+    const display = screen.getDisplayNearestPoint({
+      x: sourceBounds.x + Math.round(sourceBounds.width / 2),
+      y: sourceBounds.y + Math.round(sourceBounds.height / 2),
+    });
+    const workArea = display.workArea;
+    targetWidth = Math.min(targetWidth, workArea.width);
+    targetHeight = Math.min(targetHeight, workArea.height);
+    if (targetX + targetWidth > workArea.x + workArea.width) {
+      targetX = workArea.x + 32;
+    }
+    if (targetY + targetHeight > workArea.y + workArea.height) {
+      targetY = workArea.y + 32;
+    }
+  } catch {
+    // fallback to source offset
+  }
+
+  const newController = new BrowserController();
+  setupController(newController);
+  await newController.createWindow({
+    bounds: {
+      x: targetX,
+      y: targetY,
+      width: targetWidth,
+      height: targetHeight,
+    },
+    initialTab: {
+      url: url || NEW_TAB_URL,
+      isPrivate,
+    },
+  });
+  if (newController.window && !newController.window.isDestroyed()) {
+    newController.window.focus();
+  }
+  return newController;
 }
 
 async function detachTabToNewWindow(
@@ -374,33 +444,37 @@ async function detachTabToNewWindow(
   const tab = source.tabs.get(tabId);
   if (!tab || source.tabs.size <= 1) return;
 
-  const tabData = {
-    url: tab.url,
-    title: tab.title,
-    isPrivate: tab.isPrivate,
-    isPinned: tab.isPinned,
-    isMuted: tab.isMuted,
-    workspaceId: tab.workspaceId,
-  };
+  BrowserController.transferringTabs.add(tabId);
+  try {
+    const tabData = {
+      url: tab.url,
+      title: tab.title,
+      isPrivate: tab.isPrivate,
+      isPinned: tab.isPinned,
+      isMuted: tab.isMuted,
+      workspaceId: tab.workspaceId,
+    };
 
-  await source.closeTab(tabId);
+    await source.closeTab(tabId);
 
-  const sourceBounds = source.window && !source.window.isDestroyed()
-    ? source.window.getBounds()
-    : { x: 100, y: 100, width: 1280, height: 800 };
+    const sourceBounds = source.window && !source.window.isDestroyed()
+      ? source.window.getBounds()
+      : { x: 100, y: 100, width: 1280, height: 800 };
 
-  let targetX = sourceBounds.x + 40;
-  let targetY = sourceBounds.y + 40;
-  const targetWidth = sourceBounds.width || 1280;
-  const targetHeight = sourceBounds.height || 800;
+    let targetX = sourceBounds.x + 40;
+    let targetY = sourceBounds.y + 40;
+    const targetWidth = sourceBounds.width || 1280;
+    const targetHeight = sourceBounds.height || 800;
 
-  if (typeof screenX === 'number' && typeof screenY === 'number' && (screenX !== 0 || screenY !== 0)) {
     try {
-      const point = { x: Math.round(screenX), y: Math.round(screenY) };
+      const cursor = screen.getCursorScreenPoint();
+      const point = (typeof screenX === 'number' && typeof screenY === 'number' && (screenX !== 0 || screenY !== 0))
+        ? { x: Math.round(screenX), y: Math.round(screenY) }
+        : cursor;
       const display = screen.getDisplayNearestPoint(point);
       const workArea = display.workArea;
-      targetX = Math.round(screenX - 150);
-      targetY = Math.round(screenY - 20);
+      targetX = Math.round(point.x - 120);
+      targetY = Math.round(point.y - 15);
       if (targetX + targetWidth > workArea.x + workArea.width) {
         targetX = workArea.x + workArea.width - targetWidth;
       }
@@ -413,21 +487,23 @@ async function detachTabToNewWindow(
       targetX = sourceBounds.x + 40;
       targetY = sourceBounds.y + 40;
     }
-  }
 
-  const newController = new BrowserController();
-  setupController(newController);
-  await newController.createWindow({
-    bounds: {
-      x: targetX,
-      y: targetY,
-      width: targetWidth,
-      height: targetHeight,
-    },
-    initialTab: tabData,
-  });
-  if (newController.window && !newController.window.isDestroyed()) {
-    newController.window.focus();
+    const newController = new BrowserController();
+    setupController(newController);
+    await newController.createWindow({
+      bounds: {
+        x: targetX,
+        y: targetY,
+        width: targetWidth,
+        height: targetHeight,
+      },
+      initialTab: tabData,
+    });
+    if (newController.window && !newController.window.isDestroyed()) {
+      newController.window.focus();
+    }
+  } finally {
+    BrowserController.transferringTabs.delete(tabId);
   }
 }
 

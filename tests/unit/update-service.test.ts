@@ -87,4 +87,14 @@ describe('UpdateService check and progress lifecycle', () => {
     service.startAutoCheckTimer();
     expect(() => service.stopAutoCheckTimer()).not.toThrow();
   });
+
+  it('rejects untrusted update hosts before starting a download', async () => {
+    await expect(service.downloadUpdate('https://updates.example.invalid/browser.AppImage', 'browser.AppImage'))
+      .resolves.toMatchObject({ success: false });
+  });
+
+  it('rejects path traversal in update filenames', async () => {
+    await expect(service.downloadUpdate('https://github.com/giddammit-crypto/MonkeyBuissnesBrowser/releases/download/v1/browser.AppImage', '../browser.AppImage'))
+      .resolves.toMatchObject({ success: false });
+  });
 });

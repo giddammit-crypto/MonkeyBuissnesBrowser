@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import https from 'node:https';
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -9,6 +10,33 @@ import type { UpdateAssetInfo, UpdateCheckResult, UpdateDownloadProgress } from 
 export const GITHUB_REPO = 'giddammit-crypto/MonkeyBuissnesBrowser';
 export const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 export const GITHUB_RELEASES_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases`;
+
+const TRUSTED_UPDATE_HOSTS = new Set([
+  'github.com',
+  'api.github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+  'github-releases.githubusercontent.com',
+]);
+
+function isTrustedUpdateUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && TRUSTED_UPDATE_HOSTS.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function isSafeDownloadFilename(value: string): boolean {
+  return Boolean(value) && value !== '.' && value !== '..' &&
+    path.basename(value) === value && !value.includes('\\') && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function normalizeSha256(value?: string): string | undefined {
+  const digest = value?.trim().replace(/^sha256:/i, '').toLowerCase();
+  return digest && /^[a-f0-9]{64}$/.test(digest) ? digest : undefined;
+}
 
 /**
  * Compare two semver version strings (e.g. "v0.9.1" vs "0.9.0").
@@ -123,7 +151,7 @@ export class UpdateService {
   }
 
   async checkForUpdates(manual = false): Promise<UpdateCheckResult> {
-    const currentVersion = app?.getVersion ? app.getVersion() : '0.9.7';
+    const currentVersion = app?.getVersion ? app.getVersion() : '0.9.9';
     try {
       const releaseData = await this.fetchLatestRelease();
       const tagName = releaseData.tag_name || '';
@@ -134,6 +162,7 @@ export class UpdateService {
         downloadUrl: a.browser_download_url || a.url,
         size: typeof a.size === 'number' ? a.size : 0,
         contentType: a.content_type || 'application/octet-stream',
+        ...(typeof a.digest === 'string' ? { sha256: a.digest } : {}),
       }));
 
       const recommendedAsset = pickRecommendedAsset(assets);
@@ -188,7 +217,7 @@ export class UpdateService {
 
   private httpGetJson(urlStr: string): Promise<any> {
     return new Promise((resolve, reject) => {
-      const currentVersion = app?.getVersion ? app.getVersion() : '0.9.7';
+      const currentVersion = app?.getVersion ? app.getVersion() : '0.9.9';
       const options = {
         headers: {
           'User-Agent': `soulm8te-browser/${currentVersion}`,
@@ -234,6 +263,7 @@ export class UpdateService {
   async downloadUpdate(assetUrl?: string, customFilename?: string): Promise<{ success: boolean; filePath?: string; error?: string }> {
     let url = assetUrl;
     let filename = customFilename;
+    let expectedSha256: string | undefined;
 
     if (!url) {
       const asset = this.lastCheck?.recommendedAsset || this.lastCheck?.assets?.[0];
@@ -242,6 +272,9 @@ export class UpdateService {
       }
       url = asset.downloadUrl;
       if (!filename) filename = asset.name;
+      expectedSha256 = normalizeSha256(asset.sha256);
+    } else {
+      expectedSha256 = normalizeSha256(this.lastCheck?.assets?.find((asset) => asset.downloadUrl === url)?.sha256);
     }
 
     if (!filename) {
@@ -250,6 +283,13 @@ export class UpdateService {
       } catch {
         filename = 'soulm8te-update';
       }
+    }
+
+    if (!isTrustedUpdateUrl(url)) {
+      return { success: false, error: 'Разрешены только защищённые загрузки из GitHub Releases' };
+    }
+    if (!filename || !isSafeDownloadFilename(filename)) {
+      return { success: false, error: 'Некорректное имя файла обновления' };
     }
 
     const downloadDir = app?.getPath ? app.getPath('downloads') : path.join(process.env.HOME || '/tmp', 'Downloads');
@@ -299,11 +339,11 @@ export class UpdateService {
         };
         this.emitProgress();
         resolve({ success: true, filePath: savedFile });
-      });
+      }, expectedSha256);
     });
   }
 
-  private streamDownload(urlStr: string, destPath: string, maxRedirects: number, callback: (err: Error | null, path: string) => void): void {
+  private streamDownload(urlStr: string, destPath: string, maxRedirects: number, callback: (err: Error | null, path: string) => void, expectedSha256?: string): void {
     if (maxRedirects <= 0) {
       callback(new Error('Слишком много перенаправлений при скачивании'), destPath);
       return;
@@ -317,8 +357,13 @@ export class UpdateService {
       return;
     }
 
+    if (!isTrustedUpdateUrl(parsedUrl.toString())) {
+      callback(new Error('Небезопасный адрес загрузки обновления'), destPath);
+      return;
+    }
+
     const client = parsedUrl.protocol === 'http:' ? http : https;
-    const currentVersion = app?.getVersion ? app.getVersion() : '0.9.7';
+    const currentVersion = app?.getVersion ? app.getVersion() : '0.9.9';
 
     const req = client.get(urlStr, {
       headers: {
@@ -328,8 +373,20 @@ export class UpdateService {
     }, (res) => {
       // Redirect handling
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        const nextUrl = new URL(res.headers.location, urlStr).toString();
-        this.streamDownload(nextUrl, destPath, maxRedirects - 1, callback);
+        let nextUrl: string;
+        try {
+          nextUrl = new URL(res.headers.location, urlStr).toString();
+        } catch {
+          res.resume();
+          callback(new Error('Некорректное перенаправление при скачивании'), destPath);
+          return;
+        }
+        if (!isTrustedUpdateUrl(nextUrl)) {
+          res.resume();
+          callback(new Error('Перенаправление на недоверенный адрес заблокировано'), destPath);
+          return;
+        }
+        this.streamDownload(nextUrl, destPath, maxRedirects - 1, callback, expectedSha256);
         return;
       }
 
@@ -343,6 +400,7 @@ export class UpdateService {
       let lastReport = 0;
 
       const fileStream = fs.createWriteStream(destPath);
+      const digest = expectedSha256 ? crypto.createHash('sha256') : undefined;
 
       this.activeDownloadAbort = () => {
         req.destroy();
@@ -351,6 +409,7 @@ export class UpdateService {
       };
 
       res.on('data', (chunk) => {
+        digest?.update(chunk);
         transferred += chunk.length;
         const now = Date.now();
         if (now - lastReport > 200 || transferred === totalBytes) {
@@ -372,6 +431,11 @@ export class UpdateService {
       fileStream.on('finish', () => {
         fileStream.close(() => {
           this.activeDownloadAbort = undefined;
+          if (expectedSha256 && digest?.digest('hex') !== expectedSha256) {
+            try { fs.unlinkSync(destPath); } catch {}
+            callback(new Error('Контрольная сумма обновления не совпадает'), destPath);
+            return;
+          }
           callback(null, destPath);
         });
       });
@@ -407,6 +471,12 @@ export class UpdateService {
   async openDownloadedUpdate(filePath: string): Promise<boolean> {
     if (!filePath || !fs.existsSync(filePath)) return false;
     try {
+      const downloads = app?.getPath ? app.getPath('downloads') : path.join(process.env.HOME || '/tmp', 'Downloads');
+      const root = fs.realpathSync(downloads);
+      const target = fs.realpathSync(filePath);
+      const relative = path.relative(root, target);
+      const insideDownloads = relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+      if (!insideDownloads) return false;
       // On Linux/Mac/Windows, open with system default handler or show in folder
       const result = await shell.openPath(filePath);
       if (result) {

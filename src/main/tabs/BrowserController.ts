@@ -70,6 +70,7 @@ import type {
   SaveNoteInput,
   VoodooChatMessage,
   VoodooChatResponse,
+  VoodooTabContext,
   VoodooKeyStatusItem,
   VoodooCheckAllKeysResult,
   TranscribeAudioResult,
@@ -163,6 +164,11 @@ export class BrowserController {
     tabId: string,
     screenX?: number,
     screenY?: number,
+  ) => Promise<void>;
+  public onOpenNewWindow?: (
+    source: BrowserController,
+    url?: string,
+    isPrivate?: boolean,
   ) => Promise<void>;
   public onClosed?: () => void;
   public onFocus?: () => void;
@@ -1223,6 +1229,18 @@ export class BrowserController {
     if (!tab) return;
     if (this.onDetachTab) {
       await this.onDetachTab(this, tabId, screenX, screenY);
+    }
+  }
+
+  async openNewWindow(url?: string): Promise<void> {
+    if (this.onOpenNewWindow) {
+      await this.onOpenNewWindow(this, url, false);
+    }
+  }
+
+  async openPrivateWindow(url?: string): Promise<void> {
+    if (this.onOpenNewWindow) {
+      await this.onOpenNewWindow(this, url, true);
     }
   }
 
@@ -4744,7 +4762,9 @@ export class BrowserController {
         this.eventListener?.({ type: 'show-tab-search' });
       });
       else if (modifier && input.shift && isKey('t', 'KeyT', 'е')) run(() => { void this.reopenClosedTab(); });
-      else if (modifier && input.shift && (isKey('n', 'KeyN', 'т') || isKey('p', 'KeyP', 'з'))) run(() => { void this.createTab({ isPrivate: true }); });
+      else if (modifier && input.shift && isKey('n', 'KeyN', 'т')) run(() => { void this.openPrivateWindow(); });
+      else if (modifier && input.shift && isKey('p', 'KeyP', 'з')) run(() => { void this.createTab({ isPrivate: true }); });
+      else if (modifier && !input.shift && !input.alt && isKey('n', 'KeyN', 'т')) run(() => { void this.openNewWindow(); });
       else if (modifier && isKey('t', 'KeyT', 'е')) run(() => { void this.createTab(); });
       else if (modifier && isKey('w', 'KeyW', 'ц') && tab) run(() => { void this.closeTab(tab.id); });
       else if (modifier && isKey('d', 'KeyD', 'в') && tab) run(() => { this.toggleBookmark(tab.id); });
@@ -4990,11 +5010,22 @@ export class BrowserController {
 
   async sendVoodooMessage(
     messages: VoodooChatMessage[],
-    tabContext?: { url?: string; title?: string; chatText?: string }
+    tabContext?: VoodooTabContext
   ): Promise<VoodooChatResponse> {
     if (this.tabs.get(this.activeTabId)?.isPrivate) {
       return { reply: 'Вуду недоступен на приватной вкладке. Переключитесь на обычную вкладку, чтобы отправить запрос AI-провайдеру.', error: 'private_tab' };
     }
+
+    // Automatically enrich page context if clean text or chat text is not yet provided
+    let effectiveTabContext = tabContext;
+    const activeTab = this.tabs.get(this.activeTabId);
+    if (!effectiveTabContext?.cleanText && !effectiveTabContext?.chatText && activeTab && !activeTab.isPrivate && !activeTab.isInternal) {
+      try {
+        const pageCtx = await this.getActiveTabPageContext(6000);
+        effectiveTabContext = { ...pageCtx, ...effectiveTabContext };
+      } catch {}
+    }
+
     this.cancelVoodooRequest();
     const requestController = new AbortController();
     this.voodooAbortController = requestController;
@@ -5011,7 +5042,7 @@ export class BrowserController {
         keys: settings.voodooKeys,
         model: settings.voodooModel,
         baseUrl: settings.voodooBaseUrl,
-        tabContext: this.tabs.get(this.activeTabId)?.isPrivate ? undefined : tabContext,
+        tabContext: this.tabs.get(this.activeTabId)?.isPrivate ? undefined : effectiveTabContext,
         signal: requestController.signal,
         onProgress: (message) => {
           if (requestController.signal.aborted) return;
@@ -6082,7 +6113,20 @@ export class BrowserController {
     }
 
     const settings = this.stores.settings.get();
-    const sttKey = (settings.voodooSttKey || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+    let sttKey = (settings.voodooSttKey || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY || '').trim();
+    let endpoint = (settings as any).voodooSttEndpoint || 'https://api.groq.com/openai/v1/audio/transcriptions';
+    let model = 'whisper-large-v3-turbo';
+
+    // If no dedicated Groq/OpenAI STT key, check if primary xkiro key is available
+    if (!sttKey && Array.isArray(settings.voodooKeys) && settings.voodooKeys.length > 0) {
+      const candidateKey = String(settings.voodooKeys[0] || '').trim();
+      if (candidateKey) {
+        sttKey = candidateKey;
+        const baseUrl = (settings.voodooBaseUrl || 'https://api.xkiro.com/v1').replace(/\/+$/, '');
+        endpoint = `${baseUrl}/audio/transcriptions`;
+        model = 'whisper-1';
+      }
+    }
 
     if (!sttKey) {
       return {
@@ -6101,10 +6145,9 @@ export class BrowserController {
       const formData = new FormData();
       const audioBlob = new Blob([buffer], { type: actualMime });
       formData.append('file', audioBlob, `speech.${ext}`);
-      formData.append('model', 'whisper-large-v3-turbo');
+      formData.append('model', model);
       formData.append('language', 'ru');
 
-      const endpoint = (settings as any).voodooSttEndpoint || 'https://api.groq.com/openai/v1/audio/transcriptions';
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -6135,13 +6178,19 @@ export class BrowserController {
     if (!clean) return 'Пустой путь';
     const resolved = path.resolve(clean);
     try {
-      const downloads = app.getPath('downloads');
-      const userData = app.getPath('userData');
-      const home = app.getPath('home');
-      const allowed = resolved.startsWith(downloads) || resolved.startsWith(userData) || resolved.startsWith(home);
+      const roots = [app.getPath('downloads'), app.getPath('userData'), app.getPath('home')]
+        .map((root) => fs.realpathSync(path.resolve(root)));
+      // Compare path components rather than string prefixes: /home/alice-evil
+      // must not be treated as a child of /home/alice. Resolve symlinks before
+      // opening so a seemingly safe path cannot escape through a link.
+      const realTarget = fs.realpathSync(resolved);
+      const allowed = roots.some((root) => {
+        const relative = path.relative(root, realTarget);
+        return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+      });
       if (!allowed) return 'Открытие файлов за пределами пользовательских директорий запрещено';
     } catch {
-      // In headless/test environments where app.getPath might fail, fall back to safe check
+      return 'Не удалось проверить безопасность пути';
     }
     return shell.openPath(resolved);
   }
@@ -6451,6 +6500,75 @@ export class BrowserController {
     } catch {
       return { text: '', source: 'error', count: 0 };
     }
+  }
+
+  async getActiveTabPageContext(maxLength = 6000): Promise<VoodooTabContext> {
+    const activeTab = this.tabs.get(this.activeTabId);
+    if (!activeTab || activeTab.isPrivate || !activeTab.view || activeTab.view.webContents.isDestroyed() || activeTab.isInternal) {
+      return {};
+    }
+
+    const contents = activeTab.view.webContents;
+    try {
+      const pageCtx = await contents.executeJavaScript(`
+        (function(maxChars) {
+          try {
+            const selection = window.getSelection()?.toString()?.trim() || '';
+            const metaDesc = document.querySelector('meta[name="description"], meta[property="og:description"]')?.getAttribute('content')?.trim() || '';
+
+            const headings = Array.from(document.querySelectorAll('h1, h2'))
+              .map(h => (h.textContent || '').trim())
+              .filter(Boolean)
+              .slice(0, 8);
+
+            const clone = document.body ? document.body.cloneNode(true) : null;
+            if (clone) {
+              const removeSelectors = [
+                'script', 'style', 'noscript', 'header', 'footer', 'nav',
+                'svg', 'iframe', 'input', 'textarea', 'select', 'aside',
+                '[role="complementary"]', '.ad', '.ads', '.banner', '#cookie-banner'
+              ];
+              for (const sel of removeSelectors) {
+                clone.querySelectorAll(sel).forEach(el => el.remove());
+              }
+            }
+
+            const rawText = clone ? (clone.innerText || clone.textContent || '') : '';
+            const cleanText = rawText.replace(/\\s+/g, ' ').trim();
+
+            return {
+              title: document.title || '',
+              url: location.href || '',
+              metaDescription: metaDesc.slice(0, 500),
+              headings,
+              selectedText: selection.slice(0, 3000),
+              cleanText: cleanText.slice(0, maxChars),
+              totalLength: cleanText.length,
+            };
+          } catch {
+            return { title: document.title, url: location.href };
+          }
+        })(${JSON.stringify(maxLength)})
+      `, true);
+
+      return pageCtx || { title: activeTab.title, url: activeTab.url };
+    } catch {
+      return { title: activeTab.title, url: activeTab.url };
+    }
+  }
+
+  async triggerVoodooQuickAction(action: 'summary' | 'tldr' | 'translate' | 'explain' | 'facts'): Promise<void> {
+    const settings = this.stores.settings.get();
+    if (settings.voodooEnabled === false) return;
+    if (!this.voodooOpen) {
+      this.setVoodooOpen(true);
+    }
+    const pageContext = await this.getActiveTabPageContext(6000);
+    this.voodooView?.webContents.send('browser:event', {
+      type: 'voodoo-quick-action',
+      action,
+      pageContext,
+    });
   }
 
   async insertTextIntoActiveTab(text: string): Promise<boolean> {
