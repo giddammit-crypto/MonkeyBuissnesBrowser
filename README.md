@@ -1,6 +1,6 @@
 # <p align="center"><img src="src/renderer/assets/soul/chloe-icon-512.png" alt="soulm8te" width="96" height="96" /><br/>soulm8te Browser</p>
 
-Текущая версия: **1.0.1** · [Изменения](docs/RELEASE_1.0.1.md) · [Аудит](docs/FUNCTIONAL_AUDIT_1.0.1.md) · [Шрифт «Мономах»](docs/MONOMAKH_FONT_DIAGNOSIS_1.0.1.md)
+Текущая версия: **1.0.2** · [Изменения](docs/RELEASE_1.0.2.md) · [Аудит](docs/FUNCTIONAL_AUDIT_1.0.1.md) · [Шрифт «Мономах»](docs/MONOMAKH_FONT_DIAGNOSIS_1.0.1.md)
 
 <p align="center">
   <strong>Современный, быстрый и стильный веб-браузер нового поколения на Chromium & Electron</strong><br/>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.9-blue?style=for-the-badge" alt="Version 0.9.9" />
+  <img src="https://img.shields.io/badge/version-1.0.2-blue?style=for-the-badge" alt="Version 1.0.2" />
   <img src="https://img.shields.io/badge/Electron-45.0-blueviolet?style=for-the-badge" alt="Electron 45" />
   <img src="https://img.shields.io/badge/React-19-cyan?style=for-the-badge" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-7.0-blue?style=for-the-badge" alt="TypeScript" />
@@ -279,6 +279,13 @@
   - Умное определение домена eTLD+1 для бесшовного входа между поддоменами сервисов (`id.vk.com` ↔ `vk.com`).
 
 ---
+
+## 🧩 Веб-стандарты, плагины и шрифты
+
+- **PDF прямо во вкладке.** Встроенный просмотрщик Chromium включён (`plugins: true`): документ открывается по своему адресу, без скачивания файла. Проверяется smoke-тестом `npm run test:e2e:pdf`.
+- **XSLT-стилизация XML (RSS/Atom, sitemap).** Chrome 158 (17.11.2026) удаляет XSLT, поэтому браузер несёт собственный движок XSLT 1.0 + XPath на TypeScript: рендер `<?xml-stylesheet?>`, сохранение адреса, кеш стилей, полоса ошибки вместо «тихого» сырого XML. Лимиты и запреты (`document()`, `xsl:script`, внешние сущности) описаны в [аудите](docs/CHROMIUM_ENGINE_AND_PLUGINS_AUDIT_2026-11-05.md).
+- **Совместимость веб-шрифтов и панель диагностики.** Браузер возвращает привычное поведение до Chrome 143: шрифт с другого origin не отбрасывается только из-за отсутствия `Access-Control-Allow-Origin`, если политика страницы его не запрещает. Настройка «Совместимость шрифтов» отключаемая; при отключении действует строгая проверка CORS. Панель «Шрифты страницы» показывает, почему шрифт не применился (сеть/404, CORS, нет в системе, ошибка декодирования) и может подставить похожие локальные гарнитуры.
+- **Кнопка очистки — веник.** «Click & Clean» в панели, меню и окне очистки использует классическую иконку веника.
 
 ## Плавающий мини-плеер (PiP)
 

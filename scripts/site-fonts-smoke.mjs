@@ -79,7 +79,10 @@ try {
     assert.match(probe.computedFamily, /SiteFont/);
     assert.equal(probe.redirected, 'loaded', 'redirected font must load');
     assert.equal(probe.dynamic, 'loaded', 'FontFace ArrayBuffer must load');
-    assert.equal(probe.denied, true, 'cross-origin font without ACAO must remain blocked');
+    // The font compatibility layer repeats pre-Chromium behaviour: a web font
+    // without Access-Control-Allow-Origin still decodes. The setting below
+    // switches the legacy relaxation off and restores the strict boundary.
+    assert.equal(probe.denied, false, 'font compatibility relaxes legacy cross-origin font CORS');
     assert.equal(probe.adLoaded, false, 'ad image remains blocked');
     assert.equal(probe.bridge, 'undefined', 'website cannot access browser IPC');
     await invoke('navigate', tab.id, `${site}/next`);
@@ -88,6 +91,22 @@ try {
     await expect.poll(async () => (await invoke('getSnapshot')).tabs.find(item => item.id === tab.id)).toMatchObject({ url, isLoading: false });
     console.log(`PASS ${isPrivate ? 'private' : 'normal'} site: CSS web font, redirect, FontFace API, CORS denial, IPC isolation and back navigation`);
   }
+  await invoke('updateSettings', { fontCompatibility: false });
+  const strictTab = await invoke('createTab', { url: `${site}/strict` });
+  await expect.poll(async () => (await invoke('getSnapshot')).tabs.find(item => item.id === strictTab.id)).toMatchObject({ title: 'Site font fixture', isLoading: false });
+  // A fresh URL keeps the earlier compatible response out of Chromium's
+  // in-memory font cache, so the strict boundary is what is measured here.
+  const strictFontUrl = `${fonts}/denied.woff2?v=strict`;
+  const strict = await app.evaluate(async ({ webContents }, { url, fontUrl }) => {
+    const contents = webContents.getAllWebContents().find(item => item.getURL() === url);
+    return contents.executeJavaScript(`(async () => {
+      let denied = false;
+      try { await new FontFace('DeniedFont', 'url(${fontUrl})').load(); } catch { denied = true; }
+      return denied;
+    })()`);
+  }, { url: `${site}/strict`, fontUrl: strictFontUrl });
+  assert.equal(strict, true, 'strict mode keeps the cross-origin font boundary');
+  await invoke('updateSettings', { fontCompatibility: true });
   assert.equal(requests.includes('/ads/banner.gif'), false, 'blocked ad never reaches server');
   assert(requests.some(url => url.includes('context=/ads/typography')));
 } finally {

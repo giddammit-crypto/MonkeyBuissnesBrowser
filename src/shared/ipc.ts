@@ -146,6 +146,7 @@ export interface BrowserApi {
   toggleReaderMode(tabId: string): Promise<boolean>;
   getReaderArticle(tabId: string): Promise<ReaderArticle | null>;
   getPageFonts(tabId: string): Promise<PageFontReport>;
+  applyFontSubstitutions(tabId: string): Promise<{ families: string[] }>;
   updateReaderSettings(patch: Partial<ReaderSettings>): Promise<ReaderSettings>;
   togglePictureInPicture(tabId: string): Promise<{ success: boolean; isPip: boolean }>;
   getNotes(query?: string): Promise<NoteEntry[]>;

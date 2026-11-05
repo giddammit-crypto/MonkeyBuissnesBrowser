@@ -323,6 +323,7 @@ function registerIpc(): void {
   ipcMain.handle('browser:toggle-reader-mode', (event, tabId: string) => requireShell(event).toggleReaderMode(tabId));
   ipcMain.handle('browser:get-reader-article', (event, tabId: string) => requireShell(event).getReaderArticle(tabId));
   ipcMain.handle('browser:get-page-fonts', (event, tabId: string) => requireShell(event).getPageFonts(tabId));
+  ipcMain.handle('browser:apply-font-substitutions', (event, tabId: string) => requireShell(event).applyFontSubstitutions(tabId));
   ipcMain.handle('browser:update-reader-settings', (event, patch: Partial<import('../shared/types').ReaderSettings>) => requireShell(event).updateReaderSettings(patch));
   ipcMain.handle('browser:toggle-pip', (event, tabId: string) => requireShell(event).togglePictureInPicture(tabId));
   ipcMain.handle('browser:get-notes', (event, query?: string) => requireShell(event).getNotes(query));

@@ -10,7 +10,6 @@ import {
   ArrowUp,
   AlertTriangle,
   Bookmark,
-  Broom,
   Copy,
   BookOpen,
   CheckCircle2,
@@ -109,6 +108,7 @@ import PrivacyDashboard from "./PrivacyDashboard";
 import TaskManagerModal from "./TaskManagerModal";
 import FontDiagnosticsModal from "./FontDiagnosticsModal";
 import ClickAndCleanModal from "./ClickAndCleanModal";
+import BroomIcon from "./BroomIcon";
 import { UpdateModal } from "./UpdateModal";
 import SavePasswordPrompt from "./SavePasswordPrompt";
 import { QrCodePopover } from "./QrCodePopover";
@@ -1641,7 +1641,7 @@ function App(): React.JSX.Element {
               setClickCleanOpen((val) => !val);
             }}
           >
-            <Broom size={18} />
+            <BroomIcon size={18} />
           </button>
           <button
             className={`mode-chip ${isPrivate ? "is-private" : ""}`}
@@ -1879,7 +1879,7 @@ function App(): React.JSX.Element {
               }}
             />
             <MenuAction
-              icon={<Broom size={16} />}
+              icon={<BroomIcon size={16} />}
               label="Click & Clean"
               detail="Ctrl+Shift+Del"
               onClick={() => {
@@ -4739,7 +4739,7 @@ function SettingsPanel({
               <strong>Установленная версия</strong>
               <small>Если здесь нет новых настроек, запущена старая сборка. После обновления GitHub приложение нужно пересобрать и переустановить.</small>
             </span>
-            <strong>soulm8te 1.0.1</strong>
+            <strong>soulm8te 1.0.2</strong>
           </div>
           <label className="setting-row">
             <span><strong>Стиль оформления</strong><small>Отдельный стиль Detroit · Хлоя или Cyberpunk. Исходные темы не изменяются.</small></span>
@@ -4967,6 +4967,42 @@ function SettingsPanel({
               checked={settings.googleSignInCompatibility ?? true}
               onChange={(event) =>
                 update({ googleSignInCompatibility: event.target.checked })
+              }
+            />
+          </label>
+          <label className="setting-row">
+            <span>
+              <strong>Совместимость шрифтов сайтов</strong>
+              <small>
+                Снимает устаревшее ограничение CORS у ответов со шрифтами (так
+                работали браузеры до Chromium) и разрешает подстановку
+                установленных аналогов вместо отсутствующих Windows/macOS
+                шрифтов. Влияет только на шрифты, не на скрипты и стили.
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.fontCompatibility ?? true}
+              onChange={(event) =>
+                update({ fontCompatibility: event.target.checked })
+              }
+            />
+          </label>
+          <label className="setting-row">
+            <span>
+              <strong>Поддержка XSLT в XML-страницах</strong>
+              <small>
+                Chromium 158 перестал применять XSLT-инструкции xml-stylesheet:
+                ленты RSS, карты сайта и служебные XML-страницы показывались бы
+                как исходный код. Встроенный XSLT 1.0 движок преобразует их
+                снова. Внешние сущности и document() отключены.
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.xsltSupport ?? true}
+              onChange={(event) =>
+                update({ xsltSupport: event.target.checked })
               }
             />
           </label>
@@ -5394,7 +5430,7 @@ function SettingsPanel({
             <div style={{ flex: 1 }}>
               <strong>soulm8te Browser</strong>
               <p>Ваш цифровой союзник · Detroit: Become Human</p>
-              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 1.0.1</small>
+              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 1.0.2</small>
             </div>
             <button
               className="action-button secondary"

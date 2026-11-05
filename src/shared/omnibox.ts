@@ -25,8 +25,9 @@ export function parseOmniboxInput(rawInput: string, searchUrl = SEARCH_URL): Nav
   }
 
   // Force search prefix '?'
-  if (input.startsWith('?') && input.length > 1) {
+  if (input.startsWith('?')) {
     const query = input.slice(1).trim();
+    if (!query) return { kind: 'invalid', reason: 'Введите поисковый запрос после «?».' };
     const safeSearchUrl = isSafeWebUrl(searchUrl) ? searchUrl : SEARCH_URL;
     return { kind: 'search', url: `${safeSearchUrl}${encodeURIComponent(query)}` };
   }
@@ -59,7 +60,7 @@ export function parseOmniboxInput(rawInput: string, searchUrl = SEARCH_URL): Nav
     }
     catch { return { kind: 'invalid', reason: 'Некорректный адрес.' }; }
   }
-  if (/^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+(?::\d+)?(?:[/?#][^\s]*)?$/u.test(input)) {
+  if (/^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+\.?(?::\d+)?(?:[/?#][^\s]*)?$/u.test(input)) {
     try { return { kind: 'url', url: new URL(`https://${input}`).href }; }
     catch { return { kind: 'invalid', reason: 'Некорректный адрес.' }; }
   }
