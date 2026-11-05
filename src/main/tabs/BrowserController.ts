@@ -8,7 +8,7 @@ import {
   XsltSupport, parseXmlStylesheetInstructionBody, supportsXsltContentType,
   XSLT_DOCUMENT_LIMIT, XSLT_STYLESHEET_LIMIT, type XsltFetcher,
 } from '../../services/xslt/XsltSupport';
-import { XSLT_PAGE_PROBE, buildXsltApplyScript, buildXsltErrorScript, sanitizeXsltProbeResult } from '../services/XsltPageProbe';
+import { XSLT_PAGE_PROBE, buildXsltApplyScript, buildXsltErrorScript, buildXsltNoticeScript, sanitizeXsltProbeResult } from '../services/XsltPageProbe';
 import { requestedContextWindow } from '../../shared/voodooContext';
 import { VoodooModelCatalog } from '../services/VoodooModelCatalog';
 import path from 'node:path';
@@ -161,6 +161,35 @@ export interface CreateWindowOptions {
     isMuted?: boolean;
     workspaceId?: string;
   };
+}
+
+
+/**
+ * Replaces the frame's document through the DevTools protocol.
+ * `Page.setDocumentContent` keeps the frame URL, which is why the address bar
+ * still shows the XML address after the transform.
+ */
+async function replaceDocumentViaDebugger(contents: Electron.WebContents, html: string): Promise<boolean> {
+  const debuggerSession = contents.debugger;
+  let attachedHere = false;
+  try {
+    if (!debuggerSession.isAttached()) {
+      debuggerSession.attach('1.3');
+      attachedHere = true;
+    }
+    const tree = await debuggerSession.sendCommand('Page.getFrameTree') as { frameTree?: { frame?: { id?: string } } } | undefined;
+    const frameId = tree?.frameTree?.frame?.id;
+    if (!frameId) return false;
+    await debuggerSession.sendCommand('Page.setDocumentContent', { frameId, html });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    // Leave a DevTools session owned by the user untouched.
+    if (attachedHere) {
+      try { debuggerSession.detach(); } catch { /* already detached */ }
+    }
+  }
 }
 
 export class BrowserController {
@@ -4726,7 +4755,22 @@ export class BrowserController {
     });
     if (this.disposed || contents.isDestroyed() || this.tabs.get(tab.id) !== tab || tab.view?.webContents !== contents) return;
     if (outcome.status === 'ok') {
-      await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltApplyScript(outcome.html, { notice: true }) }], false).catch(() => undefined);
+      let applied = false;
+      try {
+        const result = await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltApplyScript(outcome.html, { notice: true }) }], false);
+        applied = result?.applied === true;
+      } catch { applied = false; }
+      if (!applied && !contents.isDestroyed()) {
+        // `document.write` is refused inside an XML document by specification.
+        // CDP replaces the frame's document while the address bar keeps the
+        // real URL, which is exactly what the removed Chromium XSLT flow did.
+        applied = await replaceDocumentViaDebugger(contents, outcome.html);
+        if (applied) await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltNoticeScript() }], false).catch(() => undefined);
+      }
+      if (!applied) {
+        await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltErrorScript('Не удалось показать результат преобразования в этой вкладке.') }], false).catch(() => undefined);
+        return;
+      }
       if (outcome.title && outcome.title.trim()) {
         tab.title = outcome.title.trim().slice(0, 200);
         this.emitSnapshot();

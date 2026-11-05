@@ -88,8 +88,18 @@ try {
   const feedUrl = `${site}/feed.xml`;
   const tab = await invoke('createTab', { url: feedUrl });
   await expect.poll(async () => (await invoke('getSnapshot')).tabs.find(item => item.id === tab.id)).toMatchObject({ isLoading: false });
-  await expect.poll(async () => read(feedUrl, `document.getElementById('feed-title')?.textContent || ''`), { timeout: 15000 })
-    .toBe('Библиотека 33');
+  // The poll reports the page state on timeout, so a CI failure explains itself.
+  await expect.poll(async () => {
+    const state = await read(feedUrl, `({
+      title: document.getElementById('feed-title')?.textContent || '',
+      error: document.querySelector('[data-soul-xslt="error"]')?.textContent || '',
+      root: document.documentElement?.tagName || '',
+      type: document.contentType,
+      text: (document.body?.innerText || '').slice(0, 120),
+    })`);
+    if (state?.title === 'Библиотека 33') return 'Библиотека 33';
+    return JSON.stringify(state);
+  }, { timeout: 20000 }).toBe('Библиотека 33');
   const rendered = await read(feedUrl, `({
     entries: [...document.querySelectorAll('li.entry a')].map(a => a.textContent + '|' + a.getAttribute('href')),
     badge: Boolean(document.querySelector('[data-soul-xslt="compat"]')),

@@ -50,6 +50,20 @@ export function sanitizeXsltProbeResult(value: unknown): XsltProbeResult {
   };
 }
 
+
+const SOUL_XSLT_BADGE_SOURCE = `
+  function soulXsltBadge() {
+    const badge = document.createElement('div');
+    badge.setAttribute('data-soul-xslt', 'compat');
+    badge.textContent = 'XSLT';
+    badge.title = 'XML преобразован встроенным XSLT-совместимым движком soulm8te';
+    badge.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483647;font:600 11px/1 system-ui,sans-serif;'
+      + 'color:#fff;background:rgba(17,24,39,.86);border:1px solid rgba(255,255,255,.28);border-radius:999px;'
+      + 'padding:5px 9px;letter-spacing:.06em;cursor:default;user-select:none;pointer-events:none;';
+    document.documentElement.appendChild(badge);
+    setTimeout(() => badge.remove(), 9000);
+  }`;
+
 /**
  * Rewrites the current XML document with the transform result.
  * `document.open()` switches the document to HTML, so the stylesheet output is
@@ -59,6 +73,7 @@ export function buildXsltApplyScript(html: string, options: { notice: boolean })
   const payload = JSON.stringify(html);
   const showNotice = options.notice ? 'true' : 'false';
   return `(() => {
+  ${SOUL_XSLT_BADGE_SOURCE}
   const html = ${payload};
   try {
     document.open();
@@ -67,21 +82,17 @@ export function buildXsltApplyScript(html: string, options: { notice: boolean })
   } catch (error) {
     return { applied: false, message: String(error && error.message || error) };
   }
-  if (${showNotice}) {
-    try {
-      const badge = document.createElement('div');
-      badge.setAttribute('data-soul-xslt', 'compat');
-      badge.textContent = 'XSLT';
-      badge.title = 'XML преобразован встроенным XSLT-совместимым движком soulm8te';
-      badge.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483647;font:600 11px/1 system-ui,sans-serif;'
-        + 'color:#fff;background:rgba(17,24,39,.86);border:1px solid rgba(255,255,255,.28);border-radius:999px;'
-        + 'padding:5px 9px;letter-spacing:.06em;cursor:default;user-select:none;pointer-events:none;';
-      document.documentElement.appendChild(badge);
-      setTimeout(() => badge.remove(), 9000);
-    } catch {}
-  }
+  if (${showNotice}) soulXsltBadge();
   return { applied: true };
 })()`;
+}
+
+/**
+ * The badge is injected separately when the document was replaced through the
+ * DevTools protocol (`Page.setDocumentContent` drops anything written earlier).
+ */
+export function buildXsltNoticeScript(): string {
+  return `(() => { ${SOUL_XSLT_BADGE_SOURCE} try { soulXsltBadge(); return true; } catch { return false; } })()`;
 }
 
 /** Shows a non-blocking explanation instead of silently rendering raw XML. */
