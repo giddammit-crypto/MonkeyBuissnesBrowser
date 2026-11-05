@@ -31,3 +31,9 @@ Runner запрещает UNIX sockets. Native single-instance lock подмен
 ## Ubuntu
 
 `npm run dist:linux` создаёт AppImage и DEB для x86_64. Workflow Ubuntu release повторяет проверки в GitHub Actions без подмены native lock, собирает оба пакета и SHA256SUMS, затем публикует версионный релиз. Существующий релиз не перезаписывается.
+
+## Дополнительная проверка GitHub Actions
+
+Полный набор smoke, features и Voodoo прошёл на обычном GitHub runner без подмены single-instance lock. В отдельном запуске выявлена гонка самого tab-search smoke после Ctrl+L: тест начинал Home/End до отложенного кадра фокусировки адреса. Добавлено ожидание завершения кадра; три повторных локальных запуска успешны.
+
+Аудит npm выявил GHSA-g3hv-75wg-m249 в minimatch 9/10 у инструментов упаковки. Для диапазона >=7 <11.0.1 закреплён исправленный minimatch 11.0.1; старые API minimatch 3/5 сохранены. Проверка npm audit включена в workflow публикации.

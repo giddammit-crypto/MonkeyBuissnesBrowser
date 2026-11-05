@@ -48,6 +48,10 @@ try {
   for(let index=0;index<8;index++)await create(`/overflow-${index}`);
   const alpha = await create('/alpha');
   await nativeKey(`${base}/alpha`, 'L', [primary]);
+  // Ctrl+L focuses/selects the address twice (immediate + next animation frame).
+  // Finish that native-to-renderer handoff before manually moving to the strip.
+  await expect(shell.getByRole('textbox', { name: 'Адресная строка', exact: true })).toBeFocused();
+  await shell.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve())));
   await shell.getByRole('tab', { name:'Alpha library',exact:true }).focus();
   await shell.keyboard.press('Home');
   assert.equal((await snapshot()).activeTabId,alpha.id,'arrow navigation must not steal focus into a native page');
