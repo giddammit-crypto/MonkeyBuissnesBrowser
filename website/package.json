@@ -1,0 +1,35 @@
+{
+  "name": "soulm8te-browser-website",
+  "private": true,
+  "version": "1.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && npm test && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types scripts/check-release.mjs"
+  },
+  "dependencies": {
+    "clsx": "2.1.1",
+    "framer-motion": "^14.9.1",
+    "lucide-react": "^1.69.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "tailwind-merge": "3.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.1.17",
+    "@types/node": "22.19.17",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.1.1",
+    "tailwindcss": "4.1.17",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vite-plugin-singlefile": "2.3.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
