@@ -564,4 +564,22 @@ export interface CleanResult {
   error?: string;
 }
 
+export interface PageFontFace {
+  family: string;
+  style: string;
+  weight: string;
+  status: 'unloaded' | 'loading' | 'loaded' | 'error';
+}
+
+/** A bounded snapshot of declared CSS fonts, not proof of rendered glyphs. */
+export interface PageFontReport {
+  tabId: string;
+  documentStatus: 'loading' | 'loaded';
+  faces: PageFontFace[];
+  computedFonts: Array<{ family: string; style: string; weight: string; count: number }>;
+  sampledElements: number;
+  facesTruncated: boolean;
+  sampledAt: number;
+}
+
 

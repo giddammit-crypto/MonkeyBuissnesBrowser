@@ -10,6 +10,8 @@ import {
   ArrowUp,
   AlertTriangle,
   Bookmark,
+  Broom,
+  Copy,
   BookOpen,
   CheckCircle2,
   ChevronDown,
@@ -51,6 +53,7 @@ import {
   Star,
   StickyNote,
   Trash2,
+  Type,
   Upload,
   User,
   LogIn,
@@ -78,6 +81,7 @@ import type {
 } from "../shared/types";
 import { getGoogleAuthNotice, getSiteKey, normalizePermissionOrigin, normalizeSiteKey } from "../shared/sitePolicy";
 import { normalizeNewTabBackground } from "../shared/background";
+import { cleanTrackingLink } from "../shared/cleanLink";
 import { getOmniboxSuggestions } from "../shared/omniboxSuggestions";
 import logoLight from "./assets/soul/logo-light.png";
 import logoDark from "./assets/soul/logo-dark.png";
@@ -103,6 +107,7 @@ import SiteFavicon from "./SiteFavicon";
 import SiteErrorPage from "./SiteErrorPage";
 import PrivacyDashboard from "./PrivacyDashboard";
 import TaskManagerModal from "./TaskManagerModal";
+import FontDiagnosticsModal from "./FontDiagnosticsModal";
 import ClickAndCleanModal from "./ClickAndCleanModal";
 import { UpdateModal } from "./UpdateModal";
 import SavePasswordPrompt from "./SavePasswordPrompt";
@@ -347,6 +352,7 @@ function App(): React.JSX.Element {
   const [tabSearchOpen, setTabSearchOpen] = useState(false);
   const [taskManagerOpen, setTaskManagerOpen] = useState(false);
   const [clickCleanOpen, setClickCleanOpen] = useState(false);
+  const [fontDiagnosticsTabId, setFontDiagnosticsTabId] = useState<string | null>(null);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [hasAvailableUpdate, setHasAvailableUpdate] = useState(false);
   const [voodooOpen, setVoodooOpen] = useState(false);
@@ -759,6 +765,7 @@ function App(): React.JSX.Element {
     || taskManagerOpen
     || notesDrawerOpen
     || clickCleanOpen
+    || Boolean(fontDiagnosticsTabId)
     || updateModalOpen
     || Boolean(pendingPasswordOffer)
     || workspaceOpen
@@ -808,7 +815,7 @@ function App(): React.JSX.Element {
 
       if (event.key === "Escape") {
         // The cleaner owns Escape and keeps itself open while cleaning.
-        if (clickCleanOpen) return;
+        if (clickCleanOpen || fontDiagnosticsTabId) return;
         if (taskManagerOpen) {
           setTaskManagerOpen(false);
           return;
@@ -989,7 +996,7 @@ function App(): React.JSX.Element {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [currentTab, findOpen, panel, tabSearchOpen, taskManagerOpen, clickCleanOpen, voodooOpen, isPrivate, snapshot, run, openPanel, action]);
+  }, [currentTab, findOpen, panel, tabSearchOpen, taskManagerOpen, clickCleanOpen, fontDiagnosticsTabId, voodooOpen, isPrivate, snapshot, run, openPanel, action]);
 
   // Google Chrome Ctrl + Wheel zoom support on shell / viewport
   useEffect(() => {
@@ -1221,6 +1228,10 @@ function App(): React.JSX.Element {
               }, 200);
             }}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) {
+                if (event.key === "Enter") event.preventDefault();
+                return;
+              }
               if (omniboxSuggestions.length > 0) {
                 if (event.key === "ArrowDown") {
                   event.preventDefault();
@@ -1623,12 +1634,14 @@ function App(): React.JSX.Element {
             className={`icon-button ${clickCleanOpen ? "selected" : ""}`}
             title="Click & Clean (Ctrl+Shift+Del) · Очистка кэша, куки и истории"
             aria-label="Click & Clean"
+            aria-haspopup="dialog"
+            aria-expanded={clickCleanOpen}
             onClick={() => {
               setPopover(null);
               setClickCleanOpen((val) => !val);
             }}
           >
-            <Sparkles size={18} />
+            <Broom size={18} />
           </button>
           <button
             className={`mode-chip ${isPrivate ? "is-private" : ""}`}
@@ -1806,6 +1819,36 @@ function App(): React.JSX.Element {
               }}
             />
             <MenuAction
+              icon={<ShieldCheck size={16} />}
+              label="Открыть страницу по HTTPS"
+              disabled={!currentTab?.url.startsWith("http:")}
+              onClick={() => {
+                if (currentTab?.url.startsWith("http:")) navigate(currentTab.url.replace(/^http:/, "https:"));
+                setPopover(null);
+              }}
+            />
+            <MenuAction
+              icon={<Type size={16} />}
+              label="Шрифты страницы"
+              disabled={!currentTab || currentTab.isInternal || currentTab.lifecycle === "crashed"}
+              onClick={() => {
+                if (currentTab) setFontDiagnosticsTabId(currentTab.id);
+                setPopover(null);
+              }}
+            />
+            <MenuAction
+              icon={<Copy size={16} />}
+              label="Копировать ссылку без рекламных меток"
+              disabled={!currentTab || currentTab.isInternal}
+              onClick={() => {
+                const link = currentTab && cleanTrackingLink(currentTab.url);
+                if (link) run(navigator.clipboard.writeText(link).then(() => {
+                  setToast({ tone: "success", message: "Ссылка скопирована без рекламных меток" });
+                }));
+                setPopover(null);
+              }}
+            />
+            <MenuAction
               icon={<Printer size={16} />}
               label="Печать страницы"
               detail="Ctrl+P"
@@ -1836,7 +1879,7 @@ function App(): React.JSX.Element {
               }}
             />
             <MenuAction
-              icon={<Sparkles size={16} />}
+              icon={<Broom size={16} />}
               label="Click & Clean"
               detail="Ctrl+Shift+Del"
               onClick={() => {
@@ -2493,6 +2536,10 @@ function App(): React.JSX.Element {
           )}
         </div>
       </main>
+      {fontDiagnosticsTabId && (
+        <FontDiagnosticsModal key={fontDiagnosticsTabId} tabId={fontDiagnosticsTabId}
+          onDismiss={() => setFontDiagnosticsTabId(null)} onError={showError} />
+      )}
       {tabSearchOpen && snapshot && (
         <TabSearch
           snapshot={snapshot}
@@ -4692,7 +4739,7 @@ function SettingsPanel({
               <strong>Установленная версия</strong>
               <small>Если здесь нет новых настроек, запущена старая сборка. После обновления GitHub приложение нужно пересобрать и переустановить.</small>
             </span>
-            <strong>soulm8te 1.0.0</strong>
+            <strong>soulm8te 1.0.1</strong>
           </div>
           <label className="setting-row">
             <span><strong>Стиль оформления</strong><small>Отдельный стиль Detroit · Хлоя или Cyberpunk. Исходные темы не изменяются.</small></span>
@@ -5347,7 +5394,7 @@ function SettingsPanel({
             <div style={{ flex: 1 }}>
               <strong>soulm8te Browser</strong>
               <p>Ваш цифровой союзник · Detroit: Become Human</p>
-              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 1.0.0</small>
+              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 1.0.1</small>
             </div>
             <button
               className="action-button secondary"

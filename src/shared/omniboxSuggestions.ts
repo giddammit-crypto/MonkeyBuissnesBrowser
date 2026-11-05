@@ -1,5 +1,5 @@
 import type { BookmarkEntry, HistoryEntry } from './types';
-import { isSafeWebUrl } from './omnibox';
+import { isSafeWebUrl, parseOmniboxInput } from './omnibox';
 
 export type SuggestionKind = 'tab' | 'popular' | 'bookmark' | 'history' | 'search';
 
@@ -73,6 +73,12 @@ function extractDomain(url: string): string {
   }
 }
 
+// URL paths and query values are case-sensitive. Only URL's own host/default
+// port normalization is safe for deduplication.
+function suggestionIdentity(url: string): string {
+  try { return new URL(url).href; } catch { return url; }
+}
+
 export function getOmniboxSuggestions(
   rawInput: string,
   options?: {
@@ -105,8 +111,9 @@ export function getOmniboxSuggestions(
   // Suggestions are rendered as navigation targets. Do not let a malformed or
   // javascript: search-engine setting turn a suggestion into script execution.
   const searchBase = isSafeWebUrl(configuredSearchBase) ? configuredSearchBase : 'https://yandex.ru/search/?text=';
-  const searchUrl = `${searchBase}${encodeURIComponent(query || rawTrimmed)}`;
-  const searchDomain = extractDomain(searchBase);
+  const intent = parseOmniboxInput(query || rawTrimmed, searchBase);
+  const searchUrl = intent.kind === 'search' ? intent.url : `${searchBase}${encodeURIComponent(query || rawTrimmed)}`;
+  const searchDomain = extractDomain(searchUrl);
 
   const seenUrls = new Set<string>();
   const suggestions: OmniboxSuggestion[] = [];
@@ -153,7 +160,7 @@ export function getOmniboxSuggestions(
     const tabLimit = isTabSearchPrefix ? maxResults : maxResults - 1;
     for (const { tab } of scoredTabs) {
       if (suggestions.length >= tabLimit) break;
-      const norm = tab.url.toLowerCase().replace(/\/$/, '');
+      const norm = suggestionIdentity(tab.url);
       if (!seenUrls.has(norm)) {
         seenUrls.add(norm);
         suggestions.push({
@@ -211,7 +218,7 @@ export function getOmniboxSuggestions(
 
   for (const { site } of scoredSites) {
     if (suggestions.length >= maxResults - 1) break;
-    const norm = site.url.toLowerCase().replace(/\/$/, '');
+    const norm = suggestionIdentity(site.url);
     if (!seenUrls.has(norm)) {
       seenUrls.add(norm);
       suggestions.push({
@@ -232,7 +239,7 @@ export function getOmniboxSuggestions(
       const bTitle = (b.title || '').toLowerCase();
       const bUrl = (b.url || '').toLowerCase();
       if (bTitle.includes(qLower) || bUrl.includes(qLower)) {
-        const norm = b.url.toLowerCase().replace(/\/$/, '');
+        const norm = suggestionIdentity(b.url);
         if (!seenUrls.has(norm)) {
           seenUrls.add(norm);
           suggestions.push({
@@ -255,7 +262,7 @@ export function getOmniboxSuggestions(
       const hTitle = (h.title || '').toLowerCase();
       const hUrl = (h.url || '').toLowerCase();
       if (hTitle.includes(qLower) || hUrl.includes(qLower)) {
-        const norm = h.url.toLowerCase().replace(/\/$/, '');
+        const norm = suggestionIdentity(h.url);
         if (!seenUrls.has(norm)) {
           seenUrls.add(norm);
           suggestions.push({

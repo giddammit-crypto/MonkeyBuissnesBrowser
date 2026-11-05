@@ -22,6 +22,7 @@ import type {
   TaskManagerSnapshot,
   ReaderSettings,
   ReaderArticle,
+  PageFontReport,
   NoteEntry,
   SaveNoteInput,
   VoodooChatMessage,
@@ -144,6 +145,7 @@ export interface BrowserApi {
   closeWindow(): Promise<void>;
   toggleReaderMode(tabId: string): Promise<boolean>;
   getReaderArticle(tabId: string): Promise<ReaderArticle | null>;
+  getPageFonts(tabId: string): Promise<PageFontReport>;
   updateReaderSettings(patch: Partial<ReaderSettings>): Promise<ReaderSettings>;
   togglePictureInPicture(tabId: string): Promise<{ success: boolean; isPip: boolean }>;
   getNotes(query?: string): Promise<NoteEntry[]>;

@@ -115,8 +115,7 @@ export class PasswordStore {
   }
 
   clearAll(): number {
-    if (!this.canPersistSecurely()) return 0;
-    const records = this.read(false);
+    const records = this.read(true);
     if (records.length === 0) return 0;
     this.write([]);
     return records.length;

@@ -1,8 +1,15 @@
 // Includes JSON framing and reasoning, with ample room for a 4K-token completion.
 export const MAX_PROVIDER_RESPONSE_BYTES = 2 * 1024 * 1024;
 
+export class ProviderResponseSizeError extends Error {
+  constructor() {
+    super('Ответ AI-провайдера превышает допустимый размер');
+    this.name = 'ProviderResponseSizeError';
+  }
+}
+
 export async function readProviderText(response: Response, limit = MAX_PROVIDER_RESPONSE_BYTES): Promise<string> {
-  const tooLarge = () => new Error('Ответ AI-провайдера превышает допустимый размер');
+  const tooLarge = () => new ProviderResponseSizeError();
   const declared = Number(response.headers?.get('content-length'));
   if (Number.isFinite(declared) && declared > limit) {
     await response.body?.cancel();

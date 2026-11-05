@@ -1,6 +1,7 @@
 import { exportBookmarksHtml } from '../services/BookmarkExportService';
 import { createMediaCookieFile } from '../services/MediaCookieFile';
 import { permissionRequestGuard } from '../services/PermissionRequestGuard';
+import { inspectPageFonts } from '../services/PageFontInspector';
 import { requestedContextWindow } from '../../shared/voodooContext';
 import { VoodooModelCatalog } from '../services/VoodooModelCatalog';
 import path from 'node:path';
@@ -64,6 +65,7 @@ import type {
   TaskManagerProcessType,
   TaskManagerSnapshot,
   ReaderArticle,
+  PageFontReport,
   ReaderSettings,
   NoteEntry,
   NoteColor,
@@ -216,6 +218,15 @@ export class BrowserController {
     return false;
   }
 
+  private static findProfileOwner(userDataPath: string): BrowserController | undefined {
+    const resolved = path.resolve(userDataPath);
+    return [...BrowserController.controllers].find((controller) => !controller.disposed
+      && controller.profileDataPath === resolved && controller.stores);
+  }
+
+  private readonly profileDataPath = path.resolve(app.getPath('userData'));
+  private downloadStoreCleanup?: () => void;
+  private readonly profileStoreCleanup: Array<() => void> = [];
   readonly stores: BrowserStores;
   readonly downloads: DownloadEntry[];
   readonly tabs = new Map<string, TabRecord>();
@@ -279,15 +290,22 @@ export class BrowserController {
   private neverSaveOrigins = new Set<string>();
 
   constructor() {
+    const profileOwner = BrowserController.findProfileOwner(this.profileDataPath);
+    this.stores = profileOwner?.stores ?? new BrowserStores(this.profileDataPath);
     BrowserController.controllers.add(this);
-    this.stores = new BrowserStores(app.getPath('userData'));
     const initialSettings = this.stores.settings.get();
     if (initialSettings.voodooBubblePosition) {
       this.voodooBubblePosition = { ...initialSettings.voodooBubblePosition };
     }
     nativeTheme.themeSource = initialSettings.theme === 'graphite' ? 'dark' : (initialSettings.theme || 'system');
-    this.downloads = this.stores.downloads.get();
-    this.normalizeDownloads();
+    // Runtime entries include private downloads and native item ownership, so
+    // windows share persistence but retain separate runtime arrays.
+    this.downloads = structuredClone(this.stores.downloads.get());
+    if (!profileOwner) this.normalizeDownloads();
+    this.downloadStoreCleanup = this.stores.downloads.subscribe((entries) => this.synchronizePersistentDownloads(entries));
+    for (const store of [this.stores.history, this.stores.bookmarks]) {
+      this.profileStoreCleanup.push(store.subscribe(() => { if (!this.disposed) this.emitSnapshot(); }));
+    }
     this.passwords = new PasswordStore(app.getPath('userData'));
     this.importer = new BrowserDataImporter(this.stores, this.passwords, (cookies) => this.setImportedCookies(cookies));
     this.browserSession = session.fromPartition('persist:northstar-default');
@@ -870,7 +888,14 @@ export class BrowserController {
     }
   }
 
-  async createTab(input: { url?: string; isPrivate?: boolean; active?: boolean; lazy?: boolean } = {}): Promise<TabSnapshot> {
+  private resolveWorkspaceId(workspaceId = this.activeWorkspaceId): string {
+    const workspaces = this.stores.workspaces.get();
+    return workspaces.find((entry) => entry.id === workspaceId)?.id
+      ?? workspaces.find((entry) => entry.id === this.activeWorkspaceId)?.id
+      ?? workspaces[0]?.id ?? 'personal';
+  }
+
+  async createTab(input: { url?: string; isPrivate?: boolean; active?: boolean; lazy?: boolean; workspaceId?: string } = {}): Promise<TabSnapshot> {
     const id = crypto.randomUUID();
     const isPrivate = input.isPrivate ?? this.tabs.get(this.activeTabId)?.isPrivate ?? false;
     if (isPrivate) this.ensurePrivateSession();
@@ -889,9 +914,8 @@ export class BrowserController {
       isPrivate,
       isInternal,
       lifecycle: input.lazy && !isInternal ? 'hibernated' : (input.active ?? true) ? 'active' : 'background',
-      workspaceId: 'personal',
+      workspaceId: this.resolveWorkspaceId(input.workspaceId),
     };
-    tab.workspaceId = this.activeWorkspaceId;
     this.tabs.set(id, tab);
     this.memoryManager.registerTab({
       tabId: id,
@@ -1168,8 +1192,7 @@ export class BrowserController {
     if (this.tabs.get(this.activeTabId)?.isPrivate) return;
     const saved = this.closedTabs.pop();
     if (!saved) return;
-    this.activeWorkspaceId = saved.workspaceId;
-    const reopened = await this.createTab({ url: saved.url, isPrivate: false });
+    const reopened = await this.createTab({ url: saved.url, isPrivate: false, workspaceId: saved.workspaceId });
     const tab = this.tabs.get(reopened.id)!;
     tab.isPinned = saved.isPinned;
     tab.isMuted = saved.isMuted;
@@ -1188,7 +1211,7 @@ export class BrowserController {
       tab.isPinned = !tab.isPinned;
       this.memoryManager.updateTab(tab.id, { pinned: tab.isPinned });
     } else if (action === 'duplicate') {
-      await this.createTab({ url: tab.url, isPrivate: tab.isPrivate });
+      await this.createTab({ url: tab.url, isPrivate: tab.isPrivate, workspaceId: tab.workspaceId });
     } else if (action === 'hibernate') {
       await this.hibernateTab(tabId);
     } else if (action === 'print' && tab.view && !tab.view.webContents.isDestroyed()) {
@@ -1296,7 +1319,22 @@ export class BrowserController {
     if (contents && !contents.isDestroyed()) contents.stopFindInPage('keepSelection');
   }
 
+  private findPublicDownloadOwner(downloadId: string): BrowserController | undefined {
+    const entry = this.downloads.find((download) => download.id === downloadId);
+    if (!entry || entry.isPrivate) return;
+    return [...BrowserController.controllers].find((controller) => controller !== this && !controller.disposed
+      && controller.stores === this.stores
+      && (controller.liveDownloads.has(downloadId) || controller.ytDlpProcesses.has(downloadId)));
+  }
+
+  private isActiveDownload(downloadId: string): boolean {
+    return this.liveDownloads.has(downloadId) || this.ytDlpProcesses.has(downloadId)
+      || Boolean(this.findPublicDownloadOwner(downloadId));
+  }
+
   controlDownload(downloadId: string, action: DownloadAction): void {
+    const owner = this.findPublicDownloadOwner(downloadId);
+    if (owner) { owner.controlDownload(downloadId, action); return; }
     if (action === 'delete') {
       this.deleteDownload(downloadId, false);
       return;
@@ -1365,6 +1403,8 @@ export class BrowserController {
   }
 
   deleteDownload(downloadId: string, deleteFile = false): void {
+    const owner = this.findPublicDownloadOwner(downloadId);
+    if (owner) { owner.deleteDownload(downloadId, deleteFile); return; }
     const ytProc = this.ytDlpProcesses.get(downloadId);
     if (ytProc) {
       try { ytProc.child.kill('SIGKILL'); } catch {}
@@ -1765,22 +1805,30 @@ export class BrowserController {
     this.emitSnapshot();
   }
 
+  private clearProfileHistoryNavigation(): void {
+    const controllers = new Set([this, ...BrowserController.controllers]);
+    for (const controller of controllers) {
+      if (controller.disposed || controller.stores !== this.stores) continue;
+      controller.closedTabs.length = 0;
+      for (const tab of controller.tabs.values()) if (!tab.isPrivate && tab.view && !tab.view.webContents.isDestroyed()) {
+        tab.view.webContents.navigationHistory.clear();
+        controller.updateNavigationState(tab);
+      }
+      controller.emitSnapshot();
+    }
+  }
+
   async clearBrowsingHistory(): Promise<void> {
     if (!this.window) return;
     const { response } = await dialog.showMessageBox(this.window, { type: 'question', title: 'Очистить историю?', message: 'Удалить историю посещений обычного профиля?', detail: 'Cookies, входы на сайты, закладки и файлы загрузок сохранятся.', buttons: ['Отмена', 'Очистить историю'], defaultId: 0, cancelId: 0, noLink: true });
     if (response !== 1) return;
     this.stores.history.set([]);
-    this.closedTabs.length = 0;
-    for (const tab of this.tabs.values()) if (!tab.isPrivate && tab.view && !tab.view.webContents.isDestroyed()) {
-      tab.view.webContents.navigationHistory.clear();
-      this.updateNavigationState(tab);
-    }
-    this.emitSnapshot();
+    this.clearProfileHistoryNavigation();
   }
 
   clearFinishedDownloads(isPrivate = false): void {
     if (typeof isPrivate !== 'boolean') throw new Error('Некорректный режим загрузок.');
-    const active = this.downloads.filter(entry => Boolean(entry.isPrivate) !== isPrivate || this.liveDownloads.has(entry.id) || entry.state === 'queued' || entry.state === 'progressing');
+    const active = this.downloads.filter(entry => Boolean(entry.isPrivate) !== isPrivate || this.isActiveDownload(entry.id) || entry.state === 'queued' || entry.state === 'progressing');
     this.downloads.splice(0, this.downloads.length, ...active);
     this.stores.downloads.set(active.filter(entry => !entry.isPrivate).slice(0, 100));
     this.emitSnapshot();
@@ -1876,6 +1924,8 @@ export class BrowserController {
       }
     }
 
+    // Recently closed tabs belong to the same destination as surviving tabs.
+    for (const saved of this.closedTabs) if (saved.workspaceId === workspaceId) saved.workspaceId = fallback.id;
     this.stores.workspaces.set(existing.filter((w) => w.id !== workspaceId));
 
     if (this.activeWorkspaceId === workspaceId) {
@@ -1988,6 +2038,19 @@ export class BrowserController {
   }
 
   async executeClean(options: CleanTargetOptions): Promise<CleanResult> {
+    const allowedTargets = new Set<keyof CleanTargetOptions>([
+      'cache', 'cookies', 'history', 'downloadsHistory', 'localStorage', 'indexedDB',
+      'serviceWorkers', 'authCache', 'dnsCache', 'passwords', 'closeTabs', 'closedTabsHistory',
+    ]);
+    if (!options || typeof options !== 'object' || Array.isArray(options)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(options))
+      || Object.entries(options).some(([key, value]) => !allowedTargets.has(key as keyof CleanTargetOptions) || typeof value !== 'boolean')) {
+      throw new Error('Некорректные параметры очистки.');
+    }
+    // Copy the validated request before asynchronous work and check the vault
+    // before clearing any other selected data. A locked vault is not a success.
+    options = { ...options };
+    if (options.passwords) this.passwords.summaries();
     const startTime = performance.now();
     const before = await this.getStorageMetrics();
 
@@ -2043,10 +2106,10 @@ export class BrowserController {
     // 5. options.serviceWorkers
     if (options.serviceWorkers) {
       if (typeof this.browserSession.clearStorageData === 'function') {
-        await this.browserSession.clearStorageData({ storages: ['serviceworkers'] });
+        await this.browserSession.clearStorageData({ storages: ['serviceworkers', 'cachestorage'] });
       }
       if (this.privateSession && typeof this.privateSession.clearStorageData === 'function') {
-        await this.privateSession.clearStorageData({ storages: ['serviceworkers'] });
+        await this.privateSession.clearStorageData({ storages: ['serviceworkers', 'cachestorage'] });
       }
     }
 
@@ -2073,26 +2136,17 @@ export class BrowserController {
     // 8. options.history
     if (options.history) {
       this.stores.history.set([]);
-      for (const tab of this.tabs.values()) {
-        if (!tab.isPrivate) {
-          if (tab.view && !tab.view.webContents.isDestroyed()) {
-            try {
-              tab.view.webContents.navigationHistory.clear();
-            } catch {}
-          }
-          (tab as any).navigationHistory = [];
-          tab.canGoBack = false;
-          tab.canGoForward = false;
-        }
-      }
+      this.clearProfileHistoryNavigation();
       this.broadcastHistoryUpdate();
     }
 
     // 9. options.downloadsHistory
     if (options.downloadsHistory) {
-      this.stores.downloads.set([]);
-      const remaining = this.downloads.filter((entry) => this.liveDownloads.has(entry.id) || entry.state === 'queued' || entry.state === 'progressing');
+      // Compute survivors before notifying other windows: a cleared shared
+      // store would otherwise remove rows owned by a peer before this lookup.
+      const remaining = this.downloads.filter((entry) => this.isActiveDownload(entry.id) || entry.state === 'queued' || entry.state === 'progressing');
       this.downloads.splice(0, this.downloads.length, ...remaining);
+      this.stores.downloads.set(remaining.filter((entry) => !entry.isPrivate).slice(0, 100));
       this.eventListener?.({ type: 'downloads-cleared' });
     }
 
@@ -2124,16 +2178,17 @@ export class BrowserController {
 
     // 10. options.closedTabsHistory
     if (options.closedTabsHistory) {
-      this.closedTabs = [];
+      for (const controller of new Set([this, ...BrowserController.controllers])) {
+        if (controller.disposed || controller.stores !== this.stores) continue;
+        controller.closedTabs.length = 0;
+        controller.emitSnapshot();
+      }
     }
 
     this.emitSnapshot();
 
     const after = await this.getStorageMetrics();
-    let freed = Math.max(0, before.cacheSizeBytes - after.cacheSizeBytes);
-    if (options.cache && freed === 0 && before.cacheSizeBytes > 0) {
-      freed = before.cacheSizeBytes;
-    }
+    const freed = Math.max(0, before.cacheSizeBytes - after.cacheSizeBytes);
 
     const clearedTargets = (Object.keys(options) as Array<keyof CleanTargetOptions>).filter(
       (k) => Boolean(options[k]),
@@ -2422,6 +2477,7 @@ export class BrowserController {
         url: tabData.url,
         isPrivate: tabData.isPrivate,
         active: true,
+        workspaceId: tabData.workspaceId,
       });
 
       const newTab = this.tabs.get(created.id);
@@ -2430,7 +2486,7 @@ export class BrowserController {
         if (tabData.favicon) newTab.favicon = tabData.favicon;
         newTab.isPinned = Boolean(tabData.isPinned);
         newTab.isMuted = Boolean(tabData.isMuted);
-        if (tabData.workspaceId) newTab.workspaceId = tabData.workspaceId;
+        newTab.view?.webContents.setAudioMuted(newTab.isMuted);
         this.memoryManager.updateTab(newTab.id, { pinned: newTab.isPinned });
       }
 
@@ -3254,7 +3310,9 @@ export class BrowserController {
       }
       callback({ responseHeaders: headers });
     });
-    const onDownload = (_event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents) => this.handleDownload(item, contents, targetSession);
+    const onDownload = (_event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents) => {
+      if (this.ownsSessionDownload(contents, targetSession)) this.handleDownload(item, contents, targetSession);
+    };
     this.sessionDownloadHandlers.set(targetSession, onDownload);
     targetSession.on('will-download', onDownload);
 
@@ -3997,6 +4055,18 @@ export class BrowserController {
     if (this.stores) this.emitSnapshot();
   }
 
+  private ownsSessionDownload(contents: Electron.WebContents | undefined, targetSession: Electron.Session): boolean {
+    if (this.disposed) return false;
+    const pageOwner = BrowserController.findControllerForPage(contents?.id)
+      ?? BrowserController.findControllerForShell(contents?.id);
+    if (pageOwner) return pageOwner === this;
+    // session.downloadURL() has no originating WebContents. Its shared session
+    // still needs exactly one native item owner, never one handler per window.
+    const sessionOwner = [...BrowserController.controllers].find((controller) => !controller.disposed
+      && (controller.browserSession === targetSession || controller.privateSession === targetSession));
+    return !sessionOwner || sessionOwner === this;
+  }
+
   private handleDownload(item: Electron.DownloadItem, webContents: Electron.WebContents, sourceSession?: Electron.Session): void {
     if (!this.window || this.disposed) { item.cancel(); return; }
     const id = crypto.randomUUID();
@@ -4049,6 +4119,26 @@ export class BrowserController {
       }
     });
     this.persistDownloads();
+    this.emitSnapshot();
+  }
+
+  private synchronizePersistentDownloads(entries: DownloadEntry[]): void {
+    if (this.disposed) return;
+    const owned = this.downloads.filter((entry) => entry.isPrivate
+      || this.liveDownloads.has(entry.id) || this.ytDlpProcesses.has(entry.id));
+    const ownedById = new Map(owned.map((entry) => [entry.id, entry]));
+    const localById = new Map(this.downloads.filter((entry) => !entry.isPrivate).map((entry) => [entry.id, entry]));
+    const synchronized = entries.map((entry) => {
+      const ownedEntry = ownedById.get(entry.id);
+      if (ownedEntry) return ownedEntry;
+      // Thumbnail jobs keep an entry reference after native completion. Update
+      // surviving rows in place; only an actual deletion invalidates that job.
+      const local = localById.get(entry.id);
+      return local ? Object.assign(local, structuredClone(entry)) : structuredClone(entry);
+    });
+    const synchronizedIds = new Set(synchronized.map((entry) => entry.id));
+    for (const entry of owned) if (!synchronizedIds.has(entry.id)) synchronized.push(entry);
+    this.downloads.splice(0, this.downloads.length, ...synchronized);
     this.emitSnapshot();
   }
 
@@ -4467,6 +4557,22 @@ export class BrowserController {
     } catch {
       return null;
     }
+  }
+
+  async getPageFonts(tabId: string): Promise<PageFontReport> {
+    const tab = typeof tabId === 'string' ? this.tabs.get(tabId) : undefined;
+    if (this.disposed || !tab || tab.isInternal || tab.lifecycle === 'hibernated' || tab.lifecycle === 'crashed'
+      || !tab.view || tab.view.webContents.isDestroyed() || (tab.isPrivate && this.activeTabId !== tab.id)) {
+      throw new Error('Откройте нужную страницу и повторите проверку шрифтов.');
+    }
+    const contents = tab.view.webContents;
+    const url = tab.url;
+    const report = await inspectPageFonts(contents);
+    if (this.disposed || this.tabs.get(tabId) !== tab || tab.view?.webContents !== contents
+      || contents.isDestroyed() || tab.url !== url || (tab.isPrivate && this.activeTabId !== tab.id)) {
+      throw new Error('Страница изменилась во время проверки шрифтов. Повторите попытку.');
+    }
+    return { ...report, tabId: tab.id, sampledAt: Date.now() };
   }
 
   async updateReaderSettings(patch: Partial<ReaderSettings>): Promise<ReaderSettings> {
@@ -6676,6 +6782,9 @@ export class BrowserController {
     if (this.disposed) return;
     this.persistSession();
     this.disposed = true;
+    this.downloadStoreCleanup?.();
+    this.downloadStoreCleanup = undefined;
+    for (const cleanup of this.profileStoreCleanup?.splice(0) ?? []) cleanup();
     this.thumbnailQueue?.dispose();
     this.thumbnailQueue = undefined;
     this.cancelVoodooRequest();

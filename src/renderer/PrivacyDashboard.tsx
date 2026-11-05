@@ -90,6 +90,7 @@ export default function PrivacyDashboard({
   onRefresh,
   onManagePermissions,
 }: PrivacyDashboardProps): React.JSX.Element {
+  const [manualChecking, setManualChecking] = useState(false);
   if (!dashboard) {
     return (
       <section className="privacy-dashboard privacy-dashboard-loading" aria-label="Центр приватности">
@@ -114,7 +115,6 @@ export default function PrivacyDashboard({
     );
   }
 
-  const [manualChecking, setManualChecking] = useState(false);
   const protectedRoute = dashboard.route.mode === "browsec" || dashboard.route.mode === "proxy";
   const overallStatus = dashboard.leakChecks.some((check) => check.status === "fail")
     ? "fail"

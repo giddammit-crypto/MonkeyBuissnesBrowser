@@ -1,4 +1,4 @@
-import { readProviderJson, readProviderText } from './VoodooProviderResponse';
+import { ProviderResponseSizeError, readProviderJson, readProviderText } from './VoodooProviderResponse';
 import { AgentPlan, actionEvidence, canonicalCall, textToolHistory, workflowContext, estimateTokens, estimateRequestTokens, prepareToolSchema, requestedContextWindow, COMPLETION_OUTPUT_TOKENS, type CompletionProtocol, type PreparedToolSchema } from './AgentWorkflow';
 import { normalizeVoodooKeys } from '../../shared/voodooKeys';
 import type {
@@ -735,12 +735,12 @@ export class VoodooAiService {
       });
 
 
-      const latencyMs = Date.now() - start;
       if (response.ok) {
         const payload = await readProviderJson(response);
         if (!payload?.choices?.[0]?.message || (typeof payload.choices[0].message.content !== 'string' && !Array.isArray(payload.choices[0].message.tool_calls))) {
           throw new Error('API вернул некорректный ответ вместо chat completion');
         }
+        const latencyMs = Date.now() - start;
         this.keyHealthMap.set(cleanKey, {
           status: 'healthy',
           latencyMs,
@@ -760,6 +760,7 @@ export class VoodooAiService {
 
       errorDetail = this.safeError(errorDetail, [cleanKey]);
       const failure = this.failure(response);
+      const latencyMs = Date.now() - start;
 
       this.keyHealthMap.set(cleanKey, {
         status: failure.status,
@@ -1011,7 +1012,15 @@ export class VoodooAiService {
         if (response.ok) {
           let data: Record<string, any>;
           try { data = await readProviderJson(response); }
-          catch { return { success: false, error: 'invalid_completion' }; }
+          catch (error) {
+            // A valid HTTP status does not mean that the streamed response
+            // finished. Preserve cancellation, body timeouts and connection
+            // failures for the transport handler and its retry cooldown.
+            if (error instanceof SyntaxError || error instanceof ProviderResponseSizeError) {
+              return { success: false, error: 'invalid_completion' };
+            }
+            throw error;
+          }
           const choice = data?.choices?.[0];
           const choiceMsg = choice?.message;
           const hasReasoning = typeof choiceMsg?.reasoning_content === 'string' || typeof choiceMsg?.reasoning === 'string';

@@ -78,6 +78,7 @@ function createMockController() {
     count: vi.fn(() => 3),
     canPersistSecurely: vi.fn(() => true),
     clearAll: vi.fn(() => 3),
+    summaries: vi.fn(() => []),
   };
 
   const tab1Contents = {
@@ -134,6 +135,7 @@ function createMockController() {
     closedTabs: [{ url: 'https://closed.com', workspaceId: 'personal' }],
     downloads: [...stores.downloads.data],
     liveDownloads: new Map(),
+    ytDlpProcesses: new Map(),
     eventListener,
     snapshotListener,
     emitSnapshot: vi.fn(),
@@ -169,6 +171,32 @@ describe('BrowserController Click & Clean Backend', () => {
     expect(metrics.openTabsCount).toBe(2); // 2 normal tabs, 1 private ignored
     expect(metrics.hasSecureStorage).toBe(true);
     expect(metrics.sampledAt).toBeGreaterThan(0);
+  });
+
+  it.each([null, undefined, [], 'history', { history: 'false' }, { cookies: 1 }, { unknown: true }, { history: undefined }])('rejects malformed clean requests before any reads or writes: %j', async (options) => {
+    const { controller, browserSession, stores, passwords } = createMockController();
+    await expect(controller.executeClean(options)).rejects.toThrow('Некорректные параметры');
+    expect(browserSession.getCacheSize).not.toHaveBeenCalled();
+    expect(browserSession.clearCache).not.toHaveBeenCalled();
+    expect(stores.history.set).not.toHaveBeenCalled();
+    expect(passwords.clearAll).not.toHaveBeenCalled();
+  });
+
+  it('reports a locked or unreadable password vault before clearing other selected targets', async () => {
+    const { controller, browserSession, stores, passwords } = createMockController();
+    passwords.summaries.mockImplementation(() => { throw new Error('Хранилище недоступно'); });
+    await expect(controller.executeClean({ cache: true, history: true, passwords: true })).rejects.toThrow('Хранилище недоступно');
+    expect(browserSession.clearCache).not.toHaveBeenCalled();
+    expect(stores.history.set).not.toHaveBeenCalled();
+    expect(passwords.clearAll).not.toHaveBeenCalled();
+  });
+
+  it.each([10, 20])('does not invent freed bytes when the cache remains at %i MiB', async (afterMiB) => {
+    const { controller, browserSession } = createMockController();
+    browserSession.getCacheSize.mockResolvedValueOnce(10 * 1024 * 1024).mockResolvedValueOnce(afterMiB * 1024 * 1024);
+    const result = await controller.executeClean({ cache: true });
+    expect(result.freedBytesEstimate).toBe(0);
+    expect(result.freedFormatted).toBe('0 Б');
   });
 
   it('executes cache cleaning across browserSession, privateSession, and defaultSession', async () => {
@@ -214,7 +242,7 @@ describe('BrowserController Click & Clean Backend', () => {
 
     expect(browserSession.clearStorageData).toHaveBeenCalledWith({ storages: ['localstorage', 'websql'] });
     expect(browserSession.clearStorageData).toHaveBeenCalledWith({ storages: ['indexdb', 'filesystem'] });
-    expect(browserSession.clearStorageData).toHaveBeenCalledWith({ storages: ['serviceworkers'] });
+    expect(browserSession.clearStorageData).toHaveBeenCalledWith({ storages: ['serviceworkers', 'cachestorage'] });
     expect(browserSession.clearAuthCache).toHaveBeenCalledOnce();
     expect(browserSession.clearHostResolverCache).toHaveBeenCalledOnce();
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 
 export class JsonStore<T> {
   private value: T;
+  private readonly listeners = new Set<() => void>();
 
   constructor(
     private readonly filePath: string,
@@ -21,6 +22,15 @@ export class JsonStore<T> {
     // Publish the new value only after the atomic write succeeds.
     this.flush(normalized);
     this.value = normalized;
+    for (const listener of this.listeners) {
+      try { listener(); } catch (error) { console.error('Store subscriber failed:', error); }
+    }
+  }
+
+  subscribe(listener: (value: T) => void): () => void {
+    const notify = () => listener(this.value);
+    this.listeners.add(notify);
+    return () => { this.listeners.delete(notify); };
   }
 
   update(mutator: (current: T) => T): T {

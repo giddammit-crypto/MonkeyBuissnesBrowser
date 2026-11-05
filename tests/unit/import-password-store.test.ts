@@ -112,7 +112,7 @@ it('counts stored passwords and clears all passwords securely', () => {
   expect(store.clearAll()).toBe(0);
 });
 
-it('clearAll and count return 0 when secure storage is unavailable', () => {
+it('bulk deletion reports unavailable secure storage while passive count stays zero', () => {
   const root = directory();
   const store = new PasswordStore(root);
   store.addMany([
@@ -122,7 +122,7 @@ it('clearAll and count return 0 when secure storage is unavailable', () => {
 
   storage.isEncryptionAvailable.mockReturnValue(false);
   expect(store.count()).toBe(0);
-  expect(store.clearAll()).toBe(0);
+  expect(() => store.clearAll()).toThrow('недоступно');
 
   storage.isEncryptionAvailable.mockReturnValue(true);
   expect(store.count()).toBe(1);
@@ -171,3 +171,17 @@ it('saves, updates, finds and reveals credentials for soulm8te browser', () => {
   expect(store.findByOriginAndUser('https://vk.com', 'durov')).toBeNull();
 });
 
+
+it('refuses bulk deletion of a locked or malformed vault and preserves its bytes', () => {
+  const root = directory(); const store = new PasswordStore(root);
+  store.addMany([{ origin: 'https://saved.test', username: 'user', password: 'fixture', browser: 'file' }]);
+  const file = path.join(root, 'browser-data', 'passwords.enc');
+  const before = fs.readFileSync(file);
+  storage.isEncryptionAvailable.mockReturnValue(false);
+  expect(() => store.clearAll()).toThrow('недоступно');
+  expect(fs.readFileSync(file)).toEqual(before);
+  storage.isEncryptionAvailable.mockReturnValue(true);
+  fs.writeFileSync(file, 'broken-vault');
+  expect(() => store.clearAll()).toThrow('Операция отменена');
+  expect(fs.readFileSync(file, 'utf8')).toBe('broken-vault');
+});

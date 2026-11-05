@@ -1,6 +1,6 @@
 # <p align="center"><img src="src/renderer/assets/soul/chloe-icon-512.png" alt="soulm8te" width="96" height="96" /><br/>soulm8te Browser</p>
 
-Текущая версия: **1.0.0** · [Изменения](docs/RELEASE_1.0.0.md) · [Проверка функционала](docs/FUNCTIONAL_AUDIT_1.0.0.md)
+Текущая версия: **1.0.1** · [Изменения](docs/RELEASE_1.0.1.md) · [Аудит](docs/FUNCTIONAL_AUDIT_1.0.1.md) · [Шрифт «Мономах»](docs/MONOMAKH_FONT_DIAGNOSIS_1.0.1.md)
 
 <p align="center">
   <strong>Современный, быстрый и стильный веб-браузер нового поколения на Chromium & Electron</strong><br/>

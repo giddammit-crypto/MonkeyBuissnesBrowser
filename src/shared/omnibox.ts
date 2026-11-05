@@ -41,9 +41,22 @@ export function parseOmniboxInput(rawInput: string, searchUrl = SEARCH_URL): Nav
     }
   }
 
-  // Detect host:port before URL(), which interprets localhost:4174 as a scheme.
-  if (/^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?(?:[/?#].*)?$/i.test(input)) {
-    try { return { kind: 'url', url: new URL(`http://${input}`).href }; }
+  // Address literals and local hostnames must be recognized before URL()
+  // interprets their port as a custom scheme. Local devices often serve HTTP.
+  if (/^(localhost|(?:\d{1,3}\.){3}\d{1,3}|\[[0-9a-f:.]+\]|[\p{L}\p{N}-]+\.(?:local|localhost))(?::\d+)?(?:[/?#][^\s]*)?$/iu.test(input)) {
+    try {
+      const candidate = new URL(`https://${input}`);
+      const host = candidate.hostname.toLowerCase();
+      const octets = host.split('.').map(Number);
+      const local = host === 'localhost' || host.endsWith('.local') || host.endsWith('.localhost')
+        || host === '[::1]' || /^\[(?:fc|fd|fe[89ab])/i.test(host)
+        || (octets.length === 4 && (octets[0] === 127 || octets[0] === 10
+          || (octets[0] === 192 && octets[1] === 168)
+          || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+          || (octets[0] === 169 && octets[1] === 254)));
+      if (local) candidate.protocol = 'http:';
+      return { kind: 'url', url: candidate.href };
+    }
     catch { return { kind: 'invalid', reason: 'Некорректный адрес.' }; }
   }
   if (/^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+(?::\d+)?(?:[/?#][^\s]*)?$/u.test(input)) {

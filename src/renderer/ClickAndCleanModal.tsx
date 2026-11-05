@@ -21,7 +21,6 @@ import {
   Shield,
   ShieldAlert,
   Sliders,
-  Sparkles,
   X,
   Zap,
 } from "lucide-react";
@@ -333,7 +332,7 @@ export const ClickAndCleanModal: React.FC<ClickAndCleanModalProps> = ({
         {isCleaning && (
           <div className="click-clean-scanning-overlay">
             <div className="click-clean-scanning-radar">
-              <Sparkles size={28} color="var(--cc-cyan)" />
+              <Broom size={28} color="var(--cc-cyan)" />
             </div>
             <div style={{ textAlign: "center" }}>
               <p className="click-clean-scanning-text">
@@ -497,7 +496,7 @@ export const ClickAndCleanModal: React.FC<ClickAndCleanModalProps> = ({
           <section>
             <div className="click-clean-section-header">
               <span className="click-clean-section-title">
-                <Sparkles size={13} /> Живые показатели хранилища
+                <Broom size={13} /> Живые показатели хранилища
               </span>
               <button
                 type="button"
@@ -703,7 +702,7 @@ export const ClickAndCleanModal: React.FC<ClickAndCleanModalProps> = ({
                 </>
               ) : (
                 <>
-                  <Sparkles size={16} />
+                  <Broom size={16} />
                   <span>Очистить следы</span>
                 </>
               )}

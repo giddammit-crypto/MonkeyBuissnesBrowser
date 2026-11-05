@@ -1,0 +1,89 @@
+{
+  "error": "JavaScript application analysis failed",
+  "code": "capability_unavailable",
+  "category": "unsupported_provider",
+  "message": "Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: Command failed: ps -axo pid=,ppid=,pgid=,uid=,stat=,command=\nfatal library error, lookup self\n",
+  "retryable": false,
+  "remediation": {
+    "action": "Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: Command failed: ps -axo pid=,ppid=,pgid=,uid=,stat=,command=\nfatal library error, lookup self\n"
+  },
+  "evidence_id": "ev_baa8899c5b017ff628b1cf2ceb16326812525e4783ae5fedc1496afefdadddcf",
+  "subject": {
+    "name": "app.asar",
+    "digest": {
+      "sha256": "c255cb74ec73504bff572b2af7a77d0e4749997149d43e4b0bc3aa0152a8267a"
+    },
+    "local_path": "/tmp/monkey-official-deb/opt/soulm8te/resources/app.asar",
+    "format": "asar",
+    "architecture": null
+  },
+  "parameters": {
+    "input_path": "/tmp/monkey-official-deb/opt/soulm8te/resources/app.asar",
+    "format": "auto",
+    "integrity_policy": "fail",
+    "max_semantic_nodes": 10000,
+    "max_semantic_nodes_per_file": 4000,
+    "max_semantic_unknowns": 2000,
+    "source_paths": [
+      "dist/main/services/extensions/LocalExtensionManager.js",
+      "dist/main/services/adblock/FilterEngine.js",
+      "dist/main/services/browsec/BrowsecService.js"
+    ],
+    "max_heap_mb": 512,
+    "analysis_timeout_ms": 30000
+  },
+  "limitations": [
+    "Caller-selected source analysis leaves 5307 inventoried files outside analysis scope. Inventory identity covers the complete artifact; relationships through unselected sources remain unknown.",
+    "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+    "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
+    "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+    "Source analysis was interrupted: Provider process-ownership cannot execute prepare_owned_process: Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: Command failed: ps -axo pid=,ppid=,pgid=,uid=,stat=,command=\nfatal library error, lookup self\n",
+    "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+    "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+    "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
+    "dist/main/services/extensions/LocalExtensionManager.js: Provider process-ownership cannot execute prepare_owned_process: Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: Command failed: ps -axo pid=,ppid=,pgid=,uid=,stat=,command=\nfatal library error, lookup self\n"
+  ],
+  "source_selection": {
+    "requested_paths": [
+      "dist/main/services/extensions/LocalExtensionManager.js",
+      "dist/main/services/adblock/FilterEngine.js",
+      "dist/main/services/browsec/BrowsecService.js"
+    ],
+    "unselected_files": 5307
+  },
+  "summary": {
+    "browser_windows": 0,
+    "explicit_web_preferences": 0,
+    "preload_entrypoints": 0,
+    "context_bridge_apis": 0,
+    "exposed_api_members": 0,
+    "ipc": {
+      "operations": 0,
+      "literal_channels": 0,
+      "dynamic_channel_operations": 0,
+      "renderer_transmissions": 0,
+      "renderer_listeners": 0,
+      "main_handlers": 0,
+      "paired_renderer_transmissions": 0,
+      "ambiguous_renderer_transmissions": 0,
+      "unpaired_literal_renderer_transmissions": 0
+    },
+    "sender_validation_observations": 0,
+    "utility_processes": 0,
+    "resolved_utility_entrypoints": 0,
+    "native_addon_bindings": 0,
+    "resolved_native_addon_bindings": 0
+  },
+  "statistics": {
+    "relevant_files": 5310,
+    "nested_asar_containers": 0,
+    "text_bytes_read": 37629,
+    "invalid_utf8_files": 0,
+    "parsed_javascript_files": 0,
+    "skipped_javascript_files": 3,
+    "visited_ast_nodes": 0,
+    "findings": 0,
+    "modules": 0,
+    "parse_failures": 0
+  }
+}
