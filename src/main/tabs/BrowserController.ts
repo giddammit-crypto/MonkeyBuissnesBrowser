@@ -1884,6 +1884,17 @@ export class BrowserController {
         voodooContextWindowTokens: requestedContextWindow(typeof patch.voodooContextWindowTokens === 'number' ? patch.voodooContextWindowTokens : current.voodooContextWindowTokens),
         voodooModel: typeof patch.voodooModel === 'string' && patch.voodooModel.trim() ? patch.voodooModel.trim() : current.voodooModel,
         voodooBaseUrl: typeof patch.voodooBaseUrl === 'string' && patch.voodooBaseUrl.trim() ? patch.voodooBaseUrl.trim() : current.voodooBaseUrl,
+        // Web-standard layers added in 1.0.2. They were missing from this
+        // allow-list, so the settings switches (and the strict font mode) were
+        // silently ignored.
+        fontCompatibility: typeof patch.fontCompatibility === 'boolean' ? patch.fontCompatibility : current.fontCompatibility ?? true,
+        xsltSupport: typeof patch.xsltSupport === 'boolean' ? patch.xsltSupport : current.xsltSupport ?? true,
+        // Same allow-list gap: the update-check switch and the speech key in
+        // Settings were dropped on the way to the store.
+        autoCheckUpdates: typeof patch.autoCheckUpdates === 'boolean' ? patch.autoCheckUpdates : current.autoCheckUpdates ?? true,
+        voodooSttKey: 'voodooSttKey' in patch
+          ? (typeof patch.voodooSttKey === 'string' && patch.voodooSttKey.trim() ? patch.voodooSttKey.trim() : undefined)
+          : current.voodooSttKey,
       };
     });
     if (next.theme) {

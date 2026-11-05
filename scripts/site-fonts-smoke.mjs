@@ -94,14 +94,17 @@ try {
   await invoke('updateSettings', { fontCompatibility: false });
   const strictTab = await invoke('createTab', { url: `${site}/strict` });
   await expect.poll(async () => (await invoke('getSnapshot')).tabs.find(item => item.id === strictTab.id)).toMatchObject({ title: 'Site font fixture', isLoading: false });
-  const strict = await app.evaluate(async ({ webContents }, { url, fonts }) => {
+  // A fresh URL keeps the earlier compatible response out of Chromium's
+  // in-memory font cache, so the strict boundary is what is measured here.
+  const strictFontUrl = `${fonts}/denied.woff2?v=strict`;
+  const strict = await app.evaluate(async ({ webContents }, { url, fontUrl }) => {
     const contents = webContents.getAllWebContents().find(item => item.getURL() === url);
     return contents.executeJavaScript(`(async () => {
       let denied = false;
-      try { await new FontFace('DeniedFont', 'url(${fonts}/denied.woff2)').load(); } catch { denied = true; }
+      try { await new FontFace('DeniedFont', 'url(${fontUrl})').load(); } catch { denied = true; }
       return denied;
     })()`);
-  }, { url: `${site}/strict`, fonts });
+  }, { url: `${site}/strict`, fontUrl: strictFontUrl });
   assert.equal(strict, true, 'strict mode keeps the cross-origin font boundary');
   await invoke('updateSettings', { fontCompatibility: true });
   assert.equal(requests.includes('/ads/banner.gif'), false, 'blocked ad never reaches server');
