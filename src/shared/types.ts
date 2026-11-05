@@ -152,7 +152,6 @@ export interface BrowserSettings {
   voodooContextWindowTokens?: number;
   voodooBaseUrl?: string;
   voodooSttKey?: string;
-  neverSavePasswordOrigins?: string[];
   autoCheckUpdates?: boolean;
 }
 

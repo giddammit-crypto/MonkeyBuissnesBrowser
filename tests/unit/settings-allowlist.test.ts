@@ -11,10 +11,9 @@ import { describe, expect, it } from 'vitest';
  * This guard fails as soon as a BrowserSettings key is added without being
  * handled (or explicitly listed as managed elsewhere).
  */
-const KEYS_MANAGED_OUTSIDE_UPDATE_SETTINGS = new Set([
+const KEYS_MANAGED_OUTSIDE_UPDATE_SETTINGS = new Set<string>([
   'readerSettings', // ReaderService writes its own store
   'voodooBubblePosition', // bubble drag handler persists coordinates directly
-  'neverSavePasswordOrigins', // PasswordService owns its own store
 ]);
 
 const read = (relative: string) => fs.readFileSync(path.resolve(relative), 'utf8');
@@ -40,6 +39,15 @@ function updateSettingsBody(): string {
   return source.slice(start, end);
 }
 
+function normalizeSettingsBody(): string {
+  const source = read('src/main/persistence/BrowserStores.ts');
+  const start = source.indexOf('function normalizeSettings');
+  expect(start).toBeGreaterThan(-1);
+  const end = source.indexOf('function normalizeEntries', start);
+  expect(end).toBeGreaterThan(start);
+  return source.slice(start, end);
+}
+
 describe('BrowserSettings allow-list', () => {
   it('handles every persisted setting that the renderer can send', () => {
     const body = updateSettingsBody();
@@ -47,6 +55,12 @@ describe('BrowserSettings allow-list', () => {
     const handled = (key: string) => new RegExp(`(^|\\s)${key}\\s*[:,]`).test(body);
     const missing = settingsKeys().filter((key) => !KEYS_MANAGED_OUTSIDE_UPDATE_SETTINGS.has(key) && !handled(key));
     expect(missing).toEqual([]);
+  });
+
+  it('persists every setting: the store normalizer must not strip keys', () => {
+    const body = normalizeSettingsBody();
+    const handled = (key: string) => new RegExp(`(^|\\s)${key}\\s*[:,]`).test(body);
+    expect(settingsKeys().filter((key) => !handled(key))).toEqual([]);
   });
 
   it('keeps the web-standard toggles switchable', () => {
