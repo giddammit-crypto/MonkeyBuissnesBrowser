@@ -237,3 +237,25 @@ describe('Omnibox open tabs search and ranking', () => {
     expect(getOmniboxSuggestions('%')).toEqual([]);
   });
 });
+
+describe('omnibox edge cases (2026-11-05 audit)', () => {
+  it('asks for a query instead of searching for nothing after "?"', () => {
+    expect(parseOmniboxInput('?')).toEqual({ kind: 'invalid', reason: 'Введите поисковый запрос после «?».' });
+    expect(parseOmniboxInput('?   ').kind).toBe('invalid');
+    expect(parseOmniboxInput('? погода')).toEqual({
+      kind: 'search', url: 'https://yandex.ru/search/?text=%D0%BF%D0%BE%D0%B3%D0%BE%D0%B4%D0%B0',
+    });
+  });
+
+  it('navigates fully qualified hostnames with a trailing dot', () => {
+    expect(parseOmniboxInput('example.com.')).toEqual({ kind: 'url', url: 'https://example.com./' });
+    expect(parseOmniboxInput('example.com./docs')).toEqual({ kind: 'url', url: 'https://example.com./docs' });
+  });
+
+  it('keeps search keywords and internal pages working', () => {
+    expect(parseOmniboxInput('g weather').url).toBe('https://www.google.com/search?q=weather');
+    expect(parseOmniboxInput('browser://newtab')).toEqual({ kind: 'url', url: 'browser://newtab' });
+    expect(parseOmniboxInput('chrome://newtab')).toEqual({ kind: 'url', url: 'browser://newtab' });
+    expect(parseOmniboxInput('about:blank')).toEqual({ kind: 'url', url: 'about:blank' });
+  });
+});

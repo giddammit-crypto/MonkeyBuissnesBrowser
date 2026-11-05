@@ -137,6 +137,10 @@ export interface BrowserSettings {
   adBlockExceptions?: string[];
   blockThirdPartyCookies?: boolean;
   googleSignInCompatibility?: boolean;
+  /** Relaxes legacy cross-origin font responses so old CMS themes keep their typography. */
+  fontCompatibility?: boolean;
+  /** Restores client-side XSLT rendering that Chromium 158 removes. */
+  xsltSupport?: boolean;
   restoreSession?: boolean;
   thirdPartyCookieExceptions?: string[];
   readerSettings?: ReaderSettings;
@@ -571,6 +575,17 @@ export interface PageFontFace {
   status: 'unloaded' | 'loading' | 'loaded' | 'error';
 }
 
+/**
+ * Measured (heuristic) availability of a family requested by CSS. `webFont`
+ * means a declared @font-face already loaded, `local` means a system font of
+ * that name produced different metrics than the generic fallback.
+ */
+export interface PageFontAvailability {
+  family: string;
+  webFont: boolean;
+  local: boolean;
+}
+
 /** A bounded snapshot of declared CSS fonts, not proof of rendered glyphs. */
 export interface PageFontReport {
   tabId: string;
@@ -579,7 +594,30 @@ export interface PageFontReport {
   computedFonts: Array<{ family: string; style: string; weight: string; count: number }>;
   sampledElements: number;
   facesTruncated: boolean;
+  familyAvailability: PageFontAvailability[];
+  /** Families requested by CSS that are neither a loaded web font nor installed. */
+  missingFamilies: string[];
+  /** Network/console evidence collected by the main process for this page. */
+  issues: PageFontIssue[];
+  compatibility: PageFontCompatibilityState;
   sampledAt: number;
+}
+
+export type PageFontIssueKind = 'blocked' | 'network' | 'http' | 'decode' | 'cors' | 'csp' | 'missing-local';
+
+export interface PageFontIssue {
+  kind: PageFontIssueKind;
+  url?: string;
+  detail: string;
+}
+
+export interface PageFontCompatibilityState {
+  /** User setting: relax legacy cross-origin font responses and allow substitution. */
+  enabled: boolean;
+  /** Number of font responses this page where CORS headers were relaxed. */
+  relaxedResponses: number;
+  /** Substituted families currently applied to this tab. */
+  substitutedFamilies: string[];
 }
 
 

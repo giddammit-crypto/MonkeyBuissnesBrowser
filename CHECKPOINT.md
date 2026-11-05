@@ -1,3 +1,22 @@
+## 2026-11-05 — релиз 1.0.2: движок, плагины, шрифты, XSLT, аудит браузера
+
+**Ветка:** `arena/2029b1d9-monkeybuissnesbrowser` · **Версия:** 1.0.2
+**Статус тестов:** 673 из 673 unit-тестов пройдены (`npx vitest run`); 2 файла (`memory`, `update-service`) требуют бинаря Electron и в этой среде не запускаются
+**Статус TypeScript:** 0 ошибок (`tsc -p tsconfig.main.json` и `tsconfig.renderer.json`)
+**Статус сборки:** `npm run build` — успешно
+
+### Реализовано
+
+1. **Click & Clean — веник.** `src/renderer/BroomIcon.tsx` (ручка, обойма, веер щетины) в кнопке панели, меню и окне очистки вместо тонкой кисти lucide.
+2. **Совместимость веб-шрифтов.** `src/shared/fontCompat.ts` + `BrowserController`: для `resourceType === 'font'` снимается только требование ACAO; CSP/CORP/исключения Chrome сохраняются. Настройка `fontCompatibility` (по умолчанию включена), строгий режим проверяется smoke-тестом. Панель «Шрифты страницы» с причиной и подстановкой похожих гарнитур.
+3. **PDF во вкладке.** `plugins: true` в `webPreferences`; e2e `scripts/pdf-viewer-smoke.mjs`.
+4. **Собственный XSLT 1.0 + XPath.** `src/services/xslt/*`, `XsltPageProbe`, `applyXsltSupport`: рендер `<?xml-stylesheet?>`, сохранение адреса, кеш 5 мин, полоса ошибки, лимиты 4/1/8 МБ, только same-origin, запрет `document()`/`key()`/`xsl:script`/внешних сущностей. Настройка `xsltSupport`.
+5. **Аудит 1.0.2:** масштаб не прыгает на 500 % при повреждённом коэффициенте; `?` без запроса и FQDN с точкой в адресной строке; XSLT-состояние общее для окон одной сессии и повторяет неудачную попытку; предфильтр сообщений консоли для «болтливых» страниц.
+
+Документы: `docs/CHROMIUM_ENGINE_AND_PLUGINS_AUDIT_2026-11-05.md`, `docs/RELEASE_1.0.2.md`, обновлённый `docs/MONOMAKH_FONT_DIAGNOSIS_1.0.1.md`.
+
+---
+
 # Контрольная точка состояния soulm8te: `v0.7.1-stable-checkpoint`
 
 **Дата и время фиксации:** 27 октября 2026 г., 19:23 MSK  

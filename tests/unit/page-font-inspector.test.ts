@@ -8,13 +8,24 @@ vi.mock('electron', () => ({
 }));
 import { BrowserController } from '../../src/main/tabs/BrowserController';
 
-const data = () => ({ documentStatus: 'loaded', faces: [{ family: 'Monomakh', style: 'normal', weight: '400', status: 'loaded' }], computedFonts: [{ family: 'Monomakh, serif', style: 'normal', weight: '400', count: 2 }], sampledElements: 2, facesTruncated: false });
+const data = () => ({
+  documentStatus: 'loaded',
+  faces: [{ family: 'Monomakh', style: 'normal', weight: '400', status: 'loaded' }],
+  computedFonts: [{ family: 'Monomakh, serif', style: 'normal', weight: '400', count: 2 }],
+  sampledElements: 2, facesTruncated: false,
+  familyAvailability: [] as Array<{ family: string; webFont: boolean; local: boolean }>,
+  missingFamilies: [] as string[],
+});
 const deferred = () => { let resolve!: (value: unknown) => void; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 function fixture() {
   const contents = { isDestroyed: vi.fn(() => false), executeJavaScriptInIsolatedWorld: vi.fn(async () => data()) };
   const tab = { id: 'page', url: 'https://example.test/', isPrivate: false, isInternal: false, lifecycle: 'active', view: { webContents: contents } };
   const controller = Object.create(BrowserController.prototype) as any;
-  Object.assign(controller, { tabs: new Map([[tab.id, tab]]), activeTabId: tab.id, disposed: false });
+  Object.assign(controller, {
+    tabs: new Map([[tab.id, tab]]), activeTabId: tab.id, disposed: false,
+    stores: { settings: { get: () => ({ fontCompatibility: true }) } },
+    relaxedFontResponses: new Map(), fontCompatFamilies: new Map(),
+  });
   return { controller, tab, contents };
 }
 
@@ -96,6 +107,9 @@ describe('Page font inspection', () => {
   it('returns a live private-page snapshot only after an explicit current-tab call', async () => {
     const { controller, tab } = fixture();
     tab.isPrivate = true;
-    expect(await controller.getPageFonts(tab.id)).toMatchObject({ ...data(), tabId: tab.id, sampledAt: expect.any(Number) });
+    expect(await controller.getPageFonts(tab.id)).toMatchObject({
+      ...data(), tabId: tab.id, sampledAt: expect.any(Number), issues: [],
+      compatibility: { enabled: true, relaxedResponses: 0, substitutedFamilies: [] },
+    });
   });
 });

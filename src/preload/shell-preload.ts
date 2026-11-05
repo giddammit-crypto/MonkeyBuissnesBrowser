@@ -99,6 +99,7 @@ const api: BrowserApi = {
   toggleReaderMode: (tabId) => ipcRenderer.invoke('browser:toggle-reader-mode', tabId),
   getReaderArticle: (tabId) => ipcRenderer.invoke('browser:get-reader-article', tabId),
   getPageFonts: (tabId) => ipcRenderer.invoke('browser:get-page-fonts', tabId),
+  applyFontSubstitutions: (tabId) => ipcRenderer.invoke('browser:apply-font-substitutions', tabId),
   updateReaderSettings: (patch) => ipcRenderer.invoke('browser:update-reader-settings', patch),
   togglePictureInPicture: (tabId) => ipcRenderer.invoke('browser:toggle-pip', tabId),
   getNotes: (query) => ipcRenderer.invoke('browser:get-notes', query),
