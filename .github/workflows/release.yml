@@ -1,0 +1,60 @@
+name: Ubuntu release
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - package-lock.json
+      - src/**
+      - scripts/**
+      - .github/workflows/release.yml
+permissions:
+  contents: read
+concurrency:
+  group: ubuntu-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  ubuntu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npm run test:e2e:features
+      - run: npm run test:e2e:smoke
+      - run: npm run test:e2e:voodoo
+      - run: npm run dist:linux
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Checksums
+        working-directory: release
+        run: sha256sum *.deb *.AppImage > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soulm8te-ubuntu-x64
+          path: |
+            release/*.deb
+            release/*.AppImage
+            release/SHA256SUMS
+          if-no-files-found: error
+      - name: Publish versioned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          tag="v${version}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists; preserving its assets."
+            exit 0
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --title "soulm8te ${version}" --notes-file docs/RELEASE_1.0.0.md release/*.deb release/*.AppImage release/SHA256SUMS

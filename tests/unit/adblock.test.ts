@@ -67,5 +67,24 @@ describe('FilterEngine', () => {
     expect(engine.shouldBlock('https://www.youtube.com/s/icon.svg?next=/api/stats/qoe?adformat=video', 'image')).toBe(false);
   });
 
+  it('preserves web fonts and styles in ad-named directories without weakening explicit rules', () => {
+    const engine = new FilterEngine();
+    for (const directory of ['ads', 'adserver', 'pagead']) {
+      expect(engine.shouldBlock(`https://cdn.example.com/${directory}/icons.woff2`, 'font')).toBe(false);
+      expect(engine.shouldBlock(`https://example.com/${directory}/layout.css`, 'stylesheet')).toBe(false);
+      expect(engine.shouldBlock(`https://example.com/${directory}/banner.png`, 'image')).toBe(true);
+      expect(engine.shouldBlock(`https://example.com/${directory}/tracking.js`, 'script')).toBe(true);
+    }
+    expect(engine.shouldBlock('https://doubleclick.net/assets/icons.woff2', 'font')).toBe(true);
+    expect(engine.shouldBlock('https://doubleclick.net/assets/layout.css', 'stylesheet')).toBe(true);
+    engine.addRule('/custom-block/');
+    expect(engine.shouldBlock('https://example.com/custom-block/icons.woff2', 'font')).toBe(true);
+    engine.addRule('/ads/');
+    expect(engine.shouldBlock('https://example.com/ads/icons.woff2', 'font')).toBe(true);
+    // Normal/private profiles use independent engines. An explicit override
+    // in one engine must not change defaults in another engine.
+    expect(new FilterEngine().shouldBlock('https://example.com/ads/icons.woff2', 'font')).toBe(false);
+  });
+
 });
 

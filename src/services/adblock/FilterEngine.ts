@@ -11,6 +11,7 @@ export interface AdBlockStats {
 interface FilterRule {
   token: string;
   kind: 'host' | 'path';
+  excludedResourceTypes?: readonly string[];
 }
 
 const builtInRules: FilterRule[] = [
@@ -77,10 +78,13 @@ const builtInRules: FilterRule[] = [
   // Cookie consent banner trackers
   { token: 'consent.cookiebot.com', kind: 'host' },
   { token: 'cdn.cookielaw.org', kind: 'host' },
+  // Generic directory names also occur in legitimate layout assets. Preserve
+  // CSS and web fonts here; explicit host rules and user rules still apply.
+  // Chromium remains responsible for CSP, CORS and font validation.
   // Path rules
-  { token: '/ads/', kind: 'path' },
-  { token: '/adserver/', kind: 'path' },
-  { token: '/pagead/', kind: 'path' },
+  { token: '/ads/', kind: 'path', excludedResourceTypes: ['font', 'stylesheet'] },
+  { token: '/adserver/', kind: 'path', excludedResourceTypes: ['font', 'stylesheet'] },
+  { token: '/pagead/', kind: 'path', excludedResourceTypes: ['font', 'stylesheet'] },
   { token: '/api/stats/ads', kind: 'path' },
   { token: '/ptracking', kind: 'path' },
   { token: '/get_midroll_info', kind: 'path' },
@@ -97,12 +101,12 @@ const builtInRules: FilterRule[] = [
 
 export class FilterEngine {
   private enabled = true;
-  private readonly rules: FilterRule[] = [...builtInRules];
+  private readonly rules: FilterRule[] = builtInRules.map(rule => ({ ...rule }));
   private exceptions: string[] = [];
   private exceptionSites = new Set<string>();
   private readonly exceptionDecisions = new Map<string, boolean>();
   private readonly hostRules = new Set(builtInRules.filter(rule => rule.kind === 'host').map(rule => rule.token));
-  private readonly pathRules = builtInRules.filter(rule => rule.kind === 'path').map(rule => rule.token);
+  private readonly pathRules = this.rules.filter(rule => rule.kind === 'path');
   private blockedTotal = 0;
   private readonly blockedByHost = new Map<string, number>();
 
@@ -136,10 +140,15 @@ export class FilterEngine {
     const token = rule.trim().toLowerCase();
     if (!token || token.length > 512) return;
     const kind = token.includes('/') ? 'path' : 'host';
-    if (!this.rules.some((item) => item.token === token && item.kind === kind)) {
+    const existing = this.rules.find((item) => item.token === token && item.kind === kind);
+    if (existing) {
+      // A user-added rule is explicit, including when it refines a built-in
+      // directory heuristic. Do not mutate the shared built-in definitions.
+      existing.excludedResourceTypes = undefined;
+    } else {
       this.rules.push({ token, kind });
       if (kind === 'host') this.hostRules.add(token);
-      else this.pathRules.push(token);
+      else this.pathRules.push({ token, kind });
     }
   }
 
@@ -166,7 +175,9 @@ export class FilterEngine {
     // A nested URL, video title or tracking parameter is data, not the
     // requested resource path. Matching the entire URL blocked legitimate
     // icon/stylesheet/bootstrap requests with e.g. ?next=/ads/ in their query.
-    const blocked = hostBlocked || this.pathRules.some(token => {
+    const blocked = hostBlocked || this.pathRules.some(rule => {
+      if (resourceType && rule.excludedResourceTypes?.includes(resourceType)) return false;
+      const token = rule.token;
       const queryStart = token.indexOf('?');
       if (queryStart < 0) return pathname.includes(token);
       const path = token.slice(0, queryStart);

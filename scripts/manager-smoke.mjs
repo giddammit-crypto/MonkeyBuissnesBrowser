@@ -131,6 +131,7 @@ try{
   assert.equal(active.isPrivate,true);assert.equal(active.workspaceId,workspace.id);assert.notEqual(active.id,normalTarget.id);
   const privateWorkspace=active;
   await invoke('navigate',privateWorkspace.id,`${base}/private-review-workspace`);
+  await expect.poll(async()=>(await snapshot()).tabs.find(t=>t.id===privateWorkspace.id)).toMatchObject({url:`${base}/private-review-workspace`,isLoading:false});
   await invoke('switchWorkspace','personal');
   current=await snapshot();assert.equal(current.tabs.find(t=>t.id===current.activeTabId).isPrivate,true);
   await invoke('activateTab',privateOne.id);
@@ -145,6 +146,7 @@ try{
   assert(await app.evaluate(async({webContents},url)=>(await webContents.getAllWebContents().find(c=>c.getURL()===url).session.cookies.get({name:'review-private-cookie'})).length===1,`${base}/private-review-workspace`));
   await invoke('closePrivateTabs');
   await invoke('activateTab',normalPeer.id);
+  await expect.poll(async()=>(await snapshot()).tabs.find(t=>t.id===normalPeer.id)).toMatchObject({url:`${base}/normal-review-peer`,isLoading:false});
   assert.equal(await app.evaluate(async({webContents},url)=>(await webContents.getAllWebContents().find(c=>c.getURL()===url).session.cookies.get({name:'review-private-cookie'})).length,`${base}/normal-review-peer`),0);
   assert.equal((await snapshot()).history.some(h=>h.url.includes('/private-review')),false);
   const storedSession=JSON.parse(fs.readFileSync(path.join(profile,'browser-data/session.json'),'utf8'));

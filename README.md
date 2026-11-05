@@ -1,5 +1,7 @@
 # <p align="center"><img src="src/renderer/assets/soul/chloe-icon-512.png" alt="soulm8te" width="96" height="96" /><br/>soulm8te Browser</p>
 
+Текущая версия: **1.0.0** · [Изменения](docs/RELEASE_1.0.0.md) · [Проверка функционала](docs/FUNCTIONAL_AUDIT_1.0.0.md)
+
 <p align="center">
   <strong>Современный, быстрый и стильный веб-браузер нового поколения на Chromium & Electron</strong><br/>
   <em>Адаптивный неоновый дизайн, Click & Clean, автономный AI-ассистент Вуду с поддержкой голосовых команд STT, диспетчер задач Chrome, менеджер паролей, масштабирование Ctrl+Wheel и прокси-подключения</em>

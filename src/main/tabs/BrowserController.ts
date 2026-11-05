@@ -98,6 +98,7 @@ type TabRecord = TabSnapshot & {
   hasDownloadableMedia?: boolean;
   capturedAudioFilename?: string;
   pipMode?: 'mini' | 'native';
+  savedScroll?: { x: number; y: number; url: string };
 };
 
 const NEW_TAB_URL = 'browser://newtab';
@@ -1491,14 +1492,24 @@ export class BrowserController {
     if (!tab || tab.id === this.activeTabId || tab.isInternal || tab.isPictureInPicture || !tab.view) return false;
     const eligible = this.memoryManager.canHibernate(tabId, 0);
     if (!eligible.allowed) return false;
-    if (tab.view && !tab.view.webContents.isDestroyed()) {
+    const view = tab.view;
+    const url = tab.url;
+    let savedScroll: TabRecord['savedScroll'];
+    if (!view.webContents.isDestroyed()) {
       try {
-        const scroll = await tab.view.webContents.executeJavaScript('({ x: window.scrollX, y: window.scrollY })');
-        if (scroll && typeof scroll.x === 'number' && typeof scroll.y === 'number') {
-          (tab as any).savedScroll = scroll;
+        const scroll = await view.webContents.executeJavaScript('({ x: window.scrollX, y: window.scrollY })');
+        if (scroll && Number.isFinite(scroll.x) && Number.isFinite(scroll.y)) {
+          savedScroll = { x: scroll.x, y: scroll.y, url };
         }
       } catch {}
     }
+    // Reading the page yields to native events. The user may switch to it,
+    // navigate, edit a form or close it before the renderer replies.
+    if (this.disposed || this.tabs.get(tabId) !== tab || tab.view !== view || tab.url !== url
+      || tab.id === this.activeTabId || tab.isInternal || tab.isPictureInPicture
+      || this.popupOpeners.has(tabId) || [...this.popupOpeners.values()].includes(tabId)
+      || [...this.popupToTab.values()].includes(tabId) || !this.memoryManager.canHibernate(tabId, 0).allowed) return false;
+    tab.savedScroll = savedScroll;
     this.detachView(tab);
     tab.lifecycle = 'hibernated';
     this.memoryManager.updateTab(tab.id, { lifecycle: 'hibernated', active: false, loading: false, audible: false, capturing: false });
@@ -1511,13 +1522,6 @@ export class BrowserController {
     if (!tab || tab.lifecycle !== 'hibernated') return;
     tab.lifecycle = 'background';
     this.attachWebContents(tab, tab.url);
-    const savedScroll = (tab as any).savedScroll;
-    if (savedScroll && tab.view && !tab.view.webContents.isDestroyed()) {
-      const contents = tab.view.webContents;
-      contents.once('did-finish-load', () => {
-        void contents.executeJavaScript(`window.scrollTo(${savedScroll.x}, ${savedScroll.y})`).catch(() => {});
-      });
-    }
     this.memoryManager.updateTab(tab.id, { lifecycle: 'background', loading: true });
     this.activateTab(tabId);
     this.emitSnapshot();
@@ -3344,6 +3348,7 @@ export class BrowserController {
       this.browsec.applyWebRtcPolicyToWebContents(view.webContents);
     }
     this.installTabHandlers(tab);
+    this.restoreSavedScroll(tab, view.webContents, initialUrl);
     if (tab.id === this.activeTabId && !tab.isInternal && tab.lifecycle !== 'crashed') {
       (view as any).setVisible?.(true);
       if (this.window && !this.window.contentView.children.includes(view)) {
@@ -3363,6 +3368,17 @@ export class BrowserController {
       this.eventListener?.({ type: 'navigation-error', message: error instanceof Error ? error.message : 'Не удалось загрузить страницу.' });
     });
     return view.webContents;
+  }
+
+  private restoreSavedScroll(tab: TabRecord, contents: Electron.WebContents, initialUrl: string): void {
+    const savedScroll = tab.savedScroll;
+    delete tab.savedScroll;
+    if (!savedScroll || savedScroll.url !== initialUrl) return;
+    contents.once('did-finish-load', () => {
+      if (this.tabs.get(tab.id) !== tab || tab.view?.webContents !== contents || contents.isDestroyed()
+        || tab.url !== savedScroll.url) return;
+      void contents.executeJavaScript(`window.scrollTo(${savedScroll.x}, ${savedScroll.y})`).catch(() => {});
+    });
   }
 
   private createPopupTab(opener: TabRecord, url: string, active: boolean, options: Electron.BrowserWindowConstructorOptions): Electron.WebContents {

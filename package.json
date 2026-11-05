@@ -1,7 +1,7 @@
 {
   "name": "soulm8te",
-  "version": "0.9.9",
-  "description": "soulm8te — Electron browser with private sessions, tab sleeping and native Chromium tabs.",
+  "version": "1.0.0",
+  "description": "soulm8te \u2014 Electron browser with private sessions, tab sleeping and native Chromium tabs.",
   "main": "dist/main/main/main.js",
   "author": {
     "name": "soulm8te",
@@ -28,7 +28,7 @@
     "check": "npm run typecheck && npm test && npm run check:release-assets",
     "check:release-assets": "node scripts/check-release-assets.mjs",
     "test:e2e:voodoo": "node scripts/voodoo-agent-smoke.mjs",
-    "test:e2e:features": "node scripts/split-view-smoke.mjs && node scripts/bookmark-export-smoke.mjs && node scripts/youtube-icons-smoke.mjs",
+    "test:e2e:features": "node scripts/split-view-smoke.mjs && node scripts/bookmark-export-smoke.mjs && node scripts/youtube-icons-smoke.mjs && node scripts/site-fonts-smoke.mjs",
     "test:e2e:youtube-icons": "node scripts/youtube-icons-smoke.mjs"
   },
   "dependencies": {
