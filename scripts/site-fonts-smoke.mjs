@@ -94,14 +94,14 @@ try {
   await invoke('updateSettings', { fontCompatibility: false });
   const strictTab = await invoke('createTab', { url: `${site}/strict` });
   await expect.poll(async () => (await invoke('getSnapshot')).tabs.find(item => item.id === strictTab.id)).toMatchObject({ title: 'Site font fixture', isLoading: false });
-  const strict = await app.evaluate(async ({ webContents }, { url }) => {
+  const strict = await app.evaluate(async ({ webContents }, { url, fonts }) => {
     const contents = webContents.getAllWebContents().find(item => item.getURL() === url);
     return contents.executeJavaScript(`(async () => {
       let denied = false;
       try { await new FontFace('DeniedFont', 'url(${fonts}/denied.woff2)').load(); } catch { denied = true; }
       return denied;
     })()`);
-  }, { url: `${site}/strict` });
+  }, { url: `${site}/strict`, fonts });
   assert.equal(strict, true, 'strict mode keeps the cross-origin font boundary');
   await invoke('updateSettings', { fontCompatibility: true });
   assert.equal(requests.includes('/ads/banner.gif'), false, 'blocked ad never reaches server');
