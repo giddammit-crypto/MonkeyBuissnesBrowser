@@ -848,16 +848,17 @@ function App(): React.JSX.Element {
         return;
       }
 
-      // Ctrl+Tab and Ctrl+Shift+Tab: switch tabs cyclically within current workspace
-      if (modifier && key === "tab") {
+      // Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageDown, Ctrl+PageUp: switch tabs cyclically within current workspace
+      if ((modifier && key === "tab") || (modifier && (key === "pagedown" || key === "pageup"))) {
         event.preventDefault();
         if (snapshot) {
           const visible = snapshot.tabs
-            .filter((entry) => entry.workspaceId === (currentTab?.workspaceId ?? "personal") && entry.isPrivate === isPrivate)
+            .filter((entry) => entry.workspaceId === (currentTab?.workspaceId ?? "personal") && Boolean(entry.isPrivate) === isPrivate)
             .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
           if (visible.length > 1) {
             const currentIdx = visible.findIndex((t) => t.id === currentTab?.id);
-            const delta = event.shiftKey ? -1 : 1;
+            const isBack = event.shiftKey || key === "pageup";
+            const delta = isBack ? -1 : 1;
             const nextIdx = (currentIdx + delta + visible.length) % visible.length;
             const nextTab = visible[nextIdx];
             if (nextTab) {
@@ -988,10 +989,16 @@ function App(): React.JSX.Element {
       } else if (modifier && !event.shiftKey && !event.altKey && /^[1-9]$/.test(key) && snapshot) {
         event.preventDefault();
         const visible = snapshot.tabs
-          .filter((entry) => entry.workspaceId === (currentTab?.workspaceId ?? "personal") && entry.isPrivate === isPrivate)
+          .filter((entry) => entry.workspaceId === (currentTab?.workspaceId ?? "personal") && Boolean(entry.isPrivate) === isPrivate)
           .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
         const selected = visible[key === "9" ? visible.length - 1 : Number(key) - 1];
-        if (selected) run(window.browserApi.activateTab(selected.id));
+        if (selected) {
+          setOptimisticTabId(selected.id);
+          run(window.browserApi.activateTab(selected.id).catch((error) => {
+            setOptimisticTabId((pending) => pending === selected.id ? null : pending);
+            throw error;
+          }));
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -2680,9 +2687,14 @@ function TabStrip({
         return { left: nextLeft, right: nextRight };
       });
     };
-    list
-      .querySelector<HTMLElement>(".tab-container.active")
-      ?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    const activeEl = list.querySelector<HTMLElement>(".tab-container.active");
+    if (activeEl) {
+      const listRect = list.getBoundingClientRect();
+      const tabRect = activeEl.getBoundingClientRect();
+      if (tabRect.left < listRect.left + 8 || tabRect.right > listRect.right - 8) {
+        activeEl.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+      }
+    }
     const frame = requestAnimationFrame(update);
     const observer = new ResizeObserver(update);
     observer.observe(list);
@@ -2708,9 +2720,14 @@ function TabStrip({
   }, [snapshot.activeTabId, tabs.length]);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      listRef.current
-        ?.querySelector<HTMLElement>(".tab-container.active")
-        ?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+      const list = listRef.current;
+      const activeEl = list?.querySelector<HTMLElement>(".tab-container.active");
+      if (!list || !activeEl) return;
+      const listRect = list.getBoundingClientRect();
+      const tabRect = activeEl.getBoundingClientRect();
+      if (tabRect.left < listRect.left + 8 || tabRect.right > listRect.right - 8) {
+        activeEl.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+      }
     });
     return () => cancelAnimationFrame(frame);
   }, [snapshot.activeTabId, hasOverflow]);
@@ -2724,16 +2741,36 @@ function TabStrip({
       next = (index - 1 + tabs.length) % tabs.length;
     else if (event.key === "Home") next = 0;
     else if (event.key === "End") next = tabs.length - 1;
-    else return;
+    else if (event.key === "Delete" || (event.ctrlKey && event.key === "w")) {
+      event.preventDefault();
+      const targetTab = tabs[index];
+      if (targetTab) onClose(targetTab.id);
+      return;
+    } else return;
     event.preventDefault();
-    // Manual tab activation keeps arrow-key navigation in the tab strip even
-    // when the target is a native web page. Enter/Space activates the button.
     listRef.current
       ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
       [next]?.focus();
   };
   return (
-    <div className="tab-strip" ref={stripRef}>
+    <div
+      className="tab-strip"
+      ref={stripRef}
+      onDoubleClick={(event) => {
+        const target = event.target as HTMLElement | null;
+        if (target && !target.closest('.tab-container, button')) {
+          event.preventDefault();
+          onCreate();
+        }
+      }}
+      onContextMenu={(event) => {
+        const target = event.target as HTMLElement | null;
+        if (target && !target.closest('.tab-container, button')) {
+          event.preventDefault();
+          void window.browserApi.showTabStripMenu?.().catch(console.error);
+        }
+      }}
+    >
       {hasOverflow && (
         <button
           className="tab-scroll-button"
@@ -2750,6 +2787,20 @@ function TabStrip({
         ref={listRef}
         role="tablist"
         aria-label="Вкладки"
+        onDoubleClick={(event) => {
+          const target = event.target as HTMLElement | null;
+          if (target && !target.closest('.tab-container, button')) {
+            event.preventDefault();
+            onCreate();
+          }
+        }}
+        onContextMenu={(event) => {
+          const target = event.target as HTMLElement | null;
+          if (target && !target.closest('.tab-container, button')) {
+            event.preventDefault();
+            void window.browserApi.showTabStripMenu?.().catch(console.error);
+          }
+        }}
         onDragOver={(event) => {
           event.preventDefault();
           event.dataTransfer.dropEffect = "move";
@@ -2850,9 +2901,18 @@ function TabStrip({
                 }
               }
             }}
-            onContextMenu={(event) => { event.preventDefault(); void window.browserApi.showTabMenu(tab.id).catch(console.error); }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void window.browserApi.showTabMenu(tab.id).catch(console.error);
+            }}
             onMouseDown={(event) => {
-              if (event.button === 1) {
+              if (event.button === 0) {
+                const target = event.target as HTMLElement | null;
+                if (!target?.closest('.tab-close, .tab-audio-button')) {
+                  onActivate(tab.id);
+                }
+              } else if (event.button === 1) {
                 event.preventDefault();
               }
             }}
@@ -2871,12 +2931,16 @@ function TabStrip({
               tabIndex={tab.id === snapshot.activeTabId ? 0 : -1}
               aria-selected={tab.id === snapshot.activeTabId}
               aria-label={tab.title || "Новая вкладка"}
-              title={`${tab.title}${tab.isPrivate ? " · Приватная" : ""}${tab.isPinned ? " · Закреплена" : ""}${tab.lifecycle === "hibernated" ? " · Спит" : ""}`}
-              onClick={() => onActivate(tab.id)}
+              title={`${tab.title || "Новая вкладка"}${tab.url ? ` · ${tab.url}` : ""}${tab.isPrivate ? " · Приватная" : ""}${tab.isPinned ? " · Закреплена" : ""}${tab.lifecycle === "hibernated" ? " · Спит (кликните для загрузки)" : ""}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onActivate(tab.id);
+              }}
               onKeyDown={(event) => moveFocus(event, index)}
               onAuxClick={(event) => {
                 if (event.button === 1) {
                   event.preventDefault();
+                  event.stopPropagation();
                   onClose(tab.id);
                 }
               }}
@@ -2933,7 +2997,13 @@ function TabStrip({
               className="tab-close"
               aria-label={`Закрыть вкладку ${tab.title}`}
               title="Закрыть вкладку"
-              onClick={() => onClose(tab.id)}
+              onMouseDown={(event) => {
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                onClose(tab.id);
+              }}
             >
               <X size={14} />
             </button>
@@ -2957,6 +3027,12 @@ function TabStrip({
           title="Новая вкладка · Ctrl+T"
           aria-label="Новая вкладка"
           onClick={onCreate}
+          onAuxClick={(event) => {
+            if (event.button === 1) {
+              event.preventDefault();
+              onCreate();
+            }
+          }}
         >
           <Plus size={19} />
         </button>

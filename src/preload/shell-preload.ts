@@ -28,6 +28,7 @@ const api: BrowserApi = {
   setSplitViewRatio: (ratio) => ipcRenderer.invoke('browser:set-split-view-ratio', ratio),
   exportBookmarks: () => ipcRenderer.invoke('browser:export-bookmarks'),
   showTabMenu: (tabId) => ipcRenderer.invoke('browser:show-tab-menu', tabId),
+  showTabStripMenu: () => ipcRenderer.invoke('browser:show-tab-strip-menu'),
   closeRelatedTabs: (tabId, scope) => ipcRenderer.invoke('browser:close-related-tabs', tabId, scope),
   navigate: (tabId, input) => ipcRenderer.invoke('browser:navigate', tabId, input),
   goBack: (tabId) => ipcRenderer.invoke('browser:back', tabId),

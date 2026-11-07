@@ -188,6 +188,7 @@ function registerIpc(): void {
   ipcMain.handle('browser:set-split-view-ratio', (event, ratio: number) => requireShell(event).setSplitViewRatio(ratio));
   ipcMain.handle('browser:export-bookmarks', (event) => requireShell(event).exportBookmarks());
   ipcMain.handle('browser:show-tab-menu', (event, tabId: string) => requireShell(event).showTabMenu(tabId));
+  ipcMain.handle('browser:show-tab-strip-menu', (event) => requireShell(event).showTabStripContextMenu());
   ipcMain.handle('browser:close-related-tabs', (event, tabId: string, scope: 'others' | 'right' | 'left') => requireShell(event).closeRelatedTabs(tabId, scope));
   ipcMain.handle('browser:navigate', (event, tabId: string, input: string) => requireShell(event).navigate(tabId, input));
   ipcMain.handle('browser:back', (event, tabId: string) => requireShell(event).goBack(tabId));

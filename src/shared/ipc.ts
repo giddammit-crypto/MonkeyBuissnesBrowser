@@ -74,6 +74,7 @@ export interface BrowserApi {
   closeTab(tabId: string): Promise<void>;
   detachTab(tabId: string, screenX: number, screenY: number): Promise<void>;
   showTabMenu(tabId: string): Promise<void>;
+  showTabStripMenu(): Promise<void>;
   setSplitView(tabId?: string): Promise<void>;
   setSplitViewRatio(ratio: number): Promise<void>;
   exportBookmarks(): Promise<{ saved: boolean; count: number; path?: string }>;

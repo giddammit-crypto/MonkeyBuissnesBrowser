@@ -250,6 +250,7 @@ export class BrowserController {
   private voodooPosition: { x?: number; y?: number } = {};
   private voodooBubblePosition: { x?: number; y?: number } = {};
   private activeTabId = '';
+  private mruTabIds: string[] = [];
   private splitView?: { primaryTabId: string; secondaryTabId: string; firstTabId: string; ratio: number };
   private activeWorkspaceId = 'personal';
   private chromeBounds: ChromeBounds = { x: 176, y: 112, width: 1200, height: 700 };
@@ -1056,6 +1057,7 @@ export class BrowserController {
     }
     if (this.htmlFullscreenTabId && this.htmlFullscreenTabId !== tabId) this.exitPageFullscreen();
     this.activeTabId = tabId;
+    this.mruTabIds = [tabId, ...(this.mruTabIds || []).filter((id) => id !== tabId)];
     this.activeWorkspaceId = next.workspaceId;
     if (next.lifecycle === 'hibernated') {
       next.lifecycle = 'background';
@@ -1146,7 +1148,27 @@ export class BrowserController {
       this.closedTabs.push({ url: tab.url, workspaceId: tab.workspaceId, isPinned: tab.isPinned, isMuted: tab.isMuted });
       if (this.closedTabs.length > 20) this.closedTabs.shift();
     }
+
+    let nextTabToActivate: string | undefined;
+    if (this.activeTabId === tabId) {
+      const openerId = this.popupOpeners.get(tabId);
+      if (openerId && this.tabs.has(openerId)) {
+        nextTabToActivate = openerId;
+      } else {
+        const peers = [...this.tabs.values()]
+          .filter((entry) => entry.workspaceId === tab.workspaceId && entry.isPrivate === tab.isPrivate)
+          .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+        const closedIndex = peers.findIndex((entry) => entry.id === tabId);
+        if (closedIndex !== -1 && peers.length > 1) {
+          // Standard Chromium tab close: switch to tab immediately on the right, or left if closed tab was rightmost
+          const candidate = peers[closedIndex + 1] ?? peers[closedIndex - 1];
+          if (candidate) nextTabToActivate = candidate.id;
+        }
+      }
+    }
+
     this.tabs.delete(tabId);
+    if (this.mruTabIds) this.mruTabIds = this.mruTabIds.filter((id) => id !== tabId);
     this.findQueries.delete(tabId);
     this.pipBounds.delete(tabId);
     const openerId = this.popupOpeners.get(tabId);
@@ -1167,15 +1189,19 @@ export class BrowserController {
     if (tab.isPrivate && ![...this.tabs.values()].some((entry) => entry.isPrivate)) await this.endPrivateSession();
     if (this.tabs.size === 0) await this.createTab({ url: NEW_TAB_URL, isPrivate: false, active: true });
     else if (this.activeTabId === tabId) {
-      if (openerId && this.tabs.has(openerId)) {
-        this.activateTab(openerId);
+      if (nextTabToActivate && this.tabs.has(nextTabToActivate)) {
+        this.activateTab(nextTabToActivate);
       } else {
         const remaining = [...this.tabs.values()];
-        const reversed = remaining.slice().reverse();
-        const fallback = reversed.find((entry) => entry.workspaceId === tab.workspaceId && entry.isPrivate === tab.isPrivate)
-          ?? reversed.find((entry) => entry.isPrivate === tab.isPrivate)
-          ?? reversed.find((entry) => entry.workspaceId === tab.workspaceId)
-          ?? reversed[0];
+        const mruCandidate = this.mruTabIds?.find((id) => {
+          const t = this.tabs.get(id);
+          return t && t.workspaceId === tab.workspaceId && t.isPrivate === tab.isPrivate;
+        });
+        const fallback = (mruCandidate ? this.tabs.get(mruCandidate) : undefined)
+          ?? remaining.find((entry) => entry.workspaceId === tab.workspaceId && entry.isPrivate === tab.isPrivate)
+          ?? remaining.find((entry) => entry.isPrivate === tab.isPrivate)
+          ?? remaining.find((entry) => entry.workspaceId === tab.workspaceId)
+          ?? remaining[0];
         if (fallback) this.activateTab(fallback.id);
       }
     }
@@ -1299,6 +1325,25 @@ export class BrowserController {
       // Private tabs have no reopen history; this menu must not silently switch
       // a private action into the ordinary profile's previously closed pages.
       { label: 'Открыть закрытую вкладку', enabled: !tab.isPrivate && this.closedTabs.length > 0, click: safely(() => this.reopenClosedTab()) },
+    ];
+    try { Menu.buildFromTemplate(template).popup({ window: this.window }); } catch (cause) { report(cause); }
+  }
+
+  showTabStripContextMenu(): void {
+    if (!this.window || this.window.isDestroyed() || this.disposed) return;
+    const report = (cause: unknown) => {
+      if (!this.disposed) this.eventListener?.({ type: 'navigation-error', message: cause instanceof Error ? cause.message : 'Не удалось выполнить действие.' });
+    };
+    const safely = (action: () => unknown) => () => {
+      try { void Promise.resolve(action()).catch(report); } catch (cause) { report(cause); }
+    };
+    const activeTab = this.tabs.get(this.activeTabId);
+    const isPrivate = Boolean(activeTab?.isPrivate);
+    const template: Electron.MenuItemConstructorOptions[] = [
+      { label: 'Новая вкладка', accelerator: 'CmdOrCtrl+T', click: safely(() => this.createTab({ isPrivate })) },
+      { label: 'Открыть закрытую вкладку', accelerator: 'CmdOrCtrl+Shift+T', enabled: !isPrivate && this.closedTabs.length > 0, click: safely(() => this.reopenClosedTab()) },
+      { type: 'separator' },
+      { label: 'Закрыть другие вкладки', enabled: this.tabs.size > 1, click: safely(() => this.closeRelatedTabs(this.activeTabId, 'others')) },
     ];
     try { Menu.buildFromTemplate(template).popup({ window: this.window }); } catch (cause) { report(cause); }
   }
@@ -4900,16 +4945,22 @@ export class BrowserController {
       else if (modifier && ['+', '=', '-', '0'].includes(key) && tab) run(() => { void this.tabAction(tab.id, key === '0' ? 'zoom-reset' : key === '-' ? 'zoom-out' : 'zoom-in'); });
       // Familiar Chromium shortcuts: Ctrl/Cmd+1..8 selects a visible tab,
       // Ctrl/Cmd+9 selects the last. Respect workspace and privacy boundaries.
-      else if (modifier && !input.alt && !input.shift && /^[1-9]$/.test(key) && tab) run(() => {
+      else if (modifier && !input.alt && !input.shift && /^[1-9]$/.test(key)) run(() => {
+        const currentTab = this.tabs.get(this.activeTabId);
+        const workspaceId = currentTab?.workspaceId || this.activeWorkspaceId;
+        const isPrivate = Boolean(currentTab?.isPrivate);
         const visible = [...this.tabs.values()]
-          .filter(entry => entry.workspaceId === tab.workspaceId && entry.isPrivate === tab.isPrivate)
+          .filter(entry => entry.workspaceId === workspaceId && Boolean(entry.isPrivate) === isPrivate)
           .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
         const selected = visible[key === '9' ? visible.length - 1 : Number(key) - 1];
         if (selected) this.activateTab(selected.id);
       });
       else if ((input.control || modifier) && (key === 'tab' || key === 'pagedown' || key === 'pageup')) run(() => {
+        const currentTab = this.tabs.get(this.activeTabId);
+        const workspaceId = currentTab?.workspaceId || this.activeWorkspaceId;
+        const isPrivate = Boolean(currentTab?.isPrivate);
         const tabs = [...this.tabs.values()]
-          .filter((entry) => entry.workspaceId === this.activeWorkspaceId && entry.isPrivate === tab?.isPrivate)
+          .filter((entry) => entry.workspaceId === workspaceId && Boolean(entry.isPrivate) === isPrivate)
           .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
         if (tabs.length === 0) return;
         const index = tabs.findIndex((entry) => entry.id === this.activeTabId);
