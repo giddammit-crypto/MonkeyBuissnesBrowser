@@ -46,7 +46,7 @@ export interface ChromeBounds {
   height: number;
 }
 
-export type TabAction = 'mute' | 'pin' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'print' | 'duplicate' | 'hibernate';
+export type TabAction = 'mute' | 'pin' | 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'print' | 'duplicate' | 'hibernate' | 'mute-others';
 export type DownloadAction = 'pause' | 'resume' | 'cancel' | 'delete';
 
 export interface BrowserApi {

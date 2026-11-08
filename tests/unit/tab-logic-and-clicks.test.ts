@@ -194,4 +194,47 @@ describe('Tab logic, activation and close fallbacks', () => {
     expect(reopenItem).toBeDefined();
     expect(reopenItem.enabled).toBe(true);
   });
+
+  it('tabAction with mute-others mutes all peer tabs', async () => {
+    const controller = createMockController();
+    const setMutedMock1 = vi.fn();
+    const setMutedMock2 = vi.fn();
+    const setMutedMock3 = vi.fn();
+    const tab1 = { id: 'tab-1', isMuted: false, view: { webContents: { setAudioMuted: setMutedMock1 } } };
+    const tab2 = { id: 'tab-2', isMuted: false, view: { webContents: { setAudioMuted: setMutedMock2 } } };
+    const tab3 = { id: 'tab-3', isMuted: false, view: { webContents: { setAudioMuted: setMutedMock3 } } };
+    controller.tabs = new Map([
+      ['tab-1', tab1],
+      ['tab-2', tab2],
+      ['tab-3', tab3],
+    ]);
+
+    await controller.tabAction('tab-1', 'mute-others');
+
+    expect(tab1.isMuted).toBe(false);
+    expect(tab2.isMuted).toBe(true);
+    expect(tab3.isMuted).toBe(true);
+    expect(setMutedMock2).toHaveBeenCalledWith(true);
+    expect(setMutedMock3).toHaveBeenCalledWith(true);
+    expect(setMutedMock1).not.toHaveBeenCalled();
+  });
+
+  it('voodooEnabled = false prevents toggleVoodoo and setVoodooOpen', () => {
+    const controller = createMockController();
+    controller.voodooOpen = false;
+    controller.stores = {
+      settings: {
+        get: () => ({ voodooEnabled: false, voodooBubbleVisible: false }),
+        set: vi.fn(),
+      },
+    };
+    controller.refreshVoodooBounds = vi.fn();
+    controller.ensureVoodooOnTop = vi.fn();
+
+    controller.setVoodooOpen(true);
+    expect(controller.voodooOpen).toBe(false);
+
+    controller.toggleVoodoo();
+    expect(controller.voodooOpen).toBe(false);
+  });
 });

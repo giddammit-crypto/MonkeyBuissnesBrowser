@@ -33,6 +33,7 @@ import {
   Languages,
   HelpCircle,
   Zap,
+  Power,
 } from 'lucide-react';
 import type { TabSnapshot, VoodooChatMessage, VoodooTabContext } from '../shared/types';
 import MarkdownView from './MarkdownView';
@@ -259,6 +260,26 @@ export default function VoodooChatBubble({
       propsOnHideBubble?.();
     }
   }, [standalone, propsOnHideBubble]);
+
+  const [showBubbleMenu, setShowBubbleMenu] = useState(false);
+
+  const disableVoodoo = useCallback(async () => {
+    try {
+      await window.browserApi.updateSettings({ voodooEnabled: false });
+    } catch (err) {
+      console.error('Не удалось отключить Вуду:', err);
+    }
+    if (standalone) {
+      setIsOpenState(false);
+      try {
+        await window.browserApi.setVoodooOpen(false);
+      } catch (err) {
+        console.error('Не удалось закрыть окно Вуду:', err);
+      }
+    } else {
+      propsOnClose?.();
+    }
+  }, [standalone, propsOnClose]);
 
   const scrollToBottom = useCallback(() => {
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -1044,17 +1065,58 @@ export default function VoodooChatBubble({
     <>
       {/* Floating Circle Bubble in Bottom-Right (Draggable) */}
       {!isOpen && bubbleVisible && (
-        <button
-          className="voodoo-floating-bubble"
-          title="Вуду AI · Зажмите для перетаскивания / Кликните для открытия (Ctrl+Shift+V)"
-          aria-label="Вуду AI"
-          onMouseDown={onMouseDownBubble}
-          onClick={(event) => { if (event.detail === 0) void toggleOpen(); }}
-        >
-          <img src={voodooAvatar} alt="Вуду AI" className="voodoo-bubble-avatar" />
-          <span className="voodoo-bubble-status-badge" />
-          <span className="voodoo-bubble-pulse-ring" />
-        </button>
+        <div style={{ position: 'relative' }}>
+          <button
+            className="voodoo-floating-bubble"
+            title="Вуду AI · Зажмите для перетаскивания / Кликните для открытия (Ctrl+Shift+V) · Правый клик — меню"
+            aria-label="Вуду AI"
+            onMouseDown={onMouseDownBubble}
+            onClick={(event) => { if (event.detail === 0) void toggleOpen(); }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setShowBubbleMenu((val) => !val);
+            }}
+          >
+            <img src={voodooAvatar} alt="Вуду AI" className="voodoo-bubble-avatar" />
+            <span className="voodoo-bubble-status-badge" />
+            <span className="voodoo-bubble-pulse-ring" />
+          </button>
+          {showBubbleMenu && (
+            <div className="voodoo-bubble-menu" role="menu" aria-label="Меню значка Вуду">
+              <button
+                className="voodoo-bubble-menu-item"
+                onClick={() => {
+                  setShowBubbleMenu(false);
+                  void toggleOpen();
+                }}
+              >
+                <Zap size={14} />
+                <span>Открыть ассистент</span>
+              </button>
+              <button
+                className="voodoo-bubble-menu-item"
+                onClick={() => {
+                  setShowBubbleMenu(false);
+                  void hideBubble();
+                }}
+              >
+                <Minus size={14} />
+                <span>Скрыть значок</span>
+              </button>
+              <button
+                className="voodoo-bubble-menu-item danger"
+                onClick={() => {
+                  setShowBubbleMenu(false);
+                  void disableVoodoo();
+                }}
+              >
+                <Power size={14} />
+                <span>Полностью выключить Вуду</span>
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Mini-Chat Window (Draggable & Resizable) */}
@@ -1123,6 +1185,14 @@ export default function VoodooChatBubble({
             </div>
 
             <div className="voodoo-header-actions">
+              <button
+                className="voodoo-header-btn voodoo-power-btn"
+                title="Полностью отключить Вуду (скрыть все значки)"
+                aria-label="Отключить Вуду"
+                onClick={() => void disableVoodoo()}
+              >
+                <Power size={13} />
+              </button>
               <button
                 className="voodoo-header-btn"
                 title="Сбросить позицию в правый нижний угол"

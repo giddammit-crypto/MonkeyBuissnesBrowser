@@ -904,6 +904,10 @@ function App(): React.JSX.Element {
         return;
       } else if (modifier && event.shiftKey && isKey("v", "KeyV", "м") && !isInputFocused) {
         event.preventDefault();
+        if (snapshot?.settings.voodooEnabled === false) {
+          setToast({ tone: "info", message: "Вуду отключен в настройках. Включите его через Меню (⋯) или Настройки." });
+          return;
+        }
         const next = !voodooOpen;
         setVoodooOpen(next);
         void window.browserApi.setVoodooOpen(next).catch(() => {});
@@ -1685,12 +1689,18 @@ function App(): React.JSX.Element {
           {snapshot.settings.voodooEnabled !== false && (
             <button
               className={`icon-button voodoo-toolbar-btn ${voodooOpen ? "selected" : ""}`}
-              title="AI-Ассистент Вуду (Ctrl+Shift+V)"
+              title="AI-Ассистент Вуду (Ctrl+Shift+V) · Правый клик для отключения"
               aria-label="AI-Ассистент Вуду"
               onClick={() => {
                 const next = !voodooOpen;
                 setVoodooOpen(next);
                 void window.browserApi.setVoodooOpen(next).catch(() => {});
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void window.browserApi.updateSettings({ voodooEnabled: false }).catch(() => {});
+                setToast({ tone: "info", message: "Вуду полностью отключен. Все значки скрыты. Включить можно через Меню (⋯) или Настройки." });
               }}
             >
               <img src={voodooAvatar} alt="Вуду" className="voodoo-toolbar-avatar" />
@@ -1874,16 +1884,29 @@ function App(): React.JSX.Element {
                 setPopover(null);
               }}
             />
-            <MenuAction
-              icon={<Sparkles size={16} />}
-              label="AI-Ассистент Вуду"
-              detail="Ctrl+Shift+V"
-              onClick={() => {
-                setVoodooOpen(true);
-                void window.browserApi.setVoodooOpen(true).catch(() => {});
-                setPopover(null);
-              }}
-            />
+            {snapshot.settings.voodooEnabled !== false ? (
+              <MenuAction
+                icon={<Sparkles size={16} />}
+                label="AI-Ассистент Вуду"
+                detail="Ctrl+Shift+V"
+                onClick={() => {
+                  setVoodooOpen(true);
+                  void window.browserApi.setVoodooOpen(true).catch(() => {});
+                  setPopover(null);
+                }}
+              />
+            ) : (
+              <MenuAction
+                icon={<Sparkles size={16} />}
+                label="Включить AI-Ассистент Вуду"
+                detail="Выключен"
+                onClick={() => {
+                  void window.browserApi.updateSettings({ voodooEnabled: true }).catch(() => {});
+                  setToast({ tone: "success", message: "AI-Ассистент Вуду включен" });
+                  setPopover(null);
+                }}
+              />
+            )}
             <MenuAction
               icon={<Broom size={16} />}
               label="Click & Clean"
@@ -2702,12 +2725,29 @@ function TabStrip({
     const scrollWithWheel = (event: WheelEvent) => {
       if (event.ctrlKey) return;
       if (list.scrollWidth <= list.clientWidth) return;
+
+      // Alt + Wheel: быстрый циклический переход между вкладками
+      if (event.altKey) {
+        event.preventDefault();
+        const delta = event.deltaY || event.deltaX;
+        if (Math.abs(delta) < 8) return;
+        const activeIdx = tabs.findIndex((t) => t.id === snapshot.activeTabId);
+        if (activeIdx !== -1 && tabs.length > 1) {
+          const nextIdx = delta > 0
+            ? (activeIdx + 1) % tabs.length
+            : (activeIdx - 1 + tabs.length) % tabs.length;
+          onActivate(tabs[nextIdx].id);
+        }
+        return;
+      }
+
       const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
       if (delta === 0) return;
       event.preventDefault();
-      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 32
-        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? list.clientWidth : 1;
-      list.scrollLeft += delta * unit;
+      const speedMultiplier = event.shiftKey ? 3.5 : 1.0;
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 36
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? list.clientWidth * 0.85 : 1;
+      list.scrollLeft += delta * unit * speedMultiplier;
     };
     const targetElement = strip || list;
     targetElement.addEventListener("wheel", scrollWithWheel, { passive: false });
@@ -2826,6 +2866,11 @@ function TabStrip({
             data-private={tab.isPrivate ? "true" : undefined}
             draggable={!tab.isPinned}
             onDragStart={(event) => {
+              const target = event.target as HTMLElement | null;
+              if (target?.closest('.tab-close, .tab-audio-button')) {
+                event.preventDefault();
+                return;
+              }
               dragHandledRef.current = false;
               dragStartPosRef.current = {
                 screenX: event.screenX,
@@ -2969,9 +3014,14 @@ function TabStrip({
               {(tab.isAudible || tab.isMuted) && (
                 <button
                   type="button"
+                  draggable={false}
                   className={`tab-audio-button ${tab.isMuted ? "muted" : "audible"}`}
-                  title={tab.isMuted ? "Включить звук на вкладке" : "Отключить звук на вкладке"}
+                  title={tab.isMuted ? "Включить звук на вкладке · Ctrl+M" : "Отключить звук на вкладке · Ctrl+M"}
                   aria-label={tab.isMuted ? "Включить звук" : "Отключить звук"}
+                  onDragStart={(event) => {
+                    event.stopPropagation();
+                    event.preventDefault();
+                  }}
                   onMouseDown={(event) => {
                     event.stopPropagation();
                     event.preventDefault();
@@ -2995,8 +3045,13 @@ function TabStrip({
               )}
             <button
               className="tab-close"
+              draggable={false}
               aria-label={`Закрыть вкладку ${tab.title}`}
-              title="Закрыть вкладку"
+              title="Закрыть вкладку · Ctrl+W"
+              onDragStart={(event) => {
+                event.stopPropagation();
+                event.preventDefault();
+              }}
               onMouseDown={(event) => {
                 event.stopPropagation();
               }}
@@ -4824,7 +4879,7 @@ function SettingsPanel({
               <strong>Установленная версия</strong>
               <small>Если здесь нет новых настроек, запущена старая сборка. После обновления GitHub приложение нужно пересобрать и переустановить.</small>
             </span>
-            <strong>soulm8te 1.0.1</strong>
+            <strong>soulm8te 1.0.2</strong>
           </div>
           <label className="setting-row">
             <span><strong>Стиль оформления</strong><small>Отдельный стиль Detroit · Хлоя или Cyberpunk. Исходные темы не изменяются.</small></span>
@@ -5288,21 +5343,43 @@ function SettingsPanel({
           ))}
         </div>
         <div className="settings-section">
-          <h3>AI-Ассистент Вуду</h3>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <h3 style={{ margin: 0 }}>AI-Ассистент Вуду</h3>
+            <span className={`voodoo-status-badge ${settings.voodooEnabled !== false ? "active" : "inactive"}`}>
+              {settings.voodooEnabled !== false ? "● Включен" : "○ Полностью выключен"}
+            </span>
+          </div>
           <p className="privacy-note">
             Агент для многошаговых задач: работа со вкладками, страницами, файлами и диалогами через провайдер xkiro.
           </p>
 
-          <label className="checkbox-setting" style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0" }}>
+          <label className="checkbox-setting" style={{ display: "flex", alignItems: "center", gap: 10, margin: "12px 0", fontWeight: 600 }}>
             <input
               type="checkbox"
               checked={settings.voodooEnabled !== false}
               onChange={(e) => update({ voodooEnabled: e.target.checked })}
             />
-            <span>Включить ассистента Вуду</span>
+            <span>Включить ассистента Вуду (иконка на панели и доступ к AI)</span>
           </label>
 
-          <label className="checkbox-setting" style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0" }}>
+          {settings.voodooEnabled === false && (
+            <div
+              className="voodoo-disabled-banner"
+              style={{
+                padding: "8px 12px",
+                borderRadius: 8,
+                background: "rgba(255, 255, 255, 0.04)",
+                border: "1px dashed var(--border)",
+                color: "var(--text-muted)",
+                fontSize: 13,
+                marginBottom: 12,
+              }}
+            >
+              Вуду полностью выключен: иконка на панели инструментов и плавающий значок скрыты, вызовы Ctrl+Shift+V не активны. Вы можете включить его обратно в любой момент.
+            </div>
+          )}
+
+          <label className="checkbox-setting" style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0", opacity: settings.voodooEnabled === false ? 0.5 : 1 }}>
             <input
               type="checkbox"
               checked={settings.voodooBubbleVisible !== false}
@@ -5508,7 +5585,7 @@ function SettingsPanel({
             <div style={{ flex: 1 }}>
               <strong>soulm8te Browser</strong>
               <p>Ваш цифровой союзник · Detroit: Become Human</p>
-              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 1.0.1</small>
+              <small>Интерфейс по soulm8te Brand Guidelines 1.0 · Версия 1.0.2</small>
             </div>
             <button
               className="action-button secondary"

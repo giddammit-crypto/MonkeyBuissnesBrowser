@@ -68,21 +68,63 @@ export function isNewerVersion(remoteVersion: string, currentVersion: string): b
 
 /**
  * Pick the best matching release asset for the current OS and architecture.
+ * When inAppUpdate is true (default in UpdateService.checkForUpdates), an installed browser
+ * prioritizes updated file archives (.tar.gz / .zip) or portable executables (.AppImage) over .deb.
+ * When inAppUpdate is false (default for pickRecommendedAsset without 4th argument),
+ * backwards compatibility is preserved and .deb takes precedence for initial installations on Linux.
  */
-export function pickRecommendedAsset(assets: UpdateAssetInfo[], platform: NodeJS.Platform = process.platform, arch: string = process.arch): UpdateAssetInfo | undefined {
+export function pickRecommendedAsset(
+  assets: UpdateAssetInfo[],
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  inAppUpdate: boolean = false
+): UpdateAssetInfo | undefined {
   if (!assets || assets.length === 0) return undefined;
 
   const isAmd64 = arch === 'x64' || arch === 'amd64';
-  const isArm64 = arch === 'arm64';
+  const isArm64 = arch === 'arm64' || arch === 'aarch64';
+
+  const matchesArch = (name: string): boolean => {
+    const lower = name.toLowerCase();
+    if (isAmd64) return lower.includes('amd64') || lower.includes('x86_64') || lower.includes('x64') || !lower.includes('arm');
+    if (isArm64) return lower.includes('arm64') || lower.includes('aarch64');
+    return true;
+  };
 
   if (platform === 'linux') {
+    if (inAppUpdate) {
+      // 1. First priority for installed browser: Archive of updated files (.tar.gz, .tgz, .tar.xz, .zip)
+      const archiveMatch = assets.find((a) => {
+        const lower = a.name.toLowerCase();
+        if (!/\.(tar\.gz|tar\.xz|tgz|zip)$/i.test(lower)) return false;
+        return matchesArch(lower);
+      });
+      if (archiveMatch) return archiveMatch;
+
+      // 2. Second priority: Portable executable (.AppImage)
+      const appImageMatch = assets.find((a) => {
+        const lower = a.name.toLowerCase();
+        if (!lower.endsWith('.appimage')) return false;
+        return matchesArch(lower);
+      });
+      if (appImageMatch) return appImageMatch;
+
+      // 3. Fallback: deb package only if neither archive nor AppImage exists
+      const debMatch = assets.find((a) => {
+        const lower = a.name.toLowerCase();
+        if (!lower.endsWith('.deb')) return false;
+        return matchesArch(lower);
+      });
+      if (debMatch) return debMatch;
+
+      return assets.find((a) => /\.(tar\.gz|tar\.xz|tgz|zip|appimage|deb)$/i.test(a.name)) || assets[0];
+    }
+
     // 1. First priority: Debian package (.deb) matching architecture
     const debMatch = assets.find((a) => {
       const lower = a.name.toLowerCase();
       if (!lower.endsWith('.deb')) return false;
-      if (isAmd64) return lower.includes('amd64') || lower.includes('x86_64') || !lower.includes('arm');
-      if (isArm64) return lower.includes('arm64') || lower.includes('aarch64');
-      return true;
+      return matchesArch(lower);
     });
     if (debMatch) return debMatch;
 
@@ -90,23 +132,29 @@ export function pickRecommendedAsset(assets: UpdateAssetInfo[], platform: NodeJS
     const appImageMatch = assets.find((a) => {
       const lower = a.name.toLowerCase();
       if (!lower.endsWith('.appimage')) return false;
-      if (isAmd64) return lower.includes('x86_64') || lower.includes('amd64') || !lower.includes('arm');
-      if (isArm64) return lower.includes('arm64');
-      return true;
+      return matchesArch(lower);
     });
     if (appImageMatch) return appImageMatch;
 
     // 3. Fallback: any .deb or .AppImage or .tar.gz
-    return assets.find((a) => /\.(deb|appimage|tar\.gz)$/i.test(a.name)) || assets[0];
+    return assets.find((a) => /\.(deb|appimage|tar\.gz|tar\.xz|tgz|zip)$/i.test(a.name)) || assets[0];
   }
 
   if (platform === 'win32') {
+    if (inAppUpdate) {
+      const zipMatch = assets.find((a) => a.name.toLowerCase().endsWith('.zip'));
+      if (zipMatch) return zipMatch;
+    }
     const exeMatch = assets.find((a) => a.name.toLowerCase().endsWith('.exe'));
     if (exeMatch) return exeMatch;
     return assets.find((a) => /\.(msi|zip)$/i.test(a.name)) || assets[0];
   }
 
   if (platform === 'darwin') {
+    if (inAppUpdate) {
+      const zipMatch = assets.find((a) => a.name.toLowerCase().endsWith('.zip'));
+      if (zipMatch) return zipMatch;
+    }
     const dmgMatch = assets.find((a) => a.name.toLowerCase().endsWith('.dmg'));
     if (dmgMatch) return dmgMatch;
     return assets.find((a) => /\.zip$/i.test(a.name)) || assets[0];
@@ -151,7 +199,7 @@ export class UpdateService {
   }
 
   async checkForUpdates(manual = false): Promise<UpdateCheckResult> {
-    const currentVersion = app?.getVersion ? app.getVersion() : '1.0.1';
+    const currentVersion = app?.getVersion ? app.getVersion() : '1.0.2';
     try {
       const releaseData = await this.fetchLatestRelease();
       const tagName = releaseData.tag_name || '';
@@ -165,7 +213,7 @@ export class UpdateService {
         ...(typeof a.digest === 'string' ? { sha256: a.digest } : {}),
       }));
 
-      const recommendedAsset = pickRecommendedAsset(assets);
+      const recommendedAsset = pickRecommendedAsset(assets, process.platform, process.arch, true);
 
       const result: UpdateCheckResult = {
         currentVersion,
@@ -217,7 +265,7 @@ export class UpdateService {
 
   private httpGetJson(urlStr: string): Promise<any> {
     return new Promise((resolve, reject) => {
-      const currentVersion = app?.getVersion ? app.getVersion() : '1.0.1';
+      const currentVersion = app?.getVersion ? app.getVersion() : '1.0.2';
       const options = {
         headers: {
           'User-Agent': `soulm8te-browser/${currentVersion}`,
@@ -363,7 +411,7 @@ export class UpdateService {
     }
 
     const client = parsedUrl.protocol === 'http:' ? http : https;
-    const currentVersion = app?.getVersion ? app.getVersion() : '1.0.1';
+    const currentVersion = app?.getVersion ? app.getVersion() : '1.0.2';
 
     const req = client.get(urlStr, {
       headers: {

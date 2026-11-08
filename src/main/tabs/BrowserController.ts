@@ -1241,6 +1241,13 @@ export class BrowserController {
     if (action === 'mute') {
       tab.isMuted = !tab.isMuted;
       tab.view?.webContents.setAudioMuted(tab.isMuted);
+    } else if (action === 'mute-others') {
+      for (const [id, peer] of this.tabs.entries()) {
+        if (id !== tabId && !peer.isMuted) {
+          peer.isMuted = true;
+          peer.view?.webContents.setAudioMuted(true);
+        }
+      }
     } else if (action === 'pin') {
       tab.isPinned = !tab.isPinned;
       this.memoryManager.updateTab(tab.id, { pinned: tab.isPinned });
@@ -1318,6 +1325,7 @@ export class BrowserController {
     const template: Electron.MenuItemConstructorOptions[] = [
       { label: tab.isPinned ? 'Открепить вкладку' : 'Закрепить вкладку', type: 'checkbox', checked: tab.isPinned, click: safely(() => this.tabAction(tabId, 'pin')) },
       { label: tab.isMuted ? 'Включить звук' : 'Отключить звук', type: 'checkbox', checked: tab.isMuted, click: safely(() => this.tabAction(tabId, 'mute')) },
+      { label: 'Заглушить остальные вкладки', enabled: peers.some((entry) => entry.id !== tabId && !entry.isMuted), click: safely(() => this.tabAction(tabId, 'mute-others')) },
       { label: 'Дублировать вкладку', enabled: tab.url === NEW_TAB_URL || isSafeWebUrl(tab.url), click: safely(() => this.tabAction(tabId, 'duplicate')) },
       { label: 'Переместить в новое окно', enabled: this.tabs.size > 1, click: safely(() => this.detachTabToNewWindow(tabId)) },
       { label: 'Перезагрузить вкладку', enabled: isSafeWebUrl(tab.url), click: safely(() => this.reload(tabId)) },
@@ -1928,6 +1936,20 @@ export class BrowserController {
     this.adBlock.engine.setExceptions(next.adBlockExceptions ?? []);
     this.privateAdBlock.engine.setExceptions(next.adBlockExceptions ?? []);
     this.broadcastPageAdBlockPolicy();
+    if (next.voodooEnabled === false) {
+      if (this.voodooOpen) {
+        this.voodooOpen = false;
+        this.cancelVoodooRequest();
+        this.voodooView?.webContents.send('browser:event', {
+          type: 'voodoo-set-open',
+          message: 'false',
+        });
+        this.shellView?.webContents.send('browser:event', {
+          type: 'voodoo-set-open',
+          message: 'false',
+        });
+      }
+    }
     this.refreshVoodooBounds();
     this.emitSnapshot();
     return next;
@@ -4425,11 +4447,12 @@ export class BrowserController {
     }
 
     if (template.length > 0) template.push({ type: 'separator' });
+    const isVoodooActive = this.stores.settings.get().voodooEnabled !== false;
     if (params.isEditable) {
       template.push({ label: 'Вырезать', click: () => contents.cut() });
       template.push({ label: 'Копировать', click: () => contents.copy() });
       template.push({ label: 'Вставить', click: () => contents.paste() });
-      if (params.selectionText?.trim()) {
+      if (params.selectionText?.trim() && isVoodooActive) {
         template.push({
           label: 'Анализировать с ВуДу',
           click: () => this.analyzeWithVoodoo(params.selectionText),
@@ -4440,10 +4463,12 @@ export class BrowserController {
       template.push({ label: 'Копировать выделение', click: () => contents.copy() });
       const query = params.selectionText.trim();
       if (query) {
-        template.push({
-          label: 'Анализировать с ВуДу',
-          click: () => this.analyzeWithVoodoo(params.selectionText),
-        });
+        if (isVoodooActive) {
+          template.push({
+            label: 'Анализировать с ВуДу',
+            click: () => this.analyzeWithVoodoo(params.selectionText),
+          });
+        }
         const querySnippet = query.length > 25 ? `${query.slice(0, 25)}…` : query;
         template.push({
           label: `Найти «${querySnippet}» в Google`,
@@ -4943,6 +4968,7 @@ export class BrowserController {
       else if (modifier && isKey('t', 'KeyT', 'е')) run(() => { void this.createTab(); });
       else if (modifier && isKey('w', 'KeyW', 'ц') && tab) run(() => { void this.closeTab(tab.id); });
       else if (modifier && isKey('d', 'KeyD', 'в') && tab) run(() => { this.toggleBookmark(tab.id); });
+      else if (modifier && !input.shift && !input.alt && isKey('m', 'KeyM', 'ь') && tab) run(() => { void this.tabAction(tab.id, 'mute'); });
       else if (modifier && isKey('f', 'KeyF', 'а')) run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-find' }); });
       else if (modifier && isKey('h', 'KeyH', 'р')) run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-history' }); });
       else if (modifier && isKey('j', 'KeyJ', 'о')) run(() => { this.exitPageFullscreen(); this.shellView?.webContents.focus(); this.eventListener?.({ type: 'show-downloads' }); });
@@ -5033,6 +5059,8 @@ export class BrowserController {
   }
 
   toggleVoodoo(): void {
+    const settings = this.stores.settings.get();
+    if (settings.voodooEnabled === false) return;
     this.setVoodooOpen(!this.voodooOpen);
   }
 
@@ -5050,10 +5078,13 @@ export class BrowserController {
   }
 
   setVoodooOpen(open: boolean): void {
+    const settings = this.stores.settings.get();
+    if (settings.voodooEnabled === false && open) {
+      return;
+    }
     this.voodooOpen = Boolean(open);
-    if (!this.voodooOpen) {
+    if (!this.voodooOpen && settings.voodooEnabled !== false) {
       // When minimizing/folding Voodoo, ensure the floating circle avatar is visible
-      const settings = this.stores.settings.get();
       if (settings.voodooBubbleVisible === false) {
         this.stores.settings.set({ ...settings, voodooBubbleVisible: true });
         this.emitSnapshot();

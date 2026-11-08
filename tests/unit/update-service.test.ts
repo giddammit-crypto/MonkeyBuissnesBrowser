@@ -62,6 +62,72 @@ describe('UpdateService pickRecommendedAsset', () => {
   it('handles empty or undefined asset lists gracefully', () => {
     expect(pickRecommendedAsset([], 'linux', 'x64')).toBeUndefined();
   });
+
+  describe('in-app update asset selection (inAppUpdate = true)', () => {
+    const assetsWithArchive: UpdateAssetInfo[] = [
+      { name: 'soulm8te-0.9.1-linux-amd64.deb', downloadUrl: 'https://example.com/soulm8te.deb', size: 1000000, contentType: 'application/x-debian-package' },
+      { name: 'soulm8te-0.9.1-x86_64.AppImage', downloadUrl: 'https://example.com/soulm8te.AppImage', size: 1200000, contentType: 'application/x-executable' },
+      { name: 'soulm8te-0.9.1-linux-x64.tar.gz', downloadUrl: 'https://example.com/soulm8te.tar.gz', size: 950000, contentType: 'application/gzip' },
+      { name: 'soulm8te-setup-0.9.1.exe', downloadUrl: 'https://example.com/soulm8te.exe', size: 900000, contentType: 'application/x-msdos-program' },
+    ];
+
+    it('prioritizes archive (.tar.gz) over deb and AppImage for installed browser on linux', () => {
+      const picked = pickRecommendedAsset(assetsWithArchive, 'linux', 'x64', true);
+      expect(picked).toBeDefined();
+      expect(picked?.name).toBe('soulm8te-0.9.1-linux-x64.tar.gz');
+    });
+
+    it('prioritizes AppImage over deb for installed browser when archive is not present', () => {
+      // assets list only has .deb and .AppImage for Linux
+      const picked = pickRecommendedAsset(assets, 'linux', 'x64', true);
+      expect(picked).toBeDefined();
+      expect(picked?.name).toBe('soulm8te-0.9.1-x86_64.AppImage');
+    });
+
+    it('falls back to deb only when neither archive nor AppImage is present for inAppUpdate', () => {
+      const onlyDebAssets: UpdateAssetInfo[] = [
+        { name: 'soulm8te-0.9.1-linux-amd64.deb', downloadUrl: 'https://example.com/soulm8te.deb', size: 1000000, contentType: 'application/x-debian-package' },
+      ];
+      const picked = pickRecommendedAsset(onlyDebAssets, 'linux', 'x64', true);
+      expect(picked).toBeDefined();
+      expect(picked?.name).toBe('soulm8te-0.9.1-linux-amd64.deb');
+    });
+
+    it('preserves backward compatibility when 4th argument is omitted', () => {
+      const picked = pickRecommendedAsset(assetsWithArchive, 'linux', 'x64');
+      expect(picked?.name).toBe('soulm8te-0.9.1-linux-amd64.deb');
+    });
+
+    it('matches arm64 architecture correctly for linux archives when inAppUpdate is true', () => {
+      const multiArchAssets: UpdateAssetInfo[] = [
+        { name: 'soulm8te-1.0.2-linux-x64.tar.gz', downloadUrl: 'https://example.com/soulm8te-x64.tar.gz', size: 950000, contentType: 'application/gzip' },
+        { name: 'soulm8te-1.0.2-linux-arm64.tar.gz', downloadUrl: 'https://example.com/soulm8te-arm64.tar.gz', size: 920000, contentType: 'application/gzip' },
+        { name: 'soulm8te-1.0.2-linux-amd64.deb', downloadUrl: 'https://example.com/soulm8te.deb', size: 1000000, contentType: 'application/x-debian-package' },
+      ];
+      const picked = pickRecommendedAsset(multiArchAssets, 'linux', 'arm64', true);
+      expect(picked).toBeDefined();
+      expect(picked?.name).toBe('soulm8te-1.0.2-linux-arm64.tar.gz');
+    });
+
+    it('rejects arm64 archive on x64 even if arm64 is listed first in assets', () => {
+      const reversedAssets: UpdateAssetInfo[] = [
+        { name: 'soulm8te-1.0.2-linux-arm64.tar.gz', downloadUrl: 'https://example.com/soulm8te-arm64.tar.gz', size: 920000, contentType: 'application/gzip' },
+        { name: 'soulm8te-1.0.2-linux-x64.tar.gz', downloadUrl: 'https://example.com/soulm8te-x64.tar.gz', size: 950000, contentType: 'application/gzip' },
+      ];
+      const picked = pickRecommendedAsset(reversedAssets, 'linux', 'x64', true);
+      expect(picked).toBeDefined();
+      expect(picked?.name).toBe('soulm8te-1.0.2-linux-x64.tar.gz');
+    });
+
+    it('supports alternate archive formats like .tar.xz and .tgz', () => {
+      const xzAssets: UpdateAssetInfo[] = [
+        { name: 'soulm8te-1.0.2-linux-x86_64.tar.xz', downloadUrl: 'https://example.com/soulm8te.tar.xz', size: 850000, contentType: 'application/x-xz' },
+        { name: 'soulm8te-1.0.2-linux-amd64.deb', downloadUrl: 'https://example.com/soulm8te.deb', size: 1000000, contentType: 'application/x-debian-package' },
+      ];
+      const picked = pickRecommendedAsset(xzAssets, 'linux', 'x64', true);
+      expect(picked?.name).toBe('soulm8te-1.0.2-linux-x86_64.tar.xz');
+    });
+  });
 });
 
 describe('UpdateService check and progress lifecycle', () => {

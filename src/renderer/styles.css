@@ -594,8 +594,45 @@ select {
   color: #ffffff;
 }
 .sleep-indicator {
-  font-size: 9px;
-  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 3.5px;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
+  user-select: none;
+  pointer-events: none;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sleep-indicator::before {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 5px rgba(56, 189, 248, 0.7);
+  animation: sleep-pulse 3s infinite ease-in-out;
+}
+@keyframes sleep-pulse {
+  0%, 100% {
+    opacity: 0.45;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+    box-shadow: 0 0 7px rgba(56, 189, 248, 0.95);
+  }
 }
 .toolbar {
   position: absolute;
@@ -4249,8 +4286,40 @@ select:focus-visible {
 .tab-container.private-tab .tab-favicon {
   color: var(--accent);
 }
+.tab-container.sleeping-tab:not(.active) {
+  opacity: 0.85;
+  transition: opacity 0.2s ease, background 0.2s ease;
+}
+.tab-container.sleeping-tab:not(.active):hover {
+  opacity: 1;
+  background: var(--surface-subtle);
+}
+.tab-container.sleeping-tab:not(.active) .tab-favicon {
+  filter: grayscale(35%) opacity(0.72);
+  transition: filter 0.2s ease, opacity 0.2s ease;
+}
+.tab-container.sleeping-tab:hover .tab-favicon {
+  filter: none;
+  opacity: 1;
+}
 .tab-container.sleeping-tab:not(.active) .tab-title {
-  color: var(--text-muted);
+  color: var(--text-secondary);
+  font-style: italic;
+  opacity: 0.9;
+}
+.tab-container.sleeping-tab:hover .tab-title {
+  opacity: 1;
+}
+.tab-container.sleeping-tab:hover .sleep-indicator {
+  background: rgba(56, 189, 248, 0.18);
+  color: #bae6fd;
+  border-color: rgba(56, 189, 248, 0.45);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.25);
+}
+.tab-container.sleeping-tab.active .sleep-indicator {
+  background: rgba(56, 189, 248, 0.22);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.55);
 }
 .tab-container.pinned-tab {
   flex: 0 0 42px !important;
@@ -6387,16 +6456,16 @@ select:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 5px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
-  margin-right: 4px;
+  margin-right: 3px;
   transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
   z-index: 2;
@@ -6408,36 +6477,47 @@ select:focus-visible {
 }
 .tab-audio-button.audible {
   color: var(--signal, #00d2ff);
-  filter: drop-shadow(0 0 4px rgba(0, 210, 255, 0.5));
+  background: rgba(0, 210, 255, 0.1);
+  border-color: rgba(0, 210, 255, 0.32);
+  filter: drop-shadow(0 0 4px rgba(0, 210, 255, 0.55));
   animation: tab-audio-pulse 2s infinite ease-in-out;
 }
 .tab-audio-button.audible:hover {
-  background: rgba(0, 210, 255, 0.16);
-  border-color: rgba(0, 210, 255, 0.4);
+  background: rgba(0, 210, 255, 0.22);
+  border-color: rgba(0, 210, 255, 0.6);
   color: #ffffff;
-  filter: drop-shadow(0 0 8px rgba(0, 210, 255, 0.85));
+  filter: drop-shadow(0 0 8px rgba(0, 210, 255, 0.9));
+  transform: scale(1.08);
 }
 .tab-audio-button.muted {
-  color: #f43f5e;
-  filter: drop-shadow(0 0 4px rgba(244, 63, 94, 0.4));
+  color: #ff3366;
+  background: rgba(255, 51, 102, 0.1);
+  border-color: rgba(255, 51, 102, 0.35);
+  filter: drop-shadow(0 0 4px rgba(255, 51, 102, 0.45));
 }
 .tab-audio-button.muted:hover {
-  background: rgba(244, 63, 94, 0.16);
-  border-color: rgba(244, 63, 94, 0.4);
-  color: #ff4d6d;
-  filter: drop-shadow(0 0 8px rgba(244, 63, 94, 0.75));
+  background: rgba(255, 51, 102, 0.22);
+  border-color: rgba(255, 51, 102, 0.65);
+  color: #ffffff;
+  filter: drop-shadow(0 0 8px rgba(255, 51, 102, 0.85));
+  transform: scale(1.08);
 }
 @keyframes tab-audio-pulse {
   0%, 100% {
     opacity: 1;
     transform: scale(1);
-    filter: drop-shadow(0 0 3px rgba(0, 210, 255, 0.4));
+    filter: drop-shadow(0 0 3px rgba(0, 210, 255, 0.45));
+    box-shadow: 0 0 5px rgba(0, 210, 255, 0.2);
   }
   50% {
-    opacity: 0.8;
-    transform: scale(1.08);
-    filter: drop-shadow(0 0 7px rgba(0, 210, 255, 0.8));
+    opacity: 0.85;
+    transform: scale(1.06);
+    filter: drop-shadow(0 0 7px rgba(0, 210, 255, 0.85));
+    box-shadow: 0 0 10px rgba(0, 210, 255, 0.4);
   }
+}
+.tab-container:has(.tab-audio-button.audible):not(.active) {
+  border-top-color: rgba(0, 210, 255, 0.35);
 }
 
 /* ==========================================================================
