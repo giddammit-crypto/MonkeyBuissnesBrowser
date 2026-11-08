@@ -98,6 +98,11 @@ export default function TabSearch({ snapshot, onActivate, onCloseTab, onDismiss,
       if (selected) void perform(selected.id, true);
       return;
     }
+    if ((event.key === 'Delete' || (event.ctrlKey && event.key === 'w')) && selected) {
+      event.preventDefault(); event.stopPropagation();
+      void perform(selected.id, false);
+      return;
+    }
     if (event.key === 'Tab') {
       const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]') ?? [])].filter(element => element.tabIndex >= 0 && element.getClientRects().length > 0);
       const first = focusable[0];

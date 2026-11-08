@@ -3317,6 +3317,11 @@ select {
   font-size: 12px;
   position: relative;
   z-index: 1;
+  animation: toastFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes toastFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 .app-toast > span {
   min-width: 0;
@@ -3326,6 +3331,15 @@ select {
 }
 .app-toast.error {
   border-left: 3px solid #d65a61;
+}
+.app-toast.success {
+  border-left: 3px solid #22c55e;
+}
+.app-toast.info {
+  border-left: 3px solid #3b82f6;
+}
+.app-toast.warning {
+  border-left: 3px solid #f59e0b;
 }
 .spin {
   animation: spin 1s linear infinite;
@@ -7789,4 +7803,23 @@ select:focus-visible {
   .sidebar-bottom {
     padding-top: 0;
   }
+}
+
+/* Accessibility & Layout Utility Classes */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

@@ -10,6 +10,8 @@ import {
   Globe,
   Check,
   Link as LinkIcon,
+  Copy,
+  Download,
 } from "lucide-react";
 import type { NoteColor, NoteEntry, SaveNoteInput, TabSnapshot } from "../shared/types";
 import "./quick-notes.css";
@@ -67,6 +69,31 @@ export function QuickNotesDrawer({
   const [url, setUrl] = useState<string | undefined>(undefined);
   const [tabTitle, setTabTitle] = useState<string | undefined>(undefined);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "idle" | "error">("idle");
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyNote = async () => {
+    const fullText = `${title ? `${title}\n\n` : ""}${content}${url ? `\n\nИсточник: ${url}` : ""}`;
+    try {
+      await navigator.clipboard.writeText(fullText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
+
+  const handleExportTxt = () => {
+    if (!selectedNoteId) return;
+    const filename = `${(title.trim() || "Заметка").replace(/[/\\?%*:|"<>]/g, "-")}.txt`;
+    const fullText = `${title ? `${title}\n\n` : ""}${content}${url ? `\n\nИсточник: ${url}` : ""}`;
+    const blob = new Blob([fullText], { type: "text/plain;charset=utf-8" });
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = downloadUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(downloadUrl);
+  };
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -498,7 +525,7 @@ export function QuickNotesDrawer({
           />
 
           <div className="note-editor-bottom">
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
               {url ? (
                 <span
                   role="link"
@@ -525,25 +552,49 @@ export function QuickNotesDrawer({
                 </button>
               ) : null}
 
+              <span style={{ fontSize: "11px", color: "var(--text-muted, #888)" }}>
+                {content.trim() ? content.trim().split(/\s+/).length : 0} сл. · {content.length} симв.
+              </span>
+
               {saveStatus === "saving" && <span>Сохранение…</span>}
               {saveStatus === "error" && <span role="alert">Не удалось сохранить. Повторите изменение.</span>}
               {saveStatus === "saved" && (
-                <span style={{ color: "var(--cyber-green)", display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                <span style={{ color: "var(--cyber-green, #10b981)", display: "inline-flex", alignItems: "center", gap: "3px" }}>
                   <Check size={12} />
                   <span>Сохранено</span>
                 </span>
               )}
             </div>
 
-            <button
-              type="button"
-              className="note-delete-btn"
-              onClick={() => void handleDeleteNote(selectedNoteId)}
-              title="Удалить заметку"
-            >
-              <Trash2 size={12} />
-              <span>Удалить</span>
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+              <button
+                type="button"
+                className="note-action-icon-btn"
+                onClick={handleCopyNote}
+                title={copied ? "Скопировано!" : "Скопировать текст заметки"}
+                aria-label="Скопировать заметку"
+              >
+                {copied ? <Check size={13} /> : <Copy size={13} />}
+              </button>
+              <button
+                type="button"
+                className="note-action-icon-btn"
+                onClick={handleExportTxt}
+                title="Экспортировать в файл .txt"
+                aria-label="Экспортировать в файл"
+              >
+                <Download size={13} />
+              </button>
+              <button
+                type="button"
+                className="note-delete-btn"
+                onClick={() => void handleDeleteNote(selectedNoteId)}
+                title="Удалить заметку"
+              >
+                <Trash2 size={12} />
+                <span>Удалить</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

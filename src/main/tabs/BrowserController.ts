@@ -1151,18 +1151,26 @@ export class BrowserController {
 
     let nextTabToActivate: string | undefined;
     if (this.activeTabId === tabId) {
-      const openerId = this.popupOpeners.get(tabId);
-      if (openerId && this.tabs.has(openerId)) {
-        nextTabToActivate = openerId;
-      } else {
-        const peers = [...this.tabs.values()]
-          .filter((entry) => entry.workspaceId === tab.workspaceId && entry.isPrivate === tab.isPrivate)
-          .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
-        const closedIndex = peers.findIndex((entry) => entry.id === tabId);
-        if (closedIndex !== -1 && peers.length > 1) {
-          // Standard Chromium tab close: switch to tab immediately on the right, or left if closed tab was rightmost
-          const candidate = peers[closedIndex + 1] ?? peers[closedIndex - 1];
-          if (candidate) nextTabToActivate = candidate.id;
+      if (this.splitView && (this.splitView.primaryTabId === tabId || this.splitView.secondaryTabId === tabId)) {
+        const otherSplitTabId = this.splitView.primaryTabId === tabId ? this.splitView.secondaryTabId : this.splitView.primaryTabId;
+        if (this.tabs.has(otherSplitTabId)) {
+          nextTabToActivate = otherSplitTabId;
+        }
+      }
+      if (!nextTabToActivate) {
+        const openerId = this.popupOpeners.get(tabId);
+        if (openerId && this.tabs.has(openerId)) {
+          nextTabToActivate = openerId;
+        } else {
+          const peers = [...this.tabs.values()]
+            .filter((entry) => entry.workspaceId === tab.workspaceId && entry.isPrivate === tab.isPrivate)
+            .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
+          const closedIndex = peers.findIndex((entry) => entry.id === tabId);
+          if (closedIndex !== -1 && peers.length > 1) {
+            // Standard Chromium tab close: switch to tab immediately on the right, or left if closed tab was rightmost
+            const candidate = peers[closedIndex + 1] ?? peers[closedIndex - 1];
+            if (candidate) nextTabToActivate = candidate.id;
+          }
         }
       }
     }

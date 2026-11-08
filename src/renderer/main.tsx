@@ -121,7 +121,7 @@ const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
 type Panel = "home" | "bookmarks" | "history" | "downloads" | "privacy" | "settings";
-type Toast = { tone: "error" | "success" | "info"; message: string };
+type Toast = { tone: "error" | "success" | "info" | "warning"; message: string };
 // User wallpapers are kept in the trusted shell's IndexedDB. Never load
 // remote/CSS URLs, SVG or arbitrary files into the privileged browser shell.
 const CUSTOM_WALLPAPER_KEY = "soul-m8te-custom-wallpaper-v1";
@@ -618,7 +618,7 @@ function App(): React.JSX.Element {
   }, [openPanel]);
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 6500);
+    const timer = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(timer);
   }, [toast]);
   useEffect(() => {
@@ -968,19 +968,6 @@ function App(): React.JSX.Element {
       } else if (modifier && key === "0") {
         event.preventDefault();
         if (currentTab) action("zoom-reset");
-      } else if (modifier && (key === "tab" || key === "pagedown" || key === "pageup")) {
-        event.preventDefault();
-        if (snapshot) {
-          const visible = snapshot.tabs
-            .filter((entry) => entry.workspaceId === (currentTab?.workspaceId ?? "personal") && entry.isPrivate === isPrivate)
-            .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
-          if (visible.length > 0) {
-            const index = visible.findIndex((entry) => entry.id === currentTab?.id);
-            const isBack = event.shiftKey || key === "pageup";
-            const next = visible[(index + (isBack ? -1 : 1) + visible.length) % visible.length];
-            if (next) run(window.browserApi.activateTab(next.id));
-          }
-        }
       } else if ((modifier && isKey("l", "KeyL", "д")) || key === "f6" || (event.altKey && !modifier && !event.shiftKey && (key === "d" || key === "в" || code === "KeyD"))) {
         event.preventDefault();
         setEditingAddress(true);
@@ -1108,23 +1095,31 @@ function App(): React.JSX.Element {
         <div className="navigation-actions">
           <button
             className="icon-button"
-            title="Назад · Alt+←"
+            title="Назад · Alt+← (Правый клик: история)"
             aria-label="Назад"
             disabled={!currentTab?.canGoBack}
             onClick={() =>
               currentTab && run(window.browserApi.goBack(currentTab.id))
             }
+            onContextMenu={(e) => {
+              e.preventDefault();
+              openPanel("history");
+            }}
           >
             <ArrowLeft size={18} />
           </button>
           <button
             className="icon-button"
-            title="Вперёд · Alt+→"
+            title="Вперёд · Alt+→ (Правый клик: история)"
             aria-label="Вперёд"
             disabled={!currentTab?.canGoForward}
             onClick={() =>
               currentTab && run(window.browserApi.goForward(currentTab.id))
             }
+            onContextMenu={(e) => {
+              e.preventDefault();
+              openPanel("history");
+            }}
           >
             <ArrowRight size={18} />
           </button>
@@ -1133,7 +1128,7 @@ function App(): React.JSX.Element {
             title={
               currentTab?.isLoading
                 ? "Остановить загрузку · Esc"
-                : "Обновить · Ctrl+R / F5"
+                : "Обновить · Ctrl+R / F5 (Правый клик: принудительное обновление)"
             }
             aria-label={currentTab?.isLoading ? "Остановить" : "Обновить"}
             onClick={() =>
@@ -1144,6 +1139,10 @@ function App(): React.JSX.Element {
                   : window.browserApi.reload(currentTab.id),
               )
             }
+            onContextMenu={(e) => {
+              e.preventDefault();
+              if (currentTab) run(window.browserApi.reload(currentTab.id, true));
+            }}
           >
             {currentTab?.isLoading ? <X size={18} /> : <RefreshCw size={17} />}
           </button>
@@ -2462,6 +2461,7 @@ function App(): React.JSX.Element {
                 run(window.browserApi.createTab({ url, isPrivate }));
               }}
               onBookmarks={() => openPanel("bookmarks")}
+              onHistory={() => openPanel("history")}
               onSettings={() => openPanel("settings")}
               onSaveBookmark={async (input) => {
                 try {
@@ -3123,6 +3123,7 @@ function NewTabPage({
   onSearch,
   onOpen,
   onBookmarks,
+  onHistory,
   onSettings,
   onSaveBookmark,
   onRemoveBookmark,
@@ -3132,6 +3133,7 @@ function NewTabPage({
   onSearch: (value: string) => void;
   onOpen: (url: string) => void;
   onBookmarks: () => void;
+  onHistory?: () => void;
   onSettings: () => void;
   onSaveBookmark?: (input: { url: string; title: string }) => Promise<void>;
   onRemoveBookmark?: (id: string) => Promise<void>;
@@ -3208,7 +3210,7 @@ function NewTabPage({
   const modifier = navigator.platform.toLowerCase().includes("mac")
     ? "⌘"
     : "Ctrl";
-  const recent = privateMode ? [] : snapshot.history.slice(0, 4);
+  const recent = privateMode ? [] : snapshot.history.slice(0, 8);
   const background = normalizeNewTabBackground(snapshot.settings.newTabBackground);
 
   const activeBookmarks = useMemo(() => {
@@ -3487,7 +3489,14 @@ function NewTabPage({
                   <History size={16} />
                   <h2>Недавно открывали</h2>
                 </div>
-                <span className="recent-local-note">На этом устройстве</span>
+                <div className="section-heading-actions">
+                  {onHistory && (
+                    <button type="button" className="text-button" onClick={onHistory}>
+                      Вся история <ChevronRight size={15} />
+                    </button>
+                  )}
+                  <span className="recent-local-note">На этом устройстве</span>
+                </div>
               </div>
               {recent.length > 0 ? (
                 <div className="recent-page-list">
@@ -4932,6 +4941,35 @@ function SettingsPanel({
               }
             />
           </label>
+          <div className="setting-row">
+            <span>
+              <strong>Сброс параметров оформления</strong>
+              <small>Вернуть стандартную тему, портретный фон и поисковую систему.</small>
+            </span>
+            <button
+              type="button"
+              className="plain-button"
+              onClick={() => {
+                if (window.confirm("Сбросить параметры темы, поисковой системы и фона к стандартным значениям?")) {
+                  update({
+                    theme: "system",
+                    searchEngine: "https://yandex.ru/search/?text=",
+                    newTabBackground: "portrait",
+                    appearancePreset: "classic",
+                    accentColor: "blue",
+                    wallpaperDim: 0,
+                    sidebarCollapsed: false,
+                    sleepAfterMinutes: 15,
+                    adBlockEnabled: true,
+                    restoreSession: true,
+                  });
+                  onPasswordFeedback("Параметры оформления сброшены к значениям по умолчанию.");
+                }
+              }}
+            >
+              Сбросить к умолчаниям
+            </button>
+          </div>
         </div>
         <div className="settings-section">
           <h3>Приватность и защита</h3>
