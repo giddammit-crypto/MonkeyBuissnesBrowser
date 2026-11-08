@@ -188,9 +188,68 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ onDismiss, onFeedback 
 
           {/* Status Message */}
           {checkResult?.error ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#f87171', fontSize: 13, padding: '10px 14px', background: 'rgba(239, 68, 68, 0.1)', borderRadius: 10, border: '1px solid rgba(239, 68, 68, 0.2)' }}>
-              <AlertCircle size={18} />
-              <span>{checkResult.error}</span>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                padding: '12px 14px',
+                background: 'rgba(239, 68, 68, 0.1)',
+                borderRadius: 10,
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, color: '#f87171', fontSize: 13, lineHeight: 1.45 }}>
+                <AlertCircle size={18} style={{ flexShrink: 0, marginTop: 2 }} />
+                <span>{checkResult.error}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginLeft: 28, marginTop: 2 }}>
+                <button
+                  type="button"
+                  className="update-retry-btn"
+                  onClick={checkNow}
+                  disabled={checking}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '5px 12px',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    borderRadius: 6,
+                    background: 'rgba(239, 68, 68, 0.2)',
+                    color: '#fca5a5',
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                    cursor: checking ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  <RefreshCw size={12} className={checking ? 'spin-icon' : ''} />
+                  <span>{checking ? 'Проверка...' : 'Повторить попытку'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="update-retry-btn"
+                  onClick={openGitHub}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '5px 12px',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    borderRadius: 6,
+                    background: 'rgba(255, 255, 255, 0.08)',
+                    color: '#e2e8f0',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  <ExternalLink size={12} />
+                  <span>Открыть на GitHub</span>
+                </button>
+              </div>
             </div>
           ) : !hasUpdate && checkResult ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#4ade80', fontSize: 13, padding: '10px 14px', background: 'rgba(34, 197, 94, 0.1)', borderRadius: 10, border: '1px solid rgba(34, 197, 94, 0.2)' }}>

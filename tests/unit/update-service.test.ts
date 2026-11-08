@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { isNewerVersion, pickRecommendedAsset, UpdateService } from '../../src/main/services/UpdateService';
+import {
+  isNewerVersion,
+  pickRecommendedAsset,
+  UpdateService,
+  formatGitHubError,
+  getGitHubToken,
+  clearCachedGitHubToken,
+  GITHUB_REPO,
+} from '../../src/main/services/UpdateService';
 import type { UpdateAssetInfo } from '../../src/shared/types';
 
 describe('UpdateService version comparison', () => {
@@ -162,5 +170,107 @@ describe('UpdateService check and progress lifecycle', () => {
   it('rejects path traversal in update filenames', async () => {
     await expect(service.downloadUpdate('https://github.com/giddammit-crypto/MonkeyBuissnesBrowser/releases/download/v1/browser.AppImage', '../browser.AppImage'))
       .resolves.toMatchObject({ success: false });
+  });
+
+  it('provides resilient fallback error result with htmlUrl on update check error', async () => {
+    // Mock fetchLatestRelease to reject
+    vi.spyOn(service as any, 'fetchLatestRelease').mockRejectedValueOnce(
+      new Error(formatGitHubError(503, 'Service Unavailable'))
+    );
+
+    const result = await service.checkForUpdates();
+    expect(result.hasUpdate).toBe(false);
+    expect(result.error).toContain('503');
+    expect(result.error).toContain('Сервер GitHub временно перегружен или недоступен');
+    expect(result.htmlUrl).toBe(`https://github.com/${GITHUB_REPO}/releases`);
+  });
+});
+
+describe('formatGitHubError', () => {
+  it('formats HTTP 503 into actionable Russian guidance', () => {
+    const msg = formatGitHubError(503, 'Service Unavailable');
+    expect(msg).toContain('503');
+    expect(msg).toContain('временно перегружен или недоступен');
+    expect(msg).toContain('Попробуйте повторить попытку через пару минут');
+  });
+
+  it('formats HTTP 504 Gateway Timeout', () => {
+    const msg = formatGitHubError(504, 'Gateway Timeout');
+    expect(msg).toContain('504');
+    expect(msg).toContain('Gateway Timeout');
+  });
+
+  it('formats HTTP 502 Bad Gateway', () => {
+    const msg = formatGitHubError(502, 'Bad Gateway');
+    expect(msg).toContain('502');
+  });
+
+  it('formats HTTP 429 rate limit errors', () => {
+    const msg = formatGitHubError(429, 'Too Many Requests');
+    expect(msg).toContain('429');
+    expect(msg).toContain('лимит запросов');
+  });
+
+  it('formats HTTP 404 not found errors', () => {
+    const msg = formatGitHubError(404, 'Not Found');
+    expect(msg).toContain('404');
+    expect(msg).toContain('не найдены');
+  });
+
+  it('formats HTTP 403 forbidden errors', () => {
+    const msg = formatGitHubError(403, 'Forbidden');
+    expect(msg).toContain('403');
+    expect(msg).toContain('ограничен');
+  });
+
+  it('formats default status code', () => {
+    const msg = formatGitHubError(500, 'Internal Server Error');
+    expect(msg).toContain('500');
+    expect(msg).toContain('Internal Server Error');
+  });
+});
+
+describe('getGitHubToken', () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    clearCachedGitHubToken();
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    clearCachedGitHubToken();
+  });
+
+  it('reads GITHUB_TOKEN from process.env', () => {
+    process.env.GITHUB_TOKEN = 'test_token_12345';
+    delete process.env.GH_TOKEN;
+    delete process.env.VINT_GITHUB_TOKEN;
+    clearCachedGitHubToken();
+
+    expect(getGitHubToken()).toBe('test_token_12345');
+  });
+
+  it('reads GH_TOKEN from process.env when GITHUB_TOKEN is missing', () => {
+    delete process.env.GITHUB_TOKEN;
+    process.env.GH_TOKEN = 'gh_token_98765';
+    delete process.env.VINT_GITHUB_TOKEN;
+    clearCachedGitHubToken();
+
+    expect(getGitHubToken()).toBe('gh_token_98765');
+  });
+
+  it('caches the token between calls until clearCachedGitHubToken is called', () => {
+    process.env.GITHUB_TOKEN = 'initial_token';
+    clearCachedGitHubToken();
+    expect(getGitHubToken()).toBe('initial_token');
+
+    // Change env without clearing cache
+    process.env.GITHUB_TOKEN = 'changed_token';
+    expect(getGitHubToken()).toBe('initial_token');
+
+    // Clear cache
+    clearCachedGitHubToken();
+    expect(getGitHubToken()).toBe('changed_token');
   });
 });

@@ -4,12 +4,102 @@ import crypto from 'node:crypto';
 import https from 'node:https';
 import http from 'node:http';
 import { URL } from 'node:url';
-import { app, shell } from 'electron';
+import { app, net, shell } from 'electron';
 import type { UpdateAssetInfo, UpdateCheckResult, UpdateDownloadProgress } from '../../shared/types';
 
 export const GITHUB_REPO = 'giddammit-crypto/MonkeyBuissnesBrowser';
 export const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 export const GITHUB_RELEASES_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases`;
+
+let cachedGitHubToken: string | null | undefined = undefined;
+
+/**
+ * Resolves a GitHub token if available in the environment or via the GitHub CLI.
+ * Authenticated requests have a 5,000 req/hr rate limit and avoid 503/504 gateway throttling.
+ */
+export function getGitHubToken(): string | undefined {
+  if (cachedGitHubToken !== undefined) {
+    return cachedGitHubToken || undefined;
+  }
+
+  const envToken =
+    process.env.GITHUB_TOKEN?.trim() ||
+    process.env.GH_TOKEN?.trim() ||
+    process.env.VINT_GITHUB_TOKEN?.trim();
+
+  if (envToken) {
+    cachedGitHubToken = envToken;
+    return envToken;
+  }
+
+  try {
+    const cp = require('node:child_process');
+    const token = cp.execSync('gh auth token', {
+      encoding: 'utf8',
+      timeout: 1500,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    })?.trim();
+    if (token && token.length > 8) {
+      cachedGitHubToken = token;
+      return token;
+    }
+  } catch {
+    // Ignore if gh is not installed or not logged in
+  }
+
+  cachedGitHubToken = null;
+  return undefined;
+}
+
+export function clearCachedGitHubToken(): void {
+  cachedGitHubToken = undefined;
+}
+
+/**
+ * Formats raw HTTP status codes from GitHub API into actionable, friendly Russian explanations.
+ */
+export function formatGitHubError(statusCode: number, statusText?: string): string {
+  switch (statusCode) {
+    case 503:
+      return 'Сервер GitHub временно перегружен или недоступен (статус 503 Service Unavailable). Попробуйте повторить попытку через пару минут.';
+    case 504:
+      return 'Время ожидания ответа шлюза GitHub истекло (статус 504 Gateway Timeout). Проверьте интернет-соединение или повторите через минуту.';
+    case 502:
+      return 'Ошибка шлюза GitHub (статус 502 Bad Gateway). Сервер обновлений временно не отвечает.';
+    case 429:
+      return 'Превышен лимит запросов к GitHub API (статус 429 Too Many Requests). Попробуйте чуть позже.';
+    case 404:
+      return 'Релизы браузера soulm8te в репозитории не найдены (статус 404 Not Found).';
+    case 403:
+      return 'Доступ к GitHub API ограничен (статус 403 Forbidden). Возможно, превышен лимит анонимных обращений.';
+    default:
+      return `GitHub API вернул статус ${statusCode}${statusText ? ` (${statusText})` : ''}`;
+  }
+}
+
+function isRetryableStatusCode(code?: number): boolean {
+  return code === 429 || code === 502 || code === 503 || code === 504;
+}
+
+function isRetryableError(err: any): boolean {
+  if (!err) return false;
+  const msg = (err.message || '').toLowerCase();
+  const code = (err.code || '').toLowerCase();
+  return (
+    code === 'econnreset' ||
+    code === 'etimedout' ||
+    code === 'esockettimedout' ||
+    code === 'eai_again' ||
+    code === 'enotfound' ||
+    code === 'econnrefused' ||
+    msg.includes('timeout') ||
+    msg.includes('econnreset') ||
+    msg.includes('503') ||
+    msg.includes('504') ||
+    msg.includes('502') ||
+    msg.includes('429')
+  );
+}
 
 const TRUSTED_UPDATE_HOSTS = new Set([
   'github.com',
@@ -244,6 +334,7 @@ export class UpdateService {
         assets: [],
         checkedAt: Date.now(),
         error: `Не удалось проверить обновления: ${errorMessage}`,
+        htmlUrl: `https://github.com/${GITHUB_REPO}/releases`,
       };
       this.lastCheck = fallbackResult;
       return fallbackResult;
@@ -254,34 +345,201 @@ export class UpdateService {
     try {
       return await this.httpGetJson(GITHUB_API_URL);
     } catch (err) {
-      // If /releases/latest returns 404 (e.g. no release tagged latest), try first item from /releases
-      const list = await this.httpGetJson(GITHUB_RELEASES_URL);
-      if (Array.isArray(list) && list.length > 0) {
-        return list[0];
+      // If /releases/latest returns 404 or fails, try first item from /releases list
+      try {
+        const list = await this.httpGetJson(GITHUB_RELEASES_URL);
+        if (Array.isArray(list) && list.length > 0) {
+          return list[0];
+        }
+      } catch {
+        // Continue to web redirect fallback
       }
+
+      // Web HTML / Redirect fallback:
+      // If GitHub API is degraded or throttled (503/504), resolve latest tag from public releases redirect
+      try {
+        const fallbackRelease = await this.resolveReleaseFromWebRedirect();
+        if (fallbackRelease) {
+          return fallbackRelease;
+        }
+      } catch {
+        // Ignore fallback error
+      }
+
       throw err;
     }
   }
 
-  private httpGetJson(urlStr: string): Promise<any> {
-    return new Promise((resolve, reject) => {
-      const currentVersion = app?.getVersion ? app.getVersion() : '1.0.2';
-      const options = {
-        headers: {
-          'User-Agent': `soulm8te-browser/${currentVersion}`,
-          'Accept': 'application/vnd.github.v3+json',
+  /**
+   * Fallback: If api.github.com is degraded or rate-throttled,
+   * resolve the latest release tag from the public GitHub releases redirect.
+   */
+  private async resolveReleaseFromWebRedirect(): Promise<any | null> {
+    const webLatestUrl = `https://github.com/${GITHUB_REPO}/releases/latest`;
+    const currentVersion = app?.getVersion ? app.getVersion() : '1.0.2';
+
+    if (typeof net?.fetch === 'function') {
+      try {
+        const res = await net.fetch(webLatestUrl, {
+          method: 'HEAD',
+          redirect: 'manual',
+          headers: {
+            'User-Agent': `soulm8te-browser/${currentVersion}`,
+          },
+        });
+        const loc = res.headers.get('location') || res.url;
+        const tagMatch = loc && loc.match(/\/releases\/tag\/(v?[0-9][a-zA-Z0-9._+-]*)/);
+        if (tagMatch) {
+          return this.synthesizeReleaseFromTag(tagMatch[1]);
+        }
+      } catch {
+        // Fall through
+      }
+    }
+
+    return new Promise((resolve) => {
+      try {
+        const parsed = new URL(webLatestUrl);
+        const req = https.request(
+          {
+            hostname: parsed.hostname,
+            path: parsed.pathname,
+            method: 'HEAD',
+            headers: {
+              'User-Agent': `soulm8te-browser/${currentVersion}`,
+            },
+            timeout: 8000,
+          },
+          (res) => {
+            const loc = res.headers.location;
+            if (loc) {
+              const tagMatch = loc.match(/\/releases\/tag\/(v?[0-9][a-zA-Z0-9._+-]*)/);
+              if (tagMatch) {
+                resolve(this.synthesizeReleaseFromTag(tagMatch[1]));
+                return;
+              }
+            }
+            resolve(null);
+          }
+        );
+        req.on('timeout', () => { req.destroy(); resolve(null); });
+        req.on('error', () => resolve(null));
+        req.end();
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  private synthesizeReleaseFromTag(tagName: string): any {
+    const cleanVer = tagName.replace(/^[vV]/, '');
+    return {
+      tag_name: tagName,
+      name: `soulm8te ${cleanVer}`,
+      html_url: `https://github.com/${GITHUB_REPO}/releases/tag/${tagName}`,
+      published_at: new Date().toISOString(),
+      body: `Релиз soulm8te ${cleanVer} опубликован на GitHub.`,
+      assets: [
+        {
+          name: `soulm8te-${cleanVer}-linux-x64.tar.gz`,
+          browser_download_url: `https://github.com/${GITHUB_REPO}/releases/download/${tagName}/soulm8te-${cleanVer}-linux-x64.tar.gz`,
+          size: 0,
+          content_type: 'application/gzip',
         },
+        {
+          name: `soulm8te-${cleanVer}-linux-amd64.deb`,
+          browser_download_url: `https://github.com/${GITHUB_REPO}/releases/download/${tagName}/soulm8te-${cleanVer}-linux-amd64.deb`,
+          size: 0,
+          content_type: 'application/x-debian-package',
+        },
+        {
+          name: `soulm8te-${cleanVer}-x86_64.AppImage`,
+          browser_download_url: `https://github.com/${GITHUB_REPO}/releases/download/${tagName}/soulm8te-${cleanVer}-x86_64.AppImage`,
+          size: 0,
+          content_type: 'application/x-executable',
+        },
+      ],
+    };
+  }
+
+  private async httpGetJson(urlStr: string, retries = 2, delayMs = 1000): Promise<any> {
+    const currentVersion = app?.getVersion ? app.getVersion() : '1.0.2';
+    const headers: Record<string, string> = {
+      'User-Agent': `soulm8te-browser/${currentVersion}`,
+      'Accept': 'application/vnd.github.v3+json',
+    };
+    const token = getGitHubToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    // 1. In Electron main process: Use Chromium's net.fetch for native proxy, HTTP/2 and modern TLS
+    if (typeof net?.fetch === 'function') {
+      try {
+        const res = await net.fetch(urlStr, {
+          method: 'GET',
+          headers,
+        });
+
+        // Redirect handling (3xx)
+        if (res.status >= 300 && res.status < 400) {
+          const loc = res.headers.get('location');
+          if (loc) {
+            const nextUrl = new URL(loc, urlStr).toString();
+            return await this.httpGetJson(nextUrl, retries, delayMs);
+          }
+        }
+
+        if (res.status >= 200 && res.status < 300) {
+          const text = await res.text();
+          try {
+            return JSON.parse(text);
+          } catch {
+            throw new Error('Некорректный JSON в ответе GitHub API');
+          }
+        }
+
+        // Retry on 502, 503, 504, 429
+        if (isRetryableStatusCode(res.status) && retries > 0) {
+          await new Promise((r) => setTimeout(r, delayMs));
+          return await this.httpGetJson(urlStr, retries - 1, delayMs * 1.5);
+        }
+
+        throw new Error(formatGitHubError(res.status, res.statusText));
+      } catch (err: any) {
+        if (retries > 0 && isRetryableError(err)) {
+          await new Promise((r) => setTimeout(r, delayMs));
+          return await this.httpGetJson(urlStr, retries - 1, delayMs * 1.5);
+        }
+        if (err.message && (err.message.includes('GitHub') || err.message.includes('JSON'))) {
+          throw err;
+        }
+        throw new Error(`Сетевая ошибка при обращении к GitHub: ${err.message || 'Error'}`);
+      }
+    }
+
+    // 2. Fallback for Node environment / Vitest unit tests
+    return new Promise((resolve, reject) => {
+      const options = {
+        headers,
         timeout: 15000,
       };
 
       const req = https.get(urlStr, options, (res) => {
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          this.httpGetJson(res.headers.location).then(resolve, reject);
+          const nextUrl = new URL(res.headers.location, urlStr).toString();
+          this.httpGetJson(nextUrl, retries, delayMs).then(resolve, reject);
           return;
         }
 
         if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-          reject(new Error(`GitHub API вернул статус ${res.statusCode} (${res.statusMessage || 'Error'})`));
+          if (isRetryableStatusCode(res.statusCode) && retries > 0) {
+            setTimeout(() => {
+              this.httpGetJson(urlStr, retries - 1, delayMs * 1.5).then(resolve, reject);
+            }, delayMs);
+            return;
+          }
+          reject(new Error(formatGitHubError(res.statusCode, res.statusMessage)));
           return;
         }
 
@@ -299,11 +557,23 @@ export class UpdateService {
 
       req.on('timeout', () => {
         req.destroy();
-        reject(new Error('Время ожидания ответа GitHub API истекло'));
+        if (retries > 0) {
+          setTimeout(() => {
+            this.httpGetJson(urlStr, retries - 1, delayMs * 1.5).then(resolve, reject);
+          }, delayMs);
+        } else {
+          reject(new Error(formatGitHubError(504, 'Gateway Timeout')));
+        }
       });
 
       req.on('error', (err) => {
-        reject(err);
+        if (retries > 0 && isRetryableError(err)) {
+          setTimeout(() => {
+            this.httpGetJson(urlStr, retries - 1, delayMs * 1.5).then(resolve, reject);
+          }, delayMs);
+        } else {
+          reject(new Error(`Сетевая ошибка при обращении к GitHub: ${err.message}`));
+        }
       });
     });
   }
