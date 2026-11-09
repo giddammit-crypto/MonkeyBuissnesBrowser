@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  Broom,
   CheckCircle2,
   Clock,
   Cookie,
@@ -31,6 +30,7 @@ import type {
   StorageMetrics,
 } from "../shared/types";
 import "./click-and-clean.css";
+import BroomIcon from './BroomIcon';
 
 export interface ClickAndCleanModalProps {
   onDismiss: () => void;
@@ -332,7 +332,7 @@ export const ClickAndCleanModal: React.FC<ClickAndCleanModalProps> = ({
         {isCleaning && (
           <div className="click-clean-scanning-overlay">
             <div className="click-clean-scanning-radar">
-              <Broom size={28} color="var(--cc-cyan)" />
+              <BroomIcon size={28} color="var(--cc-cyan)" />
             </div>
             <div style={{ textAlign: "center" }}>
               <p className="click-clean-scanning-text">
@@ -350,7 +350,7 @@ export const ClickAndCleanModal: React.FC<ClickAndCleanModalProps> = ({
           <div className="click-clean-header-title-group">
             <div className="click-clean-avatar-led" title="CyberLife System LED">
               <div className="click-clean-avatar-led-ring" />
-              <Broom size={22} />
+              <BroomIcon size={22} />
             </div>
             <div className="click-clean-title-wrap">
               <div className="click-clean-title-row">
@@ -496,7 +496,7 @@ export const ClickAndCleanModal: React.FC<ClickAndCleanModalProps> = ({
           <section>
             <div className="click-clean-section-header">
               <span className="click-clean-section-title">
-                <Broom size={13} /> Живые показатели хранилища
+                <BroomIcon size={13} /> Живые показатели хранилища
               </span>
               <button
                 type="button"
@@ -702,7 +702,7 @@ export const ClickAndCleanModal: React.FC<ClickAndCleanModalProps> = ({
                 </>
               ) : (
                 <>
-                  <Broom size={16} />
+                  <BroomIcon size={16} />
                   <span>Очистить следы</span>
                 </>
               )}

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, LoaderCircle, RefreshCw, Search, Type, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, LoaderCircle, RefreshCw, Search, Type, Wand2, X } from 'lucide-react';
 import type { PageFontReport } from '../shared/types';
 import './font-diagnostics.css';
 
@@ -13,12 +13,24 @@ const FONT_STATUS: Record<PageFontReport['faces'][number]['status'], string> = {
   unloaded: 'Не запрошен', loading: 'Загружается', loaded: 'Загружен', error: 'Ошибка загрузки',
 };
 
+const FONT_ISSUE_LABEL: Record<PageFontReport['issues'][number]['kind'], string> = {
+  blocked: 'Запрос заблокирован',
+  network: 'Сеть',
+  http: 'Ответ сервера',
+  decode: 'Файл шрифта повреждён',
+  cors: 'Политика CORS',
+  csp: 'Политика CSP сайта',
+  'missing-local': 'Нет в системе',
+};
+
 export default function FontDiagnosticsModal({ tabId, onDismiss, onError }: FontDiagnosticsModalProps): React.JSX.Element {
   const [report, setReport] = useState<PageFontReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [revision, setRevision] = useState(0);
+  const [substituting, setSubstituting] = useState(false);
+  const [substitution, setSubstitution] = useState<{ families: string[]; error?: string } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const onErrorRef = useRef(onError);
@@ -53,6 +65,25 @@ export default function FontDiagnosticsModal({ tabId, onDismiss, onError }: Font
   }, [query, report]);
   const failed = report?.faces.filter(face => face.status === 'error').length ?? 0;
   const loaded = report?.faces.filter(face => face.status === 'loaded').length ?? 0;
+  const issues = report?.issues ?? [];
+  const missing = report?.missingFamilies ?? [];
+  const canSubstitute = Boolean(report?.compatibility.enabled) && missing.length > 0;
+
+  const runSubstitution = async () => {
+    if (!report || substituting) return;
+    setSubstituting(true);
+    setSubstitution(null);
+    try {
+      const result = await window.browserApi.applyFontSubstitutions(tabId);
+      setSubstitution({ families: result.families });
+      setRevision(value => value + 1);
+    } catch (reason) {
+      setSubstitution({ families: [], error: reason instanceof Error ? reason.message : 'Не удалось подставить шрифты.' });
+      onErrorRef.current?.(reason);
+    } finally {
+      setSubstituting(false);
+    }
+  };
 
   return <div className="font-diagnostics-backdrop" onClick={event => { if (event.target === event.currentTarget) onDismiss(); }}>
     <div className="font-diagnostics-dialog" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="font-diagnostics-title"
@@ -83,6 +114,40 @@ export default function FontDiagnosticsModal({ tabId, onDismiss, onError }: Font
             {failed ? <AlertTriangle size={17} aria-hidden="true" /> : <CheckCircle2 size={17} aria-hidden="true" />}
             <span>Загружено: <strong>{loaded}</strong>{failed > 0 && <> · С ошибкой: <strong>{failed}</strong></>}{report.documentStatus === 'loading' && ' · Загрузка продолжается'}</span>
           </div>
+          {issues.length > 0 && <section aria-labelledby="font-diagnostics-issues-title">
+            <h3 id="font-diagnostics-issues-title">Почему шрифт не отображается <span>{issues.length}</span></h3>
+            <ul className="font-diagnostics-issues">{issues.slice(0, 12).map((issue, index) => <li key={`${issue.kind}-${index}`} className={issue.kind === 'missing-local' ? 'font-issue-soft' : undefined}>
+              <div className="font-diagnostics-issue-head">
+                <strong>{FONT_ISSUE_LABEL[issue.kind] ?? issue.kind}</strong>
+                {issue.url && <code>{issue.url}</code>}
+              </div>
+              <p>{issue.detail}</p>
+            </li>)}</ul>
+            {report.compatibility.relaxedResponses > 0 && <p className="font-diagnostics-help">
+              Совместимость шрифтов сняла ограничение CORS у {report.compatibility.relaxedResponses} ответ(ов) — так же поступали браузеры до Chromium.
+            </p>}
+            {!report.compatibility.enabled && <p className="font-diagnostics-help">
+              Совместимость шрифтов выключена в настройках: сайты с устаревшими правилами CORS снова теряют типографику.
+            </p>}
+          </section>}
+          {missing.length > 0 && <section aria-labelledby="font-diagnostics-missing-title">
+            <h3 id="font-diagnostics-missing-title">Шрифты, которых нет в системе <span>{missing.length}</span></h3>
+            <p className="font-diagnostics-help">Страница просит шрифт, не загруженный как веб-шрифт и не установленный в системе. Браузер показывает запасной шрифт.</p>
+            <div className="font-diagnostics-compat">
+              <span>{report.compatibility.substitutedFamilies.length > 0
+                ? <>Подставлены: <strong>{report.compatibility.substitutedFamilies.join(', ')}</strong></>
+                : 'Можно подставить установленные аналоги (Times New Roman → Liberation Serif, Monotype Corsiva → URW Chancery L и т. п.).'}</span>
+              <button type="button" onClick={() => void runSubstitution()} disabled={!canSubstitute || substituting}>
+                {substituting ? <LoaderCircle className="font-diagnostics-spinner" size={15} aria-hidden="true" /> : <Wand2 size={15} aria-hidden="true" />}
+                {substituting ? 'Подставляем…' : 'Подставить похожие'}
+              </button>
+            </div>
+            {substitution && <p className="font-diagnostics-compat-feedback" role="status">
+              {substitution.error ?? (substitution.families.length > 0
+                ? `Подставлено семейств: ${substitution.families.length}. Перезагрузите страницу, чтобы увидеть результат.`
+                : 'Подходящих установленных аналогов не найдено — текст останется запасным шрифтом.')}
+            </p>}
+          </section>}
           <section aria-labelledby="font-diagnostics-web-title">
             <h3 id="font-diagnostics-web-title">Подключённые веб-шрифты <span>{report.faces.length}</span></h3>
             <p className="font-diagnostics-help">«Не запрошен» означает, что страница ещё не использовала это начертание.</p>

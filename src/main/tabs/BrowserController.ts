@@ -2,6 +2,13 @@ import { exportBookmarksHtml } from '../services/BookmarkExportService';
 import { createMediaCookieFile } from '../services/MediaCookieFile';
 import { permissionRequestGuard } from '../services/PermissionRequestGuard';
 import { inspectPageFonts } from '../services/PageFontInspector';
+import { siteFontMonitor } from '../services/SiteFontMonitor';
+import { buildFontSubstitutionCss, fontSubstitutionFor, relaxFontResponseHeaders } from '../../shared/fontCompat';
+import {
+  XsltSupport, isXmlContentType, parseXmlStylesheetInstructionBody, parseXmlStylesheetInstructions, supportsXsltContentType,
+  XSLT_DOCUMENT_LIMIT, XSLT_STYLESHEET_LIMIT, type XsltFetcher,
+} from '../../services/xslt/XsltSupport';
+import { XSLT_PAGE_PROBE, buildXsltApplyScript, buildXsltErrorScript, buildXsltNoticeScript, sanitizeXsltProbeResult } from '../services/XsltPageProbe';
 import { requestedContextWindow } from '../../shared/voodooContext';
 import { VoodooModelCatalog } from '../services/VoodooModelCatalog';
 import path from 'node:path';
@@ -156,6 +163,35 @@ export interface CreateWindowOptions {
   };
 }
 
+
+/**
+ * Replaces the frame's document through the DevTools protocol.
+ * `Page.setDocumentContent` keeps the frame URL, which is why the address bar
+ * still shows the XML address after the transform.
+ */
+async function replaceDocumentViaDebugger(contents: Electron.WebContents, html: string): Promise<boolean> {
+  const debuggerSession = contents.debugger;
+  let attachedHere = false;
+  try {
+    if (!debuggerSession.isAttached()) {
+      debuggerSession.attach('1.3');
+      attachedHere = true;
+    }
+    const tree = await debuggerSession.sendCommand('Page.getFrameTree') as { frameTree?: { frame?: { id?: string } } } | undefined;
+    const frameId = tree?.frameTree?.frame?.id;
+    if (!frameId) return false;
+    await debuggerSession.sendCommand('Page.setDocumentContent', { frameId, html });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    // Leave a DevTools session owned by the user untouched.
+    if (attachedHere) {
+      try { debuggerSession.detach(); } catch { /* already detached */ }
+    }
+  }
+}
+
 export class BrowserController {
   public static readonly controllers = new Set<BrowserController>();
   public static readonly transferringTabs = new Set<string>();
@@ -288,6 +324,18 @@ export class BrowserController {
   private readonly capturedMediaStreams = new Map<number, { video?: string; audio?: string }>();
   private readonly notificationPermissions = new Map<string, NotificationPermissionDecision>();
   private readonly extensionsManager: LocalExtensionManager;
+  /**
+   * Main-frame XML responses that may carry an XSLT processing instruction.
+   * Shared between windows: a session's webRequest listeners are installed once
+   * by whichever controller created the session first, while the tab may live
+   *         in another window.
+   */
+  private static readonly xmlDocuments = new Map<number, { contentType: string; url: string }>();
+  private static readonly xsltApplied = new Set<number>();
+  private static readonly relaxedFontResponses = new Map<number, number>();
+  private readonly xsltServices = new Map<'normal' | 'private', XsltSupport>();
+  private readonly fontCompatCssKeys = new Map<string, string[]>();
+  private readonly fontCompatFamilies = new Map<string, string[]>();
   private neverSaveOrigins = new Set<string>();
 
   constructor() {
@@ -1926,6 +1974,17 @@ export class BrowserController {
         voodooContextWindowTokens: requestedContextWindow(typeof patch.voodooContextWindowTokens === 'number' ? patch.voodooContextWindowTokens : current.voodooContextWindowTokens),
         voodooModel: typeof patch.voodooModel === 'string' && patch.voodooModel.trim() ? patch.voodooModel.trim() : current.voodooModel,
         voodooBaseUrl: typeof patch.voodooBaseUrl === 'string' && patch.voodooBaseUrl.trim() ? patch.voodooBaseUrl.trim() : current.voodooBaseUrl,
+        // Web-standard layers added in 1.0.2. They were missing from this
+        // allow-list, so the settings switches (and the strict font mode) were
+        // silently ignored.
+        fontCompatibility: typeof patch.fontCompatibility === 'boolean' ? patch.fontCompatibility : current.fontCompatibility ?? true,
+        xsltSupport: typeof patch.xsltSupport === 'boolean' ? patch.xsltSupport : current.xsltSupport ?? true,
+        // Same allow-list gap: the update-check switch and the speech key in
+        // Settings were dropped on the way to the store.
+        autoCheckUpdates: typeof patch.autoCheckUpdates === 'boolean' ? patch.autoCheckUpdates : current.autoCheckUpdates ?? true,
+        voodooSttKey: 'voodooSttKey' in patch
+          ? (typeof patch.voodooSttKey === 'string' && patch.voodooSttKey.trim() ? patch.voodooSttKey.trim() : undefined)
+          : current.voodooSttKey,
       };
     });
     if (next.theme) {
@@ -3315,6 +3374,9 @@ export class BrowserController {
         : (details.webContentsId ? [...this.tabs.values()].find((t) => t.webContentsId === details.webContentsId)?.url : undefined)
           || details.referrer;
       if (blocker.engine.shouldBlock(details.url, details.resourceType, topLevelUrl)) {
+        if (details.resourceType === 'font' && details.webContentsId !== undefined) {
+          siteFontMonitor.noteBlocked(details.webContentsId, details.url, 'встроенный фильтр рекламы');
+        }
         this.emitSnapshot();
         callback({ cancel: true });
         return;
@@ -3383,8 +3445,35 @@ export class BrowserController {
       if (stripCookies(details)) {
         for (const key of Object.keys(headers)) if (key.toLowerCase() === 'set-cookie') delete headers[key];
       }
+      if (details.webContentsId !== undefined) {
+        if (details.resourceType === 'mainFrame') this.noteMainFrameContentType(details.webContentsId, details.url, headers);
+        const relaxed = relaxFontResponseHeaders(headers, {
+          enabled: this.stores.settings.get().fontCompatibility !== false,
+          resourceType: details.resourceType,
+          responseUrl: details.url,
+        });
+        if (relaxed.changed) {
+          BrowserController.relaxedFontResponses.set(details.webContentsId, (BrowserController.relaxedFontResponses.get(details.webContentsId) ?? 0) + 1);
+          callback({ responseHeaders: relaxed.headers });
+          return;
+        }
+      }
       callback({ responseHeaders: headers });
     });
+    // Font failures are invisible to the page; keep bounded evidence for the
+    // diagnostics panel instead of guessing why typography disappeared.
+    if (typeof targetSession.webRequest.onErrorOccurred === 'function') {
+      targetSession.webRequest.onErrorOccurred({ urls: ['http://*/*', 'https://*/*'] }, (details) => {
+        if (details.webContentsId === undefined || details.resourceType !== 'font') return;
+        siteFontMonitor.noteFailure(details.webContentsId, details.url, details.error);
+      });
+    }
+    if (typeof targetSession.webRequest.onCompleted === 'function') {
+      targetSession.webRequest.onCompleted({ urls: ['http://*/*', 'https://*/*'] }, (details) => {
+        if (details.webContentsId === undefined || details.resourceType !== 'font') return;
+        siteFontMonitor.noteHttpStatus(details.webContentsId, details.url, details.statusCode);
+      });
+    }
     const onDownload = (_event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents) => {
       if (this.ownsSessionDownload(contents, targetSession)) this.handleDownload(item, contents, targetSession);
     };
@@ -3463,6 +3552,9 @@ export class BrowserController {
       contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false,
       nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false, webviewTag: false,
       backgroundThrottling: true, spellcheck: true,
+      // Chromium's only bundled plugin today is the PDF viewer. Without this
+      // flag a PDF link leaves the tab blank and turns into a download.
+      plugins: true,
     } });
     // Standard Chromium webview background is pure opaque white (#ffffff).
     // Dark themes on websites (GitHub, YouTube, VK) provide their own background colors,
@@ -3825,6 +3917,25 @@ export class BrowserController {
       }
     };
     contents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => { if (isMainFrame) { resetTabMediaAndReader(); this.emitSnapshot(); } });
+    contents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+      if (!isMainFrame) return;
+      // Evidence and compatibility state belong to one document only.
+      BrowserController.xmlDocuments.delete(contents.id);
+      BrowserController.xsltApplied.delete(contents.id);
+      BrowserController.relaxedFontResponses.delete(contents.id);
+      siteFontMonitor.clear(contents.id);
+      void this.clearFontCompatibility(tab);
+    });
+    contents.on('dom-ready', () => { void this.applyXsltSupport(tab); });
+    (contents as unknown as { on(event: 'console-message', listener: (event: Electron.Event, ...rest: unknown[]) => void): void })
+      .on('console-message', (_event: Electron.Event, ...rest: unknown[]) => {
+        // Electron has shipped two console-message signatures; support both.
+        const details = rest[0];
+        const message = details && typeof details === 'object' && 'message' in details
+          ? String((details as { message?: unknown }).message ?? '')
+          : String(rest[1] ?? '');
+        if (message) siteFontMonitor.noteConsole(contents.id, message);
+      });
     contents.on('did-navigate', (_event, url) => { resetTabMediaAndReader(); this.memoryManager.updateTab(tab.id, { hasFormEdits: false }); this.updateUrl(tab, url); });
     contents.on('did-navigate-in-page', (_event, url) => { resetTabMediaAndReader(); this.updateUrl(tab, url); });
     contents.on('page-title-updated', (event, title) => {
@@ -3914,6 +4025,12 @@ export class BrowserController {
       this.tabHandlerCleanup?.get(contents.id)?.();
       this.tabHandlerCleanup?.delete(contents.id);
       this.capturedMediaStreams.delete(contents.id);
+      BrowserController.xmlDocuments.delete(contents.id);
+      BrowserController.xsltApplied.delete(contents.id);
+      BrowserController.relaxedFontResponses.delete(contents.id);
+      this.fontCompatCssKeys?.delete(tab.id);
+      this.fontCompatFamilies?.delete(tab.id);
+      siteFontMonitor.clear(contents.id);
       if (this.tabs.has(tab.id) && tab.webContentsId === contents.id) {
         if (this.popupOpeners.has(tab.id)) { void this.closeTab(tab.id); return; }
         this.detachView(tab);
@@ -4637,6 +4754,181 @@ export class BrowserController {
     }
   }
 
+  private noteMainFrameContentType(webContentsId: number, url: string, headers: Record<string, string[] | undefined>): void {
+    const key = Object.keys(headers).find(name => name.toLowerCase() === 'content-type');
+    const contentType = key ? (headers[key] ?? []).join('; ') : '';
+    if (contentType && supportsXsltContentType(contentType)) {
+      if (BrowserController.xmlDocuments.size >= 256 && !BrowserController.xmlDocuments.has(webContentsId)) {
+        const oldest = BrowserController.xmlDocuments.keys().next().value;
+        if (oldest !== undefined) BrowserController.xmlDocuments.delete(oldest);
+      }
+      BrowserController.xmlDocuments.set(webContentsId, { contentType, url });
+    } else {
+      BrowserController.xmlDocuments.delete(webContentsId);
+    }
+  }
+
+  /** Stylesheet responses must never exceed the parser's bounded input. */
+  private xsltService(isPrivate: boolean): XsltSupport {
+    const key = isPrivate ? 'private' as const : 'normal' as const;
+    const existing = this.xsltServices.get(key);
+    if (existing) return existing;
+    const fetcher: XsltFetcher = async (url) => {
+      const targetSession = isPrivate ? this.ensurePrivateSession() : this.browserSession;
+      const response = await targetSession.fetch(url, { redirect: 'follow', bypassCustomProtocolHandlers: true });
+      const declared = Number(response.headers.get('content-length') ?? '0');
+      if (Number.isFinite(declared) && declared > XSLT_STYLESHEET_LIMIT) {
+        return { ok: false, status: 413, url, text: '' };
+      }
+      const text = (await response.text()).slice(0, XSLT_STYLESHEET_LIMIT);
+      return {
+        ok: response.ok,
+        status: response.status,
+        url: response.url || url,
+        contentType: response.headers.get('content-type') ?? undefined,
+        text,
+      };
+    };
+    const created = new XsltSupport(fetcher);
+    this.xsltServices.set(key, created);
+    return created;
+  }
+
+  /**
+   * Fetches an XML document through the tab's session so cookies, proxy and
+   * certificate policy are identical to the navigation that produced the page.
+   */
+  private async fetchXmlSource(url: string, isPrivate: boolean): Promise<string | undefined> {
+    try {
+      const targetSession = isPrivate ? this.ensurePrivateSession() : this.browserSession;
+      const response = await targetSession.fetch(url, { redirect: 'follow', bypassCustomProtocolHandlers: true });
+      if (!response.ok) return undefined;
+      const declared = Number(response.headers.get('content-length') ?? '0');
+      if (Number.isFinite(declared) && declared > XSLT_DOCUMENT_LIMIT) return undefined;
+      const text = await response.text();
+      return text.length > XSLT_DOCUMENT_LIMIT ? undefined : text;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Chromium 158 no longer applies `xml-stylesheet` XSLT instructions, so an
+   * XML page would show raw markup. The transform runs in the main process and
+   * the result replaces the document; failures are explained, never silent.
+   */
+  private async applyXsltSupport(tab: TabRecord): Promise<void> {
+    const contents = tab.view?.webContents;
+    if (!contents || contents.isDestroyed() || this.disposed) return;
+    if (this.stores.settings.get().xsltSupport === false) return;
+    if (tab.isInternal) return;
+    const info = BrowserController.xmlDocuments.get(contents.id);
+    if (!info || BrowserController.xsltApplied.has(contents.id)) return;
+    BrowserController.xsltApplied.add(contents.id);
+    let probe: ReturnType<typeof sanitizeXsltProbeResult>;
+    try {
+      probe = sanitizeXsltProbeResult(await contents.executeJavaScriptInIsolatedWorld(999, [{ code: XSLT_PAGE_PROBE }], false));
+    } catch {
+      // Allow a retry on the next dom-ready instead of losing the transform.
+      BrowserController.xsltApplied.delete(contents.id);
+      return;
+    }
+    if (this.disposed || contents.isDestroyed() || this.tabs.get(tab.id) !== tab) return;
+    let source = probe.xml;
+    let instructions = probe.instructions
+      .map(parseXmlStylesheetInstructionBody)
+      .filter((instruction): instruction is NonNullable<typeof instruction> => Boolean(instruction));
+
+    // `application/rss+xml` and friends are also XML, yet Chromium sometimes
+    // renders them as plain text. The DOM then has no prolog to read, so the
+    // response source is fetched once through the same session (cookies kept).
+    if (instructions.length === 0 && !isXmlContentType(probe.contentType) && supportsXsltContentType(info.contentType)) {
+      const fetched = await this.fetchXmlSource(info.url, Boolean(tab.isPrivate));
+      if (fetched) {
+        source = fetched;
+        instructions = parseXmlStylesheetInstructions(fetched);
+      }
+    }
+    if (!source || instructions.length === 0) {
+      BrowserController.xsltApplied.delete(contents.id);
+      return;
+    }
+    if (this.disposed || contents.isDestroyed() || this.tabs.get(tab.id) !== tab) return;
+    const primary = instructions.find(instruction => !instruction.alternate) ?? instructions[0];
+    const outcome = await this.xsltService(Boolean(tab.isPrivate)).transform({
+      xml: source.slice(0, XSLT_DOCUMENT_LIMIT),
+      documentUrl: info.url,
+      stylesheetHref: primary.href,
+      title: primary.title,
+    });
+    if (this.disposed || contents.isDestroyed() || this.tabs.get(tab.id) !== tab || tab.view?.webContents !== contents) return;
+    if (outcome.status === 'ok') {
+      // CDP first: `document.write` is refused inside an XML document by
+      // specification and a text/plain page keeps its plain-text parser. The
+      // protocol call replaces the frame's document while the address bar keeps
+      // the real URL — exactly what Chromium's removed XSLT flow did.
+      let applied = await replaceDocumentViaDebugger(contents, outcome.html);
+      if (!applied) {
+        try {
+          const result = await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltApplyScript(outcome.html, { notice: false }) }], false);
+          applied = result?.applied === true;
+        } catch { applied = false; }
+      }
+      if (applied) {
+        await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltNoticeScript() }], false).catch(() => undefined);
+      }
+      if (!applied) {
+        await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltErrorScript('Не удалось показать результат преобразования в этой вкладке.') }], false).catch(() => undefined);
+        return;
+      }
+      if (outcome.title && outcome.title.trim()) {
+        tab.title = outcome.title.trim().slice(0, 200);
+        this.emitSnapshot();
+      }
+      return;
+    }
+    await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltErrorScript(outcome.message) }], false).catch(() => undefined);
+  }
+
+  private async clearFontCompatibility(tab: TabRecord): Promise<void> {
+    const keys = this.fontCompatCssKeys?.get(tab.id);
+    this.fontCompatCssKeys?.delete(tab.id);
+    this.fontCompatFamilies?.delete(tab.id);
+    if (!keys || keys.length === 0) return;
+    const contents = tab.view?.webContents;
+    if (!contents || contents.isDestroyed()) return;
+    for (const key of keys) {
+      try { await contents.removeInsertedCSS(key); } catch { /* The frame is already gone after navigation. */ }
+    }
+  }
+
+  /**
+   * Substitutes families that exist only on Windows/macOS with installed
+   * lookalikes. The CSS only matches when a candidate font is really present,
+   * so an unsupported page keeps its previous fallback.
+   */
+  async applyFontSubstitutions(tabId: string): Promise<{ families: string[] }> {
+    const tab = this.tabs.get(tabId);
+    if (!tab || !tab.view || tab.view.webContents.isDestroyed() || tab.isInternal) {
+      throw new Error('Откройте нужную страницу и повторите подстановку шрифтов.');
+    }
+    if (this.stores.settings.get().fontCompatibility === false) {
+      throw new Error('Совместимость шрифтов отключена в настройках.');
+    }
+    const report = await this.getPageFonts(tabId);
+    const candidates = [...new Set([
+      ...report.missingFamilies,
+      ...report.familyAvailability.filter(entry => !entry.local && !entry.webFont).map(entry => entry.family),
+    ])];
+    const applicable = candidates.filter(family => Boolean(fontSubstitutionFor(family))).slice(0, 12);
+    const css = buildFontSubstitutionCss(applicable);
+    if (!css) return { families: [] };
+    const key = await tab.view.webContents.insertCSS(css);
+    this.fontCompatCssKeys.set(tab.id, [...(this.fontCompatCssKeys.get(tab.id) ?? []), key]);
+    this.fontCompatFamilies.set(tab.id, applicable);
+    return { families: applicable };
+  }
+
   async getPageFonts(tabId: string): Promise<PageFontReport> {
     const tab = typeof tabId === 'string' ? this.tabs.get(tabId) : undefined;
     if (this.disposed || !tab || tab.isInternal || tab.lifecycle === 'hibernated' || tab.lifecycle === 'crashed'
@@ -4650,7 +4942,25 @@ export class BrowserController {
       || contents.isDestroyed() || tab.url !== url || (tab.isPrivate && this.activeTabId !== tab.id)) {
       throw new Error('Страница изменилась во время проверки шрифтов. Повторите попытку.');
     }
-    return { ...report, tabId: tab.id, sampledAt: Date.now() };
+    const missingFamilies = report.missingFamilies;
+    const issues = [
+      ...siteFontMonitor.snapshot(contents.id),
+      ...missingFamilies.map(family => ({
+        kind: 'missing-local' as const,
+        detail: `Шрифт «${family.slice(0, 80)}» не установлен в системе и не загружен как веб-шрифт.`,
+      })),
+    ].slice(0, 40);
+    return {
+      ...report,
+      issues,
+      compatibility: {
+        enabled: this.stores?.settings.get().fontCompatibility !== false,
+        relaxedResponses: BrowserController.relaxedFontResponses.get(contents.id) ?? 0,
+        substitutedFamilies: this.fontCompatFamilies?.get(tab.id) ?? [],
+      },
+      tabId: tab.id,
+      sampledAt: Date.now(),
+    };
   }
 
   async updateReaderSettings(patch: Partial<ReaderSettings>): Promise<ReaderSettings> {

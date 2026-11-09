@@ -20,6 +20,10 @@
 | Kill switch | NOT IMPLEMENTED | No platform helper installed |
 | Linux packaging | CI checks unpacked application | `npm run package` in GitHub Actions; AppImage/DEB installation and desktop integration require a separate manual target-OS run |
 | Windows/macOS packaging and signing | CI checks unpacked applications; signing not implemented | GitHub Actions uses native runners for `npm run package`; installer behavior and real desktop integration are not established by compilation |
+| Web-font compatibility mode | PASS (unit + fixture scope) | `tests/unit/site-font-compat.test.ts`; only `Access-Control-Allow-Origin` is relaxed for `resourceType === 'font'`. CSP `font-src`, CORP and policy denials stay enforced; strict mode verified by `scripts/site-fonts-smoke.mjs` in CI |
+| XSLT 1.0 rendering of XML/Atom/sitemap | PASS (unit + CI e2e) | 62 unit assertions across `tests/unit/xslt-*.test.ts`, `scripts/xslt-smoke.mjs`. Limits: 4 MB document, 1 MB stylesheet, 8 MB output, same-origin only; `document()`, `key()`, `xsl:script`, external entities blocked. XSLT 2.0/3.0 is not claimed |
+| In-tab PDF viewing | CI e2e | `scripts/pdf-viewer-smoke.mjs` asserts an `application/pdf` tab and zero downloads; form fields/annotations are stock Chromium behaviour, not customized |
+| Zoom, omnibox and cross-window XSLT state | PASS (unit scope) | `tests/unit/zoom.test.ts`, `tests/unit/omnibox.test.ts`; multi-window behaviour is code-reviewed, Electron checks run in CI |
 | Unit suite | Automated | Run `npm test` for the current test count and result; CI logs are the evidence for a specific commit |
 
 ## Verification boundaries
