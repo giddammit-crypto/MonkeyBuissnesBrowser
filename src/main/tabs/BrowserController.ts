@@ -3575,12 +3575,13 @@ export class BrowserController {
       ...popupOptions?.webPreferences,
       session: tabSession, preload: pagePreloadPath, nodeIntegration: false,
       contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false,
-      nodeIntegrationInSubFrames: false, nodeIntegrationInWorker: false, webviewTag: false,
+      nodeIntegrationInSubFrames: true, nodeIntegrationInWorker: false, webviewTag: false,
       backgroundThrottling: true, spellcheck: true,
       // Chromium's only bundled plugin today is the PDF viewer. Without this
       // flag a PDF link leaves the tab blank and turns into a download.
       plugins: true,
     } });
+    view.webContents.setUserAgent(getChromeUserAgent());
     // Standard Chromium webview background is pure opaque white (#ffffff).
     // Dark themes on websites (GitHub, YouTube, VK) provide their own background colors,
     // while light websites with transparent/unset body background (e.g. Google One, docs, banks)
@@ -3695,6 +3696,7 @@ export class BrowserController {
         webviewTag: false,
         spellcheck: true,
         backgroundThrottling: false,
+        nodeIntegrationInSubFrames: true,
       },
     });
 
@@ -3703,6 +3705,7 @@ export class BrowserController {
     this.popupToTab.set(popupWindow.id, opener.id);
 
     const popupContents = popupWindow.webContents;
+    popupContents.setUserAgent(getChromeUserAgent());
     this.installShortcuts(popupContents);
 
     if (opener.isPrivate) {
@@ -3760,6 +3763,7 @@ export class BrowserController {
               webviewTag: false,
               spellcheck: true,
               backgroundThrottling: false,
+              nodeIntegrationInSubFrames: true,
             },
           },
           createWindow: (nestedOpts) => this.createNativePopupWindow(opener, safeNestedUrl, nestedOpts, parseWindowFeatures(nestedFeat)),
@@ -3853,7 +3857,7 @@ export class BrowserController {
               session: contents.session,
               preload: pagePreloadPath,
               nodeIntegration: false,
-              nodeIntegrationInSubFrames: false,
+              nodeIntegrationInSubFrames: true,
               nodeIntegrationInWorker: false,
               contextIsolation: true,
               sandbox: true,
@@ -3876,7 +3880,7 @@ export class BrowserController {
             session: contents.session,
             preload: pagePreloadPath,
             nodeIntegration: false,
-            nodeIntegrationInSubFrames: false,
+            nodeIntegrationInSubFrames: true,
             nodeIntegrationInWorker: false,
             contextIsolation: true,
             sandbox: true,

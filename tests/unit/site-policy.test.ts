@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canRequestStorageAccess, getExternalPageUrl, getGoogleAuthNotice, getSiteKey, isAdBlockDisabledForSite, isGoogleYouTubeSignInRequest, normalizeCookieExceptions, normalizePermissionOrigin, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../src/shared/sitePolicy';
+import { canRequestStorageAccess, getExternalPageUrl, getGoogleAuthNotice, getSiteKey, isAdBlockDisabledForSite, isBotVerificationOrCaptchaRequest, isGoogleYouTubeSignInRequest, normalizeCookieExceptions, normalizePermissionOrigin, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../src/shared/sitePolicy';
 const policy = (requestUrl: string, topLevelUrl: string, extra = {}) => shouldStripThirdPartyCookies({ requestUrl, topLevelUrl, resourceType: 'xhr', isPrivate: false, enabled: true, ...extra });
 describe('site-aware cookie policy', () => {
   it('keeps search engine login subdomains same-site', () => {
@@ -126,5 +126,58 @@ describe('site adblock exception policy', () => {
     expect(isAdBlockDisabledForSite('https://m.vk.com/video', exceptions)).toBe(true);
     expect(isAdBlockDisabledForSite('https://habr.com/articles', exceptions)).toBe(false);
     expect(isAdBlockDisabledForSite('about:blank', exceptions)).toBe(false);
+  });
+});
+
+describe('Cloudflare Turnstile and CAPTCHA bot verification cookie policy', () => {
+  const testCases = [
+    'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv0/0.001/xx',
+    'https://challenges.cloudflare.com/turnstile/v0/api.js',
+    'https://target-site.com/cdn-cgi/challenge-platform/orchestrate/chl_api/v1',
+    'https://target-site.com/cdn-cgi/turnstile/v0/b/123/api.js',
+    'https://target-site.com/cdn-cgi/challenges/platform',
+    'https://cloudflarechallenge.com/cdn-cgi/trace',
+    'https://sub.cloudflarechallenge.com/check',
+    'https://www.google.com/recaptcha/api2/anchor?k=xyz',
+    'https://www.recaptcha.net/recaptcha/api2/bframe',
+    'https://www.gstatic.com/recaptcha/releases/123/recaptcha__en.js',
+    'https://hcaptcha.com/checksiteconfig',
+    'https://newassets.hcaptcha.com/captcha/v1/123/hcaptcha.js',
+    'https://smartcaptcha.yandexcloud.net/captcha.js',
+    'https://captcha-api.yandex.ru/validate',
+    'https://smartcaptcha.yandex.ru/checkbox',
+    'https://client-api.arkoselabs.com/fc/api/',
+    'https://static.geetest.com/v4/gt4.js',
+  ];
+
+  it('identifies all Cloudflare Turnstile and major CAPTCHA endpoints', () => {
+    for (const url of testCases) {
+      expect(isBotVerificationOrCaptchaRequest(url)).toBe(true);
+    }
+    expect(isBotVerificationOrCaptchaRequest('https://attacker.com/evil/cookie/stealer')).toBe(false);
+    expect(isBotVerificationOrCaptchaRequest('https://tracker.com/pixel.gif')).toBe(false);
+    expect(isBotVerificationOrCaptchaRequest('https://google.com/search?q=test')).toBe(false);
+  });
+
+  it('preserves cookies for Cloudflare Turnstile and CAPTCHAs on third-party sites in normal and private tabs', () => {
+    for (const url of testCases) {
+      // Normal browsing
+      expect(policy(url, 'https://mysite.com')).toBe(false);
+      // Private browsing: user must be able to pass Cloudflare verification to browse
+      expect(policy(url, 'https://mysite.com', { isPrivate: true })).toBe(false);
+    }
+  });
+
+  it('permits storage access for secure bot verification and CAPTCHA frames', () => {
+    expect(canRequestStorageAccess({
+      requestUrl: 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2',
+      topLevelUrl: 'https://target-site.com',
+      isPrivate: false,
+    })).toBe(true);
+    expect(canRequestStorageAccess({
+      requestUrl: 'https://www.google.com/recaptcha/api2/anchor',
+      topLevelUrl: 'https://target-site.com',
+      isPrivate: false,
+    })).toBe(true);
   });
 });

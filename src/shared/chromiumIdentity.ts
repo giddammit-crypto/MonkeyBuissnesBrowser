@@ -108,31 +108,39 @@ export function getPageStealthScript(platform?: string): string {
       });
     } catch {}
 
-    const getWebdriver = markNative(() => false, 'get webdriver');
+    function makeWebIdlGetter(targetClass, getterImpl, name) {
+      const fn = function () {
+        if (targetClass && !(this instanceof targetClass)) {
+          throw new TypeError('Illegal invocation');
+        }
+        return typeof getterImpl === 'function' ? getterImpl.call(this) : getterImpl;
+      };
+      return markNative(fn, name);
+    }
+
     try {
-      Object.defineProperty(Navigator.prototype, 'webdriver', {
-        get: () => false,
-        configurable: true,
-        enumerable: true,
-      });
+      delete Navigator.prototype.webdriver;
     } catch {}
     try {
       if (typeof navigator !== 'undefined') {
-        Object.defineProperty(navigator, 'webdriver', {
-          get: () => false,
-          configurable: true,
-          enumerable: true,
-        });
+        delete navigator.webdriver;
       }
+    } catch {}
+    try {
+      Object.defineProperty(Navigator.prototype, 'webdriver', {
+        get: makeWebIdlGetter(Navigator, () => false, 'get webdriver'),
+        configurable: true,
+        enumerable: true,
+      });
     } catch {}
 
     const ua = ${JSON.stringify(identity.userAgent)};
     const appVer = ${JSON.stringify(identity.appVersion)};
     const plat = ${JSON.stringify(identity.platform)};
-    const getUa = markNative(() => ua, 'get userAgent');
-    const getAppVer = markNative(() => appVer, 'get appVersion');
-    const getPlat = markNative(() => plat, 'get platform');
-    const getVendor = markNative(() => 'Google Inc.', 'get vendor');
+    const getUa = makeWebIdlGetter(Navigator, () => ua, 'get userAgent');
+    const getAppVer = makeWebIdlGetter(Navigator, () => appVer, 'get appVersion');
+    const getPlat = makeWebIdlGetter(Navigator, () => plat, 'get platform');
+    const getVendor = makeWebIdlGetter(Navigator, () => 'Google Inc.', 'get vendor');
 
     Object.defineProperty(Navigator.prototype, 'userAgent', {
       get: getUa,
@@ -161,10 +169,23 @@ export function getPageStealthScript(platform?: string): string {
     const platformVersion = ${JSON.stringify(identity.platformVersion)};
 
     class NavigatorUAData {
-      get brands() { return brands; }
-      get mobile() { return false; }
-      get platform() { return brandPlatform; }
+      constructor() {
+        try { Object.defineProperty(this, Symbol.toStringTag, { value: 'NavigatorUAData', configurable: true }); } catch {}
+      }
+      get brands() {
+        if (!(this instanceof NavigatorUAData)) throw new TypeError('Illegal invocation');
+        return brands;
+      }
+      get mobile() {
+        if (!(this instanceof NavigatorUAData)) throw new TypeError('Illegal invocation');
+        return false;
+      }
+      get platform() {
+        if (!(this instanceof NavigatorUAData)) throw new TypeError('Illegal invocation');
+        return brandPlatform;
+      }
       getHighEntropyValues(hints) {
+        if (!(this instanceof NavigatorUAData)) return Promise.reject(new TypeError('Illegal invocation'));
         const result = {
           brands: brands,
           mobile: false,
@@ -180,6 +201,7 @@ export function getPageStealthScript(platform?: string): string {
         return Promise.resolve(result);
       }
       toJSON() {
+        if (!(this instanceof NavigatorUAData)) throw new TypeError('Illegal invocation');
         return {
           brands: brands,
           mobile: false,
@@ -205,7 +227,7 @@ export function getPageStealthScript(platform?: string): string {
     } catch {}
 
     const uaDataInstance = new NavigatorUAData();
-    const getUaData = markNative(() => uaDataInstance, 'get userAgentData');
+    const getUaData = makeWebIdlGetter(Navigator, () => uaDataInstance, 'get userAgentData');
     Object.defineProperty(Navigator.prototype, 'userAgentData', {
       get: getUaData,
       configurable: true,
@@ -252,6 +274,88 @@ export function getPageStealthScript(platform?: string): string {
         };
       }, 'loadTimes');
     }
+    if (!window.chrome.runtime) {
+      window.chrome.runtime = {
+        OnInstalledReason: Object.freeze({
+          CHROME_UPDATE: 'chrome_update',
+          INSTALL: 'install',
+          SHARED_MODULE_UPDATE: 'shared_module_update',
+          UPDATE: 'update',
+        }),
+        OnRestartRequiredReason: Object.freeze({
+          APP_UPDATE: 'app_update',
+          OS_UPDATE: 'os_update',
+          PERIODIC: 'periodic',
+        }),
+        PlatformArch: Object.freeze({
+          ARM: 'arm',
+          ARM64: 'arm64',
+          MIPS: 'mips',
+          MIPS64: 'mips64',
+          X86_32: 'x86-32',
+          X86_64: 'x86-64',
+        }),
+        PlatformNaclArch: Object.freeze({
+          ARM: 'arm',
+          MIPS: 'mips',
+          MIPS64: 'mips64',
+          X86_32: 'x86-32',
+          X86_64: 'x86-64',
+        }),
+        PlatformOs: Object.freeze({
+          ANDROID: 'android',
+          CROS: 'cros',
+          FUCHSIA: 'fuchsia',
+          LINUX: 'linux',
+          MAC: 'mac',
+          OPENBSD: 'openbsd',
+          WIN: 'win',
+        }),
+        RequestUpdateCheckStatus: Object.freeze({
+          NO_UPDATE: 'no_update',
+          THROTTLED: 'throttled',
+          UPDATE_AVAILABLE: 'update_available',
+        }),
+        connect: markNative(function connect() {
+          throw new Error('Could not establish connection. Receiving end does not exist.');
+        }, 'connect'),
+        sendMessage: markNative(function sendMessage() {
+          throw new Error('Could not establish connection. Receiving end does not exist.');
+        }, 'sendMessage'),
+        id: undefined,
+      };
+    }
+
+    try {
+      if (typeof Permissions !== 'undefined' && Permissions.prototype && typeof Permissions.prototype.query === 'function') {
+        const origQuery = Permissions.prototype.query;
+        const patchedQuery = markNative(function query(queryObj) {
+          if (queryObj && queryObj.name === 'notifications') {
+            return origQuery.call(this, queryObj).then((status) => {
+              if (typeof Notification !== 'undefined') {
+                const perm = Notification.permission;
+                if (perm === 'default' && status.state === 'denied') {
+                  return new Proxy(status, {
+                    get(target, prop, receiver) {
+                      if (prop === 'state') return 'prompt';
+                      const val = Reflect.get(target, prop, receiver);
+                      return typeof val === 'function' ? val.bind(target) : val;
+                    }
+                  });
+                }
+              }
+              return status;
+            });
+          }
+          return origQuery.call(this, queryObj);
+        }, 'query');
+        Object.defineProperty(Permissions.prototype, 'query', {
+          value: patchedQuery,
+          writable: true,
+          configurable: true,
+        });
+      }
+    } catch {}
   } catch {}
 })();`;
 }

@@ -186,6 +186,76 @@ export function isFederatedSSOSignInRequest(requestUrl: string, topLevelUrl: str
   } catch { return false; }
 }
 
+/** Check if the request is for Cloudflare Turnstile, Challenge or major CAPTCHA services */
+export function isBotVerificationOrCaptchaRequest(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+    const hostname = url.hostname.toLowerCase();
+    const pathname = url.pathname.toLowerCase();
+
+    // Universal Cloudflare challenge platform endpoints hosted on first-party or third-party domains
+    if (pathname.includes('/cdn-cgi/challenge-platform/') ||
+        pathname.includes('/cdn-cgi/turnstile/') ||
+        pathname.includes('/cdn-cgi/challenges/')) {
+      return true;
+    }
+
+    // Cloudflare domains
+    if (hostname === 'challenges.cloudflare.com' ||
+        hostname.endsWith('.cloudflare.com') ||
+        hostname === 'cloudflarechallenge.com' ||
+        hostname.endsWith('.cloudflarechallenge.com')) {
+      return true;
+    }
+
+    // Google reCAPTCHA
+    if ((hostname === 'recaptcha.net' || hostname.endsWith('.recaptcha.net')) ||
+        ((hostname === 'google.com' || hostname.endsWith('.google.com') ||
+          hostname === 'gstatic.com' || hostname.endsWith('.gstatic.com')) &&
+         pathname.includes('/recaptcha/'))) {
+      return true;
+    }
+
+    // hCaptcha
+    if (hostname === 'hcaptcha.com' ||
+        hostname.endsWith('.hcaptcha.com') ||
+        hostname === 'hmt.im' ||
+        hostname.endsWith('.hmt.im')) {
+      return true;
+    }
+
+    // Yandex SmartCaptcha
+    if (hostname === 'smartcaptcha.yandexcloud.net' ||
+        hostname === 'captcha-api.yandex.ru' ||
+        hostname.endsWith('.captcha-api.yandex.ru') ||
+        hostname === 'smartcaptcha.yandex.ru' ||
+        hostname.endsWith('.smartcaptcha.yandex.ru')) {
+      return true;
+    }
+
+    // Arkose Labs / FunCaptcha
+    if (hostname === 'arkoselabs.com' ||
+        hostname.endsWith('.arkoselabs.com') ||
+        hostname === 'arkoselabs.net' ||
+        hostname.endsWith('.arkoselabs.net') ||
+        hostname === 'funcaptcha.com' ||
+        hostname.endsWith('.funcaptcha.com') ||
+        hostname === 'arkose.com' ||
+        hostname.endsWith('.arkose.com')) {
+      return true;
+    }
+
+    // GeeTest
+    if (hostname === 'geetest.com' ||
+        hostname.endsWith('.geetest.com')) {
+      return true;
+    }
+
+    return false;
+  } catch { return false; }
+}
+
 export function shouldStripThirdPartyCookies(input: {
   requestUrl: string;
   topLevelUrl: string;
@@ -197,6 +267,9 @@ export function shouldStripThirdPartyCookies(input: {
 }): boolean {
   // Main navigations must be able to set and send their first-party login cookies.
   if (input.resourceType === 'mainFrame' || (!input.isPrivate && !input.enabled)) return false;
+  // Bot verification and CAPTCHA providers (Cloudflare Turnstile/Challenge, reCAPTCHA, hCaptcha, Yandex SmartCaptcha, etc.)
+  // rely on session/clearance cookies to verify human presence. Stripping cookies causes verification loops.
+  if (isBotVerificationOrCaptchaRequest(input.requestUrl)) return false;
   const requestSite = getSiteKey(input.requestUrl);
   const topSite = getSiteKey(input.topLevelUrl);
   if (!requestSite) return false;
@@ -212,7 +285,7 @@ export function shouldStripThirdPartyCookies(input: {
   return requestSite !== topSite;
 }
 
-/** Only known sign-in frames or a user's explicit site exception can request access. */
+/** Only known sign-in frames, bot verification widgets, or a user's explicit site exception can request access. */
 export function canRequestStorageAccess(input: {
   requestUrl: string; topLevelUrl: string; isPrivate: boolean;
   exceptions?: string[]; googleSignInCompatibility?: boolean;
@@ -223,6 +296,7 @@ export function canRequestStorageAccess(input: {
     const top = new URL(input.topLevelUrl);
     if (request.protocol !== 'https:' || top.protocol !== 'https:' || request.username || request.password || top.username || top.password) return false;
     return Boolean(input.exceptions?.includes(getSiteKey(top.href) || '')) ||
+      isBotVerificationOrCaptchaRequest(request.href) ||
       (input.googleSignInCompatibility !== false && (
         isGoogleFederatedSignInRequest(request.href, top.href) ||
         isGoogleYouTubeSignInRequest(request.href, top.href) ||

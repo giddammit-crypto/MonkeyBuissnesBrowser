@@ -66,9 +66,10 @@ describe('Chromium / Chrome 134 native identity', () => {
   it('generates stealth DOM script that configures navigator.webdriver=false and userAgentData', () => {
     const script = getPageStealthScript('linux');
     expect(script).toContain("Navigator.prototype, 'webdriver'");
-    expect(script).toContain("get: () => false");
+    expect(script).toContain("makeWebIdlGetter(Navigator, () => false, 'get webdriver')");
     expect(script).toContain("Navigator.prototype, 'userAgentData'");
     expect(script).toContain("window.chrome");
+    expect(script).toContain("window.chrome.runtime");
     expect(script).not.toContain("Electron");
 
     // Execute stealth script in mock window/navigator environment
@@ -83,8 +84,15 @@ describe('Chromium / Chrome 134 native identity', () => {
     testFn(fakeWindow, fakeNavigator, NavigatorConstructor);
 
     expect(fakeNavigator.webdriver).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(fakeNavigator, 'webdriver')).toBe(false);
+    expect(() => {
+      const desc = Object.getOwnPropertyDescriptor(NavigatorPrototype, 'userAgent');
+      desc?.get?.call({});
+    }).toThrow('Illegal invocation');
     expect(fakeNavigator.userAgent).toBe(getChromeUserAgent('linux'));
     expect(fakeNavigator.vendor).toBe('Google Inc.');
+    expect((fakeWindow.chrome as any)?.runtime).toBeDefined();
+    expect(typeof (fakeWindow.chrome as any)?.runtime?.connect).toBe('function');
     const uad = fakeNavigator.userAgentData as {
       brands: Array<{ brand: string; version: string }>;
       mobile: boolean;
