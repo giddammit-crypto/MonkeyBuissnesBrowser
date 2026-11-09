@@ -10,6 +10,8 @@ import type { UpdateAssetInfo, UpdateCheckResult, UpdateDownloadProgress } from 
 export const GITHUB_REPO = 'giddammit-crypto/MonkeyBuissnesBrowser';
 export const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 export const GITHUB_RELEASES_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases`;
+/** GitHub release metadata is a few kilobytes; anything larger is not trusted. */
+const MAX_JSON_RESPONSE = 1024 * 1024;
 
 let cachedGitHubToken: string | null | undefined = undefined;
 
@@ -32,27 +34,45 @@ export function getGitHubToken(): string | undefined {
     return envToken;
   }
 
-  try {
-    const cp = require('node:child_process');
-    const token = cp.execSync('gh auth token', {
-      encoding: 'utf8',
-      timeout: 1500,
-      stdio: ['pipe', 'pipe', 'ignore'],
-    })?.trim();
-    if (token && token.length > 8) {
-      cachedGitHubToken = token;
-      return token;
-    }
-  } catch {
-    // Ignore if gh is not installed or not logged in
-  }
-
+  // No subprocess here: `getGitHubToken` runs on the update-check path and must
+  // never block the main process. The GitHub CLI is consulted asynchronously by
+  // `resolveGitHubToken`, and only when the API actually asks for credentials.
   cachedGitHubToken = null;
   return undefined;
 }
 
+let pendingGhToken: Promise<string | undefined> | undefined;
+
+/**
+ * Resolves a token, falling back to the GitHub CLI without blocking the event
+ * loop. Called on rate-limit responses (403/429) and on the first 5xx retry.
+ */
+export function resolveGitHubToken(): Promise<string | undefined> {
+  const envToken = getGitHubToken();
+  if (envToken) return Promise.resolve(envToken);
+  pendingGhToken ??= new Promise<string | undefined>((resolve) => {
+    try {
+      // Imported lazily so the module keeps working when the CLI is absent.
+      const cp = require('node:child_process') as typeof import('node:child_process');
+      cp.execFile('gh', ['auth', 'token'], { timeout: 1500, windowsHide: true }, (error, stdout) => {
+        const token = !error && typeof stdout === 'string' ? stdout.trim() : '';
+        if (token.length > 8) {
+          cachedGitHubToken = token;
+          resolve(token);
+          return;
+        }
+        resolve(undefined);
+      });
+    } catch {
+      resolve(undefined);
+    }
+  });
+  return pendingGhToken;
+}
+
 export function clearCachedGitHubToken(): void {
   cachedGitHubToken = undefined;
+  pendingGhToken = undefined;
 }
 
 /**
@@ -492,10 +512,21 @@ export class UpdateService {
 
         if (res.status >= 200 && res.status < 300) {
           const text = await res.text();
+          if (text.length > MAX_JSON_RESPONSE) throw new Error('Ответ GitHub API слишком большой');
           try {
             return JSON.parse(text);
           } catch {
             throw new Error('Некорректный JSON в ответе GitHub API');
+          }
+        }
+
+        // Rate limiting: a token lifts the 60 req/h anonymous budget, so ask the
+        // GitHub CLI for one (async) and retry once with credentials.
+        if ((res.status === 403 || res.status === 429) && retries > 0 && !headers['Authorization']) {
+          const token = await resolveGitHubToken();
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+            return await this.httpGetJson(urlStr, retries - 1, delayMs * 1.5);
           }
         }
 
@@ -544,9 +575,20 @@ export class UpdateService {
         }
 
         let body = '';
+        let tooLarge = false;
         res.setEncoding('utf8');
-        res.on('data', (chunk) => { body += chunk; });
+        res.on('data', (chunk) => {
+          if (tooLarge) return;
+          body += chunk;
+          if (body.length > MAX_JSON_RESPONSE) {
+            tooLarge = true;
+            body = '';
+            res.destroy();
+            reject(new Error('Ответ GitHub API слишком большой'));
+          }
+        });
         res.on('end', () => {
+          if (tooLarge) return;
           try {
             resolve(JSON.parse(body));
           } catch (e) {

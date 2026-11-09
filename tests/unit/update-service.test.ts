@@ -5,6 +5,7 @@ import {
   UpdateService,
   formatGitHubError,
   getGitHubToken,
+  resolveGitHubToken,
   clearCachedGitHubToken,
   GITHUB_REPO,
 } from '../../src/main/services/UpdateService';
@@ -272,5 +273,33 @@ describe('getGitHubToken', () => {
     // Clear cache
     clearCachedGitHubToken();
     expect(getGitHubToken()).toBe('changed_token');
+  });
+});
+
+describe('resolveGitHubToken (non-blocking)', () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    clearCachedGitHubToken();
+  });
+
+  it('prefers the environment token and resolves asynchronously', async () => {
+    process.env.GITHUB_TOKEN = 'async_env_token';
+    delete process.env.GH_TOKEN;
+    clearCachedGitHubToken();
+    await expect(resolveGitHubToken()).resolves.toBe('async_env_token');
+  });
+
+  it('never blocks: the sync accessor does not spawn the GitHub CLI', () => {
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    delete process.env.VINT_GITHUB_TOKEN;
+    clearCachedGitHubToken();
+    const started = Date.now();
+    expect(getGitHubToken()).toBeUndefined();
+    // A blocking `gh auth token` call against a missing CLI would take far
+    // longer than this on CI machines.
+    expect(Date.now() - started).toBeLessThan(100);
   });
 });
