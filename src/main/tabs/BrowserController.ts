@@ -164,6 +164,19 @@ export interface CreateWindowOptions {
 }
 
 
+/** Rejects a replacement that left an empty frame behind. */
+async function renderedDocument(contents: Electron.WebContents): Promise<boolean> {
+  try {
+    const length = await contents.executeJavaScript(
+      'document.documentElement ? document.documentElement.textContent.trim().length : 0',
+      true,
+    );
+    return typeof length === 'number' && length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Replaces the frame's document through the DevTools protocol.
  * `Page.setDocumentContent` keeps the frame URL, which is why the address bar
@@ -3893,6 +3906,10 @@ export class BrowserController {
       this.memoryManager.updateTab(tab.id, { loading: false });
       this.updateNavigationState(tab);
       this.emitSnapshot();
+      // The document is only stable once loading stops. Replacing it earlier
+      // races the parser and can leave a blank frame, so the XSLT layer waits
+      // for this event instead of `dom-ready`.
+      void this.applyXsltSupport(tab);
     });
     const clearCapturedMedia = () => {
       this.capturedMediaStreams.delete(contents.id);
@@ -3926,7 +3943,7 @@ export class BrowserController {
       siteFontMonitor.clear(contents.id);
       void this.clearFontCompatibility(tab);
     });
-    contents.on('dom-ready', () => { void this.applyXsltSupport(tab); });
+
     (contents as unknown as { on(event: 'console-message', listener: (event: Electron.Event, ...rest: unknown[]) => void): void })
       .on('console-message', (_event: Electron.Event, ...rest: unknown[]) => {
         // Electron has shipped two console-message signatures; support both.
@@ -4868,6 +4885,7 @@ export class BrowserController {
       // protocol call replaces the frame's document while the address bar keeps
       // the real URL — exactly what Chromium's removed XSLT flow did.
       let applied = await replaceDocumentViaDebugger(contents, outcome.html);
+      if (applied) applied = await renderedDocument(contents);
       if (!applied) {
         try {
           const result = await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltApplyScript(outcome.html, { notice: false }) }], false);
