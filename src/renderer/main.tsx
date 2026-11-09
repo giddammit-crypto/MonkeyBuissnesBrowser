@@ -82,6 +82,7 @@ import { getGoogleAuthNotice, getSiteKey, normalizePermissionOrigin, normalizeSi
 import { normalizeNewTabBackground } from "../shared/background";
 import { cleanTrackingLink } from "../shared/cleanLink";
 import { formatOmniboxAddress } from "../shared/addressDisplay";
+import { parseOmniboxInput } from "../shared/omnibox";
 import { applyTabStripWheel, nextTabIndex, wheelCycleDirection } from "./tabStripScroll";
 import { getOmniboxSuggestions } from "../shared/omniboxSuggestions";
 import logoLight from "./assets/soul/logo-light.png";
@@ -372,6 +373,29 @@ function App(): React.JSX.Element {
   const addressRef = useRef<HTMLInputElement>(null);
   const originalAddressRef = useRef<string>("");
   const omniboxJustFocusedRef = useRef(false);
+  const blurTimeoutRef = useRef<number | null>(null);
+  const pendingNavigationUrlRef = useRef<string | null>(null);
+
+  const selectAllOmnibox = useCallback(() => {
+    if (addressRef.current && document.activeElement === addressRef.current) {
+      addressRef.current.select();
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (blurTimeoutRef.current) window.clearTimeout(blurTimeoutRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (editingAddress && omniboxJustFocusedRef.current) {
+      requestAnimationFrame(() => {
+        selectAllOmnibox();
+      });
+    }
+  }, [editingAddress, selectAllOmnibox]);
+
   const suggestionsListRef = useRef<HTMLDivElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
   const [optimisticTabId, setOptimisticTabId] = useState<string | null>(null);
@@ -629,10 +653,19 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (!editingAddress) {
       const url = currentTab?.isInternal ? "" : (currentTab?.url ?? "");
+      if (pendingNavigationUrlRef.current) {
+        if (url === pendingNavigationUrlRef.current || currentTab?.isLoading === false) {
+          pendingNavigationUrlRef.current = null;
+        } else {
+          setAddress(pendingNavigationUrlRef.current);
+          originalAddressRef.current = pendingNavigationUrlRef.current;
+          return;
+        }
+      }
       setAddress(url);
       originalAddressRef.current = url;
     }
-  }, [currentTab?.id, currentTab?.url, currentTab?.isInternal, editingAddress]);
+  }, [currentTab?.id, currentTab?.url, currentTab?.isLoading, currentTab?.isInternal, editingAddress]);
   useEffect(() => {
     if (!currentTab || currentTab.isPrivate || currentTab.isInternal || !currentTab.url) {
       setSiteCredentials([]);
@@ -653,7 +686,10 @@ function App(): React.JSX.Element {
   }, [currentTab?.id, currentTab?.url, currentTab?.isPrivate, currentTab?.isInternal]);
   useEffect(() => {
     const previous = previousTabId.current;
-    if (previous && previous !== currentTab?.id) run(window.browserApi.stopFindInPage(previous));
+    if (previous && previous !== currentTab?.id) {
+      run(window.browserApi.stopFindInPage(previous));
+      pendingNavigationUrlRef.current = null;
+    }
     previousTabId.current = currentTab?.id;
     setEditingAddress(false);
     const url = currentTab?.isInternal ? "" : (currentTab?.url ?? "");
@@ -789,9 +825,22 @@ function App(): React.JSX.Element {
   };
   const navigate = (value: string) => {
     if (!currentTab) return;
+    if (blurTimeoutRef.current) {
+      window.clearTimeout(blurTimeoutRef.current);
+      blurTimeoutRef.current = null;
+    }
     setPanel("home");
     setPopover(null);
     setEditingAddress(false);
+    setOmniboxQuery("");
+    setSelectedSuggestionIndex(-1);
+
+    const parsed = parseOmniboxInput(value, snapshot?.settings.searchEngine);
+    const destUrl = parsed.kind === "url" ? parsed.url : (parsed.kind === "search" ? parsed.url : value);
+    pendingNavigationUrlRef.current = destUrl;
+    setAddress(destUrl);
+    originalAddressRef.current = destUrl;
+
     run(window.browserApi.navigate(currentTab.id, value));
   };
   const action = (value: Parameters<typeof window.browserApi.tabAction>[1]) => {
@@ -979,9 +1028,12 @@ function App(): React.JSX.Element {
         if (currentTab) action("zoom-reset");
       } else if ((modifier && isKey("l", "KeyL", "д")) || key === "f6" || (event.altKey && !modifier && !event.shiftKey && (key === "d" || key === "в" || code === "KeyD"))) {
         event.preventDefault();
+        omniboxJustFocusedRef.current = true;
         setEditingAddress(true);
         addressRef.current?.focus();
-        addressRef.current?.select();
+        requestAnimationFrame(() => {
+          selectAllOmnibox();
+        });
       } else if (modifier && !event.shiftKey && !event.altKey && /^[1-9]$/.test(key) && snapshot) {
         event.preventDefault();
         const visible = snapshot.tabs
@@ -1217,28 +1269,43 @@ function App(): React.JSX.Element {
               setOmniboxQuery(val);
               setSelectedSuggestionIndex(-1);
             }}
-            onFocus={(event) => {
+            onFocus={() => {
+              if (blurTimeoutRef.current) {
+                window.clearTimeout(blurTimeoutRef.current);
+                blurTimeoutRef.current = null;
+              }
               setEditingAddress(true);
               originalAddressRef.current = address;
-              setOmniboxQuery(address);
+              // Chrome parity: do not search for the existing URL on initial focus.
+              // Suggestions should only appear when the user modifies text or presses Down.
+              setOmniboxQuery("");
               setSelectedSuggestionIndex(-1);
               omniboxJustFocusedRef.current = true;
-              event.currentTarget.select();
+              requestAnimationFrame(() => {
+                selectAllOmnibox();
+              });
             }}
-            onMouseUp={(event) => {
+            onMouseUp={() => {
               if (omniboxJustFocusedRef.current) {
                 omniboxJustFocusedRef.current = false;
-                event.preventDefault();
+                // Focus-click selects all text (Chrome parity)
+                selectAllOmnibox();
               }
             }}
             onBlur={(event) => {
               omniboxJustFocusedRef.current = false;
               const related = event.relatedTarget as HTMLElement | null;
-              // Suggestion rows activate on mousedown and keep the focus, so a real
-              // blur always means "done editing" — no 200 ms guesswork needed.
               if (related?.closest(".omnibox, .omnibox-suggestions-dropdown")) return;
-              setEditingAddress(false);
-              setSelectedSuggestionIndex(-1);
+              if (blurTimeoutRef.current) {
+                window.clearTimeout(blurTimeoutRef.current);
+              }
+              blurTimeoutRef.current = window.setTimeout(() => {
+                if (document.activeElement !== addressRef.current) {
+                  setEditingAddress(false);
+                  setSelectedSuggestionIndex(-1);
+                  setOmniboxQuery("");
+                }
+              }, 160);
             }}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) {
@@ -1277,26 +1344,31 @@ function App(): React.JSX.Element {
                 }
                 return;
               }
-              if (omniboxSuggestions.length > 0) {
-                if (event.key === "ArrowDown") {
+              if (event.key === "ArrowDown") {
+                if (omniboxSuggestions.length === 0) {
                   event.preventDefault();
-                  const count = omniboxSuggestions.length;
-                  const next =
-                    selectedSuggestionIndex < count - 1
-                      ? selectedSuggestionIndex + 1
-                      : -1;
-                  setSelectedSuggestionIndex(next);
-                  if (next === -1) {
-                    setAddress(omniboxQuery || originalAddressRef.current);
-                  } else {
-                    const item = omniboxSuggestions[next];
-                    const preview =
-                      item.kind === "search" ? (omniboxQuery || originalAddressRef.current) : item.url;
-                    setAddress(preview);
-                  }
+                  setOmniboxQuery(address || " ");
                   return;
                 }
-                if (event.key === "ArrowUp") {
+                event.preventDefault();
+                const count = omniboxSuggestions.length;
+                const next =
+                  selectedSuggestionIndex < count - 1
+                    ? selectedSuggestionIndex + 1
+                    : -1;
+                setSelectedSuggestionIndex(next);
+                if (next === -1) {
+                  setAddress(omniboxQuery || originalAddressRef.current);
+                } else {
+                  const item = omniboxSuggestions[next];
+                  const preview =
+                    item.kind === "search" ? (omniboxQuery || originalAddressRef.current) : item.url;
+                  setAddress(preview);
+                }
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                if (omniboxSuggestions.length > 0) {
                   event.preventDefault();
                   const count = omniboxSuggestions.length;
                   const next =
@@ -1314,50 +1386,44 @@ function App(): React.JSX.Element {
                   }
                   return;
                 }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  if (selectedSuggestionIndex !== -1) {
-                    setAddress(omniboxQuery);
-                    setSelectedSuggestionIndex(-1);
-                    return;
-                  }
-                  if (address !== originalAddressRef.current) {
-                    setAddress(originalAddressRef.current);
-                    setOmniboxQuery("");
-                    setSelectedSuggestionIndex(-1);
-                    return;
-                  }
-                  setAddress(originalAddressRef.current);
-                  setEditingAddress(false);
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                if (selectedSuggestionIndex !== -1) {
+                  setAddress(omniboxQuery);
                   setSelectedSuggestionIndex(-1);
-                  addressRef.current?.blur();
                   return;
                 }
-                if (event.key === "Enter") {
-                  if (
-                    selectedSuggestionIndex >= 0 &&
-                    selectedSuggestionIndex < omniboxSuggestions.length
-                  ) {
-                    event.preventDefault();
-                    const target = omniboxSuggestions[selectedSuggestionIndex];
-                    if (target.kind === "tab" && target.tabId) {
-                      activateTab(target.tabId);
-                    } else {
-                      navigate(target.url);
-                    }
-                    setEditingAddress(false);
-                    setSelectedSuggestionIndex(-1);
-                    addressRef.current?.blur();
-                    return;
-                  }
+                if (omniboxQuery !== "" || address !== originalAddressRef.current) {
+                  setAddress(originalAddressRef.current);
+                  setOmniboxQuery("");
+                  setSelectedSuggestionIndex(-1);
+                  selectAllOmnibox();
+                  return;
                 }
-              } else if (event.key === "Escape") {
-                event.preventDefault();
                 setAddress(originalAddressRef.current);
                 setEditingAddress(false);
                 setSelectedSuggestionIndex(-1);
                 addressRef.current?.blur();
                 return;
+              }
+              if (event.key === "Enter") {
+                if (
+                  selectedSuggestionIndex >= 0 &&
+                  selectedSuggestionIndex < omniboxSuggestions.length
+                ) {
+                  event.preventDefault();
+                  const target = omniboxSuggestions[selectedSuggestionIndex];
+                  if (target.kind === "tab" && target.tabId) {
+                    activateTab(target.tabId);
+                  } else {
+                    navigate(target.url);
+                  }
+                  setEditingAddress(false);
+                  setSelectedSuggestionIndex(-1);
+                  addressRef.current?.blur();
+                  return;
+                }
               }
             }}
             placeholder="Поиск или адрес страницы"
@@ -1377,6 +1443,10 @@ function App(): React.JSX.Element {
                 e.preventDefault();
               }}
               onClick={() => {
+                if (blurTimeoutRef.current) {
+                  window.clearTimeout(blurTimeoutRef.current);
+                  blurTimeoutRef.current = null;
+                }
                 setAddress("");
                 originalAddressRef.current = "";
                 setOmniboxQuery("");
@@ -1561,6 +1631,10 @@ function App(): React.JSX.Element {
                   className={`omnibox-suggestion-item ${index === selectedSuggestionIndex ? "selected" : ""}`}
                   onMouseDown={(e) => {
                     e.preventDefault();
+                    if (blurTimeoutRef.current) {
+                      window.clearTimeout(blurTimeoutRef.current);
+                      blurTimeoutRef.current = null;
+                    }
                     if (item.kind === "tab" && item.tabId) {
                       activateTab(item.tabId);
                     } else {
@@ -1568,6 +1642,7 @@ function App(): React.JSX.Element {
                     }
                     setEditingAddress(false);
                     setSelectedSuggestionIndex(-1);
+                    setOmniboxQuery("");
                   }}
                 >
                   <span className="omnibox-suggestion-icon">
@@ -1605,9 +1680,14 @@ function App(): React.JSX.Element {
                       onMouseDown={(e) => {
                         e.stopPropagation();
                         e.preventDefault();
+                        if (blurTimeoutRef.current) {
+                          window.clearTimeout(blurTimeoutRef.current);
+                          blurTimeoutRef.current = null;
+                        }
                         if (item.tabId) activateTab(item.tabId);
                         setEditingAddress(false);
                         setSelectedSuggestionIndex(-1);
+                        setOmniboxQuery("");
                       }}
                     >
                       Переключиться

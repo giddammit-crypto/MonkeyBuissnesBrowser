@@ -651,11 +651,17 @@ select {
   border-bottom: 1px solid var(--border);
   z-index: 20;
 }
-.navigation-actions,
+.navigation-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
 .toolbar-actions {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
 }
 .icon-button {
   width: 34px;
@@ -3414,6 +3420,9 @@ select {
   }
   .mode-chip {
     padding: 0 8px;
+  }
+  .toolbar-actions .browsec-btn-status {
+    display: none;
   }
   .import-controls {
     grid-template-columns: 1fr;
@@ -7837,6 +7846,20 @@ select:focus-visible {
 .omnibox-security-button:hover {
   background: var(--surface-subtle);
   color: var(--accent);
+}
+
+@media (max-width: 980px) {
+  .toolbar-actions .google-btn-label {
+    display: none;
+  }
+  .toolbar-actions .mode-chip {
+    padding: 0 6px;
+    font-size: 11px;
+  }
+  .toolbar-actions .browsec-toolbar-btn {
+    padding-inline: 6px;
+    gap: 4px;
+  }
 }
 
 /* Later branded button rules must not restore their desktop padding inside
