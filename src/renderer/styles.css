@@ -397,9 +397,12 @@ select {
   display: flex;
   gap: 5px;
   min-width: 0;
+  /* Fill whatever the arrows and the strip actions leave, so tabs adapt to the
+     window width instead of stopping at a hard-coded reserve. */
+  flex: 1 1 auto;
   overflow-x: auto;
   scrollbar-width: none;
-  max-width: calc(100% - 90px);
+  overscroll-behavior-x: contain;
 }
 .tab-list::-webkit-scrollbar {
   display: none;
@@ -3497,6 +3500,10 @@ select {
     padding-left: 8px;
     padding-right: 8px;
     gap: 3px;
+  }
+
+  .tab-container {
+    min-width: 64px;
   }
 
   .toolbar {
