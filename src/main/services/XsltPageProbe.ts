@@ -65,9 +65,14 @@ const SOUL_XSLT_BADGE_SOURCE = `
   }`;
 
 /**
- * Rewrites the current XML document with the transform result.
- * `document.open()` switches the document to HTML, so the stylesheet output is
- * parsed by Chromium's HTML parser while the address bar keeps the real URL.
+ * Puts the transform result into the current document without touching the URL.
+ *
+ * `document.write` is refused by specification inside an XML document, and a
+ * `text/plain` viewer keeps its own parser. So:
+ *  - HTML documents keep the classic `document.open/write/close` path;
+ *  - XML documents get their root replaced with imported XHTML nodes, which
+ *    Chromium renders with HTML semantics (this is what `application/xhtml+xml`
+ *    does) while `location.href` stays the XML address.
  */
 export function buildXsltApplyScript(html: string, options: { notice: boolean }): string {
   const payload = JSON.stringify(html);
@@ -76,9 +81,20 @@ export function buildXsltApplyScript(html: string, options: { notice: boolean })
   ${SOUL_XSLT_BADGE_SOURCE}
   const html = ${payload};
   try {
-    document.open();
-    document.write(html);
-    document.close();
+    const type = String(document.contentType || '').toLowerCase();
+    const isXml = type.includes('xml');
+    if (isXml) {
+      const parsed = new DOMParser().parseFromString(html, 'text/html');
+      const root = parsed.documentElement;
+      if (!root) return { applied: false, message: 'пустой результат преобразования' };
+      const imported = document.importNode(root, true);
+      if (document.documentElement) document.replaceChild(imported, document.documentElement);
+      else document.appendChild(imported);
+    } else {
+      document.open();
+      document.write(html);
+      document.close();
+    }
   } catch (error) {
     return { applied: false, message: String(error && error.message || error) };
   }
@@ -123,7 +139,7 @@ const escapeHtml = (value: string): string =>
 export function buildXsltErrorDocument(message: string, xmlSource = ''): string {
   const reason = escapeHtml(message.slice(0, 600));
   const source = escapeHtml(xmlSource.slice(0, 200_000));
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>XSLT: ошибка преобразования</title>
+  return `<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" lang="ru"><head><meta charset="utf-8" /><title>XSLT: ошибка преобразования</title>
 <style>
   :root { color-scheme: dark light; }
   body { margin: 0; font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; background: #0f1115; color: #e8eaed; }

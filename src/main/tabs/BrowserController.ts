@@ -4896,40 +4896,47 @@ export class BrowserController {
     debugXslt(`transform status=${outcome.status} html=${'html' in outcome ? outcome.html.length : 0} message=${'message' in outcome ? outcome.message.slice(0, 120) : ''}`);
     if (this.disposed || contents.isDestroyed() || this.tabs.get(tab.id) !== tab || tab.view?.webContents !== contents) return;
     if (outcome.status === 'ok') {
-      // CDP first: `document.write` is refused inside an XML document by
-      // specification and a text/plain page keeps its plain-text parser. The
-      // protocol call replaces the frame's document while the address bar keeps
-      // the real URL — exactly what Chromium's removed XSLT flow did.
-      let applied = await replaceDocumentViaDebugger(contents, outcome.html);
-      if (applied) applied = await renderedDocument(contents);
-      if (!applied) {
-        try {
-          const result = await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltApplyScript(outcome.html, { notice: false }) }], false);
-          applied = result?.applied === true;
-        } catch { applied = false; }
-      }
+      const applied = await this.applyTransformedDocument(contents, outcome.html);
       debugXslt(`apply ok=${applied}`);
-      if (applied) {
-        await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltNoticeScript() }], false).catch(() => undefined);
-      }
       if (!applied) {
-        await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltErrorScript('Не удалось показать результат преобразования в этой вкладке.') }], false).catch(() => undefined);
+        await this.showXsltFailure(contents, 'Не удалось показать результат преобразования в этой вкладке.', source);
         return;
       }
+      await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltNoticeScript() }], false).catch(() => undefined);
       if (outcome.title && outcome.title.trim()) {
         tab.title = outcome.title.trim().slice(0, 200);
         this.emitSnapshot();
       }
       return;
     }
-    // Render the reason as a document of its own: injecting into a plain-text
-    // viewer is unreliable and would leave the user with unexplained raw XML.
-    const errorDocument = buildXsltErrorDocument(outcome.message, source);
-    const errorApplied = await replaceDocumentViaDebugger(contents, errorDocument);
-    debugXslt(`error page applied=${errorApplied} length=${errorDocument.length}`);
-    if (!errorApplied) {
-      await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltErrorScript(outcome.message) }], false).catch(() => undefined);
+    await this.showXsltFailure(contents, outcome.message, source);
+  }
+
+  /**
+   * Replaces the visible document with `html` while keeping the tab URL.
+   * The in-page script covers both HTML and XML documents; the DevTools
+   * protocol is the fallback for frames where script injection is refused.
+   */
+  private async applyTransformedDocument(contents: Electron.WebContents, html: string): Promise<boolean> {
+    try {
+      const result = await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltApplyScript(html, { notice: false }) }], false);
+      if (result?.applied === true && await renderedDocument(contents)) return true;
+      debugXslt(`apply script rejected: ${result?.message ?? 'no result'}`);
+    } catch (error) {
+      debugXslt(`apply script threw: ${error instanceof Error ? error.message : String(error)}`);
     }
+    if (contents.isDestroyed()) return false;
+    if (!(await replaceDocumentViaDebugger(contents, html))) return false;
+    return renderedDocument(contents);
+  }
+
+  /** A failed transform is explained on its own page instead of staying silent. */
+  private async showXsltFailure(contents: Electron.WebContents, message: string, source: string): Promise<void> {
+    const errorHtml = buildXsltErrorDocument(message, source);
+    const applied = await this.applyTransformedDocument(contents, errorHtml);
+    debugXslt(`error page applied=${applied} message=${message.slice(0, 120)}`);
+    if (applied) return;
+    await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltErrorScript(message) }], false).catch(() => undefined);
   }
 
   private async clearFontCompatibility(tab: TabRecord): Promise<void> {
