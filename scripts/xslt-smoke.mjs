@@ -135,8 +135,17 @@ try {
   const forbiddenUrl = `${site}/forbidden.xml`;
   const forbiddenTab = await invoke('createTab', { url: forbiddenUrl });
   await expect.poll(async () => (await invoke('getSnapshot')).tabs.find(item => item.id === forbiddenTab.id)).toMatchObject({ isLoading: false });
-  await expect.poll(async () => read(forbiddenUrl, `document.querySelector('[data-soul-xslt="error"]')?.textContent || ''`), { timeout: 15000 })
-    .toContain('document()');
+  // The reason is rendered either as its own error document or as an injected
+  // bar; both must name the rejected function instead of failing silently.
+  await expect.poll(async () => {
+    const state = await read(forbiddenUrl, `({
+      bar: document.querySelector('[data-soul-xslt="error"]')?.textContent || '',
+      title: document.title || '',
+      text: (document.body?.innerText || '').slice(0, 400),
+    })`);
+    const blob = `${state?.bar || ''} ${state?.title || ''} ${state?.text || ''}`;
+    return blob.includes('document()') ? 'document()' : JSON.stringify(state);
+  }, { timeout: 20000 }).toBe('document()');
 
   // The setting disables the whole layer.
   await invoke('updateSettings', { xsltSupport: false });

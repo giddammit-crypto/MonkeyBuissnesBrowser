@@ -110,3 +110,31 @@ export function buildXsltErrorScript(message: string): string {
   return true;
 })()`;
 }
+
+const escapeHtml = (value: string): string =>
+  value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/**
+ * A failed transform must be visible. Injecting a node into a text-viewer
+ * document is fragile (the plain-text wrapper can replace the content while the
+ * parser is still working), so the reason is rendered as a real document with
+ * the original URL kept by the caller.
+ */
+export function buildXsltErrorDocument(message: string, xmlSource = ''): string {
+  const reason = escapeHtml(message.slice(0, 600));
+  const source = escapeHtml(xmlSource.slice(0, 200_000));
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>XSLT: ошибка преобразования</title>
+<style>
+  :root { color-scheme: dark light; }
+  body { margin: 0; font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; background: #0f1115; color: #e8eaed; }
+  header { padding: 14px 18px; background: #7c2d12; border-bottom: 1px solid #ea580c; }
+  header strong { display: block; font-size: 15px; margin-bottom: 4px; }
+  header code { color: #ffe4d5; word-break: break-word; }
+  p.hint { margin: 14px 18px 0; color: #b9bec7; }
+  pre { margin: 14px 18px 24px; padding: 14px; overflow: auto; background: #171a21; border: 1px solid #262b34; border-radius: 10px; font-size: 12.5px; }
+</style></head><body>
+<header><strong>Не удалось преобразовать XML через XSLT</strong><code>${reason}</code></header>
+<p class="hint">Показан исходный документ. Подробности — в панели «Шрифты страницы» → XSLT или в консоли.</p>
+<pre>${source}</pre>
+</body></html>`;
+}

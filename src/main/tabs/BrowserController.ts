@@ -8,7 +8,7 @@ import {
   XsltSupport, isXmlContentType, parseXmlStylesheetInstructionBody, parseXmlStylesheetInstructions, supportsXsltContentType,
   XSLT_DOCUMENT_LIMIT, XSLT_STYLESHEET_LIMIT, type XsltFetcher,
 } from '../../services/xslt/XsltSupport';
-import { XSLT_PAGE_PROBE, buildXsltApplyScript, buildXsltErrorScript, buildXsltNoticeScript, sanitizeXsltProbeResult } from '../services/XsltPageProbe';
+import { XSLT_PAGE_PROBE, buildXsltApplyScript, buildXsltErrorDocument, buildXsltErrorScript, buildXsltNoticeScript, sanitizeXsltProbeResult } from '../services/XsltPageProbe';
 import { requestedContextWindow } from '../../shared/voodooContext';
 import { VoodooModelCatalog } from '../services/VoodooModelCatalog';
 import path from 'node:path';
@@ -4887,7 +4887,12 @@ export class BrowserController {
       }
       return;
     }
-    await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltErrorScript(outcome.message) }], false).catch(() => undefined);
+    // Render the reason as a document of its own: injecting into a plain-text
+    // viewer is unreliable and would leave the user with unexplained raw XML.
+    const errorDocument = buildXsltErrorDocument(outcome.message, source);
+    if (!(await replaceDocumentViaDebugger(contents, errorDocument))) {
+      await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltErrorScript(outcome.message) }], false).catch(() => undefined);
+    }
   }
 
   private async clearFontCompatibility(tab: TabRecord): Promise<void> {
