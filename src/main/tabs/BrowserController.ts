@@ -164,6 +164,18 @@ export interface CreateWindowOptions {
 }
 
 
+/**
+ * Test-only tracing for the XSLT layer. Enabled with `SOUL_XSLT_DEBUG=<file>`
+ * by `scripts/xslt-smoke.mjs`; it stays inert in a normal run.
+ */
+function debugXslt(message: string): void {
+  const target = process.env.SOUL_XSLT_DEBUG;
+  if (!target) return;
+  try {
+    require('node:fs').appendFileSync(target, `${new Date().toISOString()} ${message}\n`);
+  } catch { /* diagnostics must never break browsing */ }
+}
+
 /** Rejects a replacement that left an empty frame behind. */
 async function renderedDocument(contents: Electron.WebContents): Promise<boolean> {
   try {
@@ -4866,6 +4878,7 @@ export class BrowserController {
         instructions = parseXmlStylesheetInstructions(fetched);
       }
     }
+    debugXslt(`probe type=${probe.contentType} xml=${probe.xml.length} instructions=${probe.instructions.length} | source=${source.length} parsed=${instructions.length}`);
     if (!source || instructions.length === 0) {
       BrowserController.xsltApplied.delete(contents.id);
       return;
@@ -4878,6 +4891,7 @@ export class BrowserController {
       stylesheetHref: primary.href,
       title: primary.title,
     });
+    debugXslt(`transform status=${outcome.status} html=${'html' in outcome ? outcome.html.length : 0} message=${'message' in outcome ? outcome.message.slice(0, 120) : ''}`);
     if (this.disposed || contents.isDestroyed() || this.tabs.get(tab.id) !== tab || tab.view?.webContents !== contents) return;
     if (outcome.status === 'ok') {
       // CDP first: `document.write` is refused inside an XML document by
@@ -4892,6 +4906,7 @@ export class BrowserController {
           applied = result?.applied === true;
         } catch { applied = false; }
       }
+      debugXslt(`apply ok=${applied}`);
       if (applied) {
         await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltNoticeScript() }], false).catch(() => undefined);
       }
@@ -4908,7 +4923,9 @@ export class BrowserController {
     // Render the reason as a document of its own: injecting into a plain-text
     // viewer is unreliable and would leave the user with unexplained raw XML.
     const errorDocument = buildXsltErrorDocument(outcome.message, source);
-    if (!(await replaceDocumentViaDebugger(contents, errorDocument))) {
+    const errorApplied = await replaceDocumentViaDebugger(contents, errorDocument);
+    debugXslt(`error page applied=${errorApplied} length=${errorDocument.length}`);
+    if (!errorApplied) {
       await contents.executeJavaScriptInIsolatedWorld(999, [{ code: buildXsltErrorScript(outcome.message) }], false).catch(() => undefined);
     }
   }

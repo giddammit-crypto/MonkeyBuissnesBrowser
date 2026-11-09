@@ -10,6 +10,11 @@ import { _electron as electron, expect } from '@playwright/test';
 // must be rendered through the built-in XSLT 1.0 engine, exactly like Chromium
 // did before XSLT was removed (Chrome 158).
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'soul-xslt-'));
+// The layer traces its decisions here; the file is printed when a check fails.
+const debugLog = path.join(profile, 'xslt-debug.log');
+const readDebugLog = () => {
+  try { return fs.readFileSync(debugLog, 'utf8').trim() || '(empty)'; } catch { return '(missing)'; }
+};
 const XSL = 'http://www.w3.org/1999/XSL/Transform';
 const stylesheet = `<?xml version="1.0" encoding="UTF-8"?>
 <xsl:stylesheet version="1.0" xmlns:xsl="${XSL}">
@@ -80,7 +85,7 @@ try {
     ...(process.platform === 'linux' ? ['--ozone-platform=headless', '--disable-gpu', '--disable-dev-shm-usage'] : []),
     ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []),
     '--no-proxy-server', `--user-data-dir=${profile}`, '.',
-  ] });
+  ], env: { ...process.env, SOUL_XSLT_DEBUG: debugLog } });
   const shell = await app.firstWindow();
   await shell.waitForSelector('.app-shell');
   const invoke = (method, ...args) => shell.evaluate(({ method, args }) => window.browserApi[method](...args), { method, args });
@@ -144,7 +149,7 @@ try {
       text: (document.body?.innerText || '').slice(0, 400),
     })`);
     const blob = `${state?.bar || ''} ${state?.title || ''} ${state?.text || ''}`;
-    return blob.includes('document()') ? 'document()' : JSON.stringify(state);
+    return blob.includes('document()') ? 'document()' : `${JSON.stringify(state)}\n--- xslt trace ---\n${readDebugLog()}`;
   }, { timeout: 20000 }).toBe('document()');
 
   // The setting disables the whole layer.
