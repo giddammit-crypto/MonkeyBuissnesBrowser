@@ -33,6 +33,7 @@ export default function BroomIcon({
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
+      data-soul-icon="broom"
       role={title ? 'img' : undefined}
       aria-hidden={title ? undefined : true}
       focusable="false"
