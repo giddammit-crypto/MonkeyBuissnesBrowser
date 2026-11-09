@@ -125,7 +125,7 @@ try {
   await cleanerButton.click();
   await cleaner.getByRole('button', { name: 'Очистить следы', exact: true }).click();
   const overlay = cleaner.locator('.click-clean-scanning-overlay');
-  await expect(overlay.locator('svg.lucide-broom')).toHaveCount(1);
+  await expect(overlay.locator('svg[data-soul-icon="broom"]')).toHaveCount(1);
   await shell.keyboard.press('Escape');
   await expect(cleaner).toBeVisible();
   await app.evaluate(() => globalThis.__releaseClean());
