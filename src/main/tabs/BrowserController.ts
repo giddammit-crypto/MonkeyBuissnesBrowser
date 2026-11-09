@@ -5,7 +5,7 @@ import { inspectPageFonts } from '../services/PageFontInspector';
 import { siteFontMonitor } from '../services/SiteFontMonitor';
 import { buildFontSubstitutionCss, fontSubstitutionFor, relaxFontResponseHeaders } from '../../shared/fontCompat';
 import {
-  XsltSupport, isXmlContentType, parseXmlStylesheetInstructionBody, parseXmlStylesheetInstructions, supportsXsltContentType,
+  XsltSupport, parseXmlStylesheetInstructionBody, parseXmlStylesheetInstructions, supportsXsltContentType,
   XSLT_DOCUMENT_LIMIT, XSLT_STYLESHEET_LIMIT, type XsltFetcher,
 } from '../../services/xslt/XsltSupport';
 import { XSLT_PAGE_PROBE, buildXsltApplyScript, buildXsltErrorDocument, buildXsltErrorScript, buildXsltNoticeScript, sanitizeXsltProbeResult } from '../services/XsltPageProbe';
@@ -4871,7 +4871,10 @@ export class BrowserController {
     // `application/rss+xml` and friends are also XML, yet Chromium sometimes
     // renders them as plain text. The DOM then has no prolog to read, so the
     // response source is fetched once through the same session (cookies kept).
-    if (instructions.length === 0 && !isXmlContentType(probe.contentType) && supportsXsltContentType(info.contentType)) {
+    // Chromium strips `xml-stylesheet` instructions from the DOM (it keeps them
+    // for its own, now removed, XSLT pipeline), so a missing prolog in the
+    // serialized document says nothing. The response source is authoritative.
+    if (instructions.length === 0 && supportsXsltContentType(info.contentType)) {
       const fetched = await this.fetchXmlSource(info.url, Boolean(tab.isPrivate));
       if (fetched) {
         source = fetched;
@@ -4879,10 +4882,9 @@ export class BrowserController {
       }
     }
     debugXslt(`probe type=${probe.contentType} xml=${probe.xml.length} instructions=${probe.instructions.length} | source=${source.length} parsed=${instructions.length}`);
-    if (!source || instructions.length === 0) {
-      BrowserController.xsltApplied.delete(contents.id);
-      return;
-    }
+    // A document without a stylesheet is a definitive answer: keep the marker so
+    // later load events do not refetch it. Only an *exception* may retry.
+    if (!source || instructions.length === 0) return;
     if (this.disposed || contents.isDestroyed() || this.tabs.get(tab.id) !== tab) return;
     const primary = instructions.find(instruction => !instruction.alternate) ?? instructions[0];
     const outcome = await this.xsltService(Boolean(tab.isPrivate)).transform({
