@@ -224,6 +224,8 @@ function normalizeSettings(value: unknown): BrowserSettings {
     adBlockExceptions: normalizeSiteExceptions(raw.adBlockExceptions),
     blockThirdPartyCookies: typeof raw.blockThirdPartyCookies === 'boolean' ? raw.blockThirdPartyCookies : true,
     googleSignInCompatibility: typeof raw.googleSignInCompatibility === 'boolean' ? raw.googleSignInCompatibility : true,
+    fontCompatibility: typeof raw.fontCompatibility === 'boolean' ? raw.fontCompatibility : true,
+    xsltSupport: typeof raw.xsltSupport === 'boolean' ? raw.xsltSupport : true,
     thirdPartyCookieExceptions: normalizeCookieExceptions(raw.thirdPartyCookieExceptions),
     restoreSession: typeof raw.restoreSession === 'boolean' ? raw.restoreSession : true,
     readerSettings: normalizeReaderSettings(raw.readerSettings),

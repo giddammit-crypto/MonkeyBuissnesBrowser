@@ -53,14 +53,14 @@ try {
   await invoke('activateTab', tabs[0].id);
   await expect(shell.locator('[data-omnibox]')).toHaveValue(tabs[0].url);
   const cleanerButton = shell.getByRole('button', { name: 'Click & Clean', exact: true });
-  await expect(cleanerButton.locator('svg.lucide-broom')).toHaveCount(1);
+  await expect(cleanerButton.locator('svg[data-soul-icon="broom"]')).toHaveCount(1);
   await cleanerButton.click();
   const cleaner = shell.getByRole('dialog', { name: 'Click & Clean Очистка следов' });
   await expect(cleaner).toBeVisible();
   await shell.keyboard.press('Escape');
   await shell.locator('button[title="Меню браузера"]').click();
   const cleanMenu = shell.getByRole('button', { name: /Click & Clean.*Ctrl\+Shift\+Del/ });
-  await expect(cleanMenu.locator('svg.lucide-broom')).toHaveCount(1);
+  await expect(cleanMenu.locator('svg[data-soul-icon="broom"]')).toHaveCount(1);
   await shell.getByRole('button', { name: 'Копировать ссылку без рекламных меток', exact: true }).click();
   await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(`${base}/normal?item=42#details`);
   console.log('PASS broom toolbar/menu icons and native clipboard copy preserve functional URL parameters/hash');
@@ -125,7 +125,7 @@ try {
   await cleanerButton.click();
   await cleaner.getByRole('button', { name: 'Очистить следы', exact: true }).click();
   const overlay = cleaner.locator('.click-clean-scanning-overlay');
-  await expect(overlay.locator('svg.lucide-broom')).toHaveCount(1);
+  await expect(overlay.locator('svg[data-soul-icon="broom"]')).toHaveCount(1);
   await shell.keyboard.press('Escape');
   await expect(cleaner).toBeVisible();
   await app.evaluate(() => globalThis.__releaseClean());

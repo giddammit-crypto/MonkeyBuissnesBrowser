@@ -51,3 +51,15 @@ describe('Chrome Zoom Utility', () => {
     expect(getNextZoomFactor(0, 'zoom-out')).toBe(0.90);
   });
 });
+
+describe('Zoom robustness', () => {
+  it('clamps corrupt or out-of-range factors instead of jumping to the maximum', () => {
+    expect(getNextZoomFactor(Number.NaN, 'zoom-in')).toBe(1.10);
+    expect(getNextZoomFactor(Number.NaN, 'zoom-out')).toBe(0.90);
+    expect(getNextZoomFactor(0, 'zoom-in')).toBe(1.10);
+    expect(getNextZoomFactor(-2, 'zoom-out')).toBe(0.90);
+    expect(getNextZoomFactor(0.05, 'zoom-in')).toBe(0.33);
+    expect(getNextZoomFactor(42, 'zoom-in')).toBe(5.00);
+    expect(getNextZoomFactor(0.05, 'zoom-reset')).toBe(1.00);
+  });
+});
