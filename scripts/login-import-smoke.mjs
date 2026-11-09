@@ -75,7 +75,8 @@ try {
  });
  const ordinary=await invoke('createTab',{url:'https://accounts.google.com/ServiceLogin?service=youtube',isPrivate:false});
  await expect.poll(async()=>(await snapshot()).tabs.find(t=>t.id===ordinary.id)?.isLoading).toBe(false);
- await expect(shell.getByRole('textbox',{name:'Адресная строка',exact:true})).toHaveValue('https://accounts.google.com/ServiceLogin?service=youtube');
+ // The idle address bar hides the scheme (Chrome parity); the URL itself is unchanged.
+ await expect(shell.getByRole('textbox',{name:'Адресная строка',exact:true})).toHaveValue(/^(https:\/\/)?accounts\.google\.com\/ServiceLogin\?service=youtube$/);
  await expect(shell.locator('.auth-help-banner')).toHaveCount(0);
  assert.deepEqual(await app.evaluate(()=>globalThis.__openedUrls),[],'normal sign-in must stay inside the browser');
  const denied=await invoke('createTab',{url:'https://accounts.google.com/v3/signin/rejected?continue=https%3A%2F%2Fwww.youtube.com%2F',isPrivate:false});
@@ -97,7 +98,7 @@ try {
  })).toBe(Math.round(pageTop));
  await invoke('navigate',denied.id,'https://accounts.google.com/v3/signin/identifier?service=youtube');
  await expect.poll(async()=>(await snapshot()).tabs.find(t=>t.id===denied.id)?.isLoading).toBe(false);
- await expect(shell.getByRole('textbox',{name:'Адресная строка',exact:true})).toHaveValue('https://accounts.google.com/v3/signin/identifier?service=youtube');
+ await expect(shell.getByRole('textbox',{name:'Адресная строка',exact:true})).toHaveValue(/^(https:\/\/)?accounts\.google\.com\/v3\/signin\/identifier\?service=youtube$/);
  await expect(shell.locator('.auth-help-banner')).toHaveCount(0);
  await invoke('navigate',denied.id,'https://accounts.google.com/v3/signin/rejected?continue=https%3A%2F%2Fwww.youtube.com%2F');
  await expect(shell.locator('.auth-help-banner')).toBeVisible();

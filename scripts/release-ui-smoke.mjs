@@ -51,7 +51,9 @@ try {
   console.log('PASS native clean IPC rejects malformed input and removes real CacheStorage in normal/private sessions');
 
   await invoke('activateTab', tabs[0].id);
-  await expect(shell.locator('[data-omnibox]')).toHaveValue(tabs[0].url);
+  // The idle address bar hides the scheme (Chrome parity); a focused one keeps it.
+  const escapedAddress = tabs[0].url.replace(/^https?:\/\//, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await expect(shell.locator('[data-omnibox]')).toHaveValue(new RegExp(`^(?:https?://)?${escapedAddress}$`));
   const cleanerButton = shell.getByRole('button', { name: 'Click & Clean', exact: true });
   await expect(cleanerButton.locator('svg[data-soul-icon="broom"]')).toHaveCount(1);
   await cleanerButton.click();

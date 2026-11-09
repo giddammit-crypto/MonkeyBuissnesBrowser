@@ -1,37 +1,18 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import {
+  applyTabStripWheel,
+  nextTabIndex,
+  wheelCycleDirection,
+  TAB_STRIP_LINE_PIXELS,
+  TAB_STRIP_PAGE_RATIO,
+  TAB_STRIP_SHIFT_MULTIPLIER,
+} from '../../src/renderer/tabStripScroll';
 
 /**
- * Pure function model of the tab strip mouse wheel horizontal scroll handler
- * implemented in src/renderer/main.tsx (lines 2702-2719).
+ * These cases exercise the shipped tab-strip wheel logic
+ * (`src/renderer/tabStripScroll.ts`), which `TabStrip` imports at runtime, so
+ * the suite can no longer drift from the component.
  */
-export function createTabStripWheelHandler(list: {
-  scrollWidth: number;
-  clientWidth: number;
-  scrollLeft: number;
-}) {
-  return function scrollWithWheel(event: {
-    ctrlKey: boolean;
-    deltaX: number;
-    deltaY: number;
-    deltaMode: number;
-    preventDefault: () => void;
-  }): boolean {
-    if (event.ctrlKey) return false;
-    if (list.scrollWidth <= list.clientWidth) return false;
-    const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-    if (delta === 0) return false;
-    event.preventDefault();
-    const unit =
-      event.deltaMode === 1 /* DOM_DELTA_LINE */
-        ? 32
-        : event.deltaMode === 2 /* DOM_DELTA_PAGE */
-        ? list.clientWidth
-        : 1; /* DOM_DELTA_PIXEL */
-    list.scrollLeft += delta * unit;
-    return true;
-  };
-}
-
 describe('Tab Strip Horizontal Scroll with Mouse Wheel', () => {
   const DOM_DELTA_PIXEL = 0;
   const DOM_DELTA_LINE = 1;
@@ -39,6 +20,24 @@ describe('Tab Strip Horizontal Scroll with Mouse Wheel', () => {
 
   let mockList: { scrollWidth: number; clientWidth: number; scrollLeft: number };
   let preventDefaultSpy: ReturnType<typeof vi.fn>;
+
+  const wheel = (overrides: Partial<{
+    ctrlKey: boolean;
+    altKey: boolean;
+    shiftKey: boolean;
+    deltaX: number;
+    deltaY: number;
+    deltaMode: number;
+  }> = {}) => ({
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    deltaX: 0,
+    deltaY: 0,
+    deltaMode: DOM_DELTA_PIXEL,
+    preventDefault: preventDefaultSpy,
+    ...overrides,
+  });
 
   beforeEach(() => {
     mockList = {
@@ -51,14 +50,7 @@ describe('Tab Strip Horizontal Scroll with Mouse Wheel', () => {
 
   describe('Vertical wheel conversion to horizontal scroll', () => {
     it('scrolls right on downward mouse wheel scroll (deltaY > 0)', () => {
-      const handler = createTabStripWheelHandler(mockList);
-      const handled = handler({
-        ctrlKey: false,
-        deltaX: 0,
-        deltaY: 100,
-        deltaMode: DOM_DELTA_PIXEL,
-        preventDefault: preventDefaultSpy,
-      });
+      const handled = applyTabStripWheel(wheel({ deltaY: 100 }), mockList);
 
       expect(handled).toBe(true);
       expect(mockList.scrollLeft).toBe(200); // 100 + 100 * 1
@@ -66,14 +58,7 @@ describe('Tab Strip Horizontal Scroll with Mouse Wheel', () => {
     });
 
     it('scrolls left on upward mouse wheel scroll (deltaY < 0)', () => {
-      const handler = createTabStripWheelHandler(mockList);
-      const handled = handler({
-        ctrlKey: false,
-        deltaX: 0,
-        deltaY: -50,
-        deltaMode: DOM_DELTA_PIXEL,
-        preventDefault: preventDefaultSpy,
-      });
+      const handled = applyTabStripWheel(wheel({ deltaY: -50 }), mockList);
 
       expect(handled).toBe(true);
       expect(mockList.scrollLeft).toBe(50); // 100 + (-50) * 1
@@ -83,14 +68,7 @@ describe('Tab Strip Horizontal Scroll with Mouse Wheel', () => {
 
   describe('Horizontal tilt and trackpad gestures (deltaX)', () => {
     it('scrolls with deltaX when deltaX is larger than deltaY (trackpad / horizontal wheel)', () => {
-      const handler = createTabStripWheelHandler(mockList);
-      const handled = handler({
-        ctrlKey: false,
-        deltaX: 75,
-        deltaY: 10,
-        deltaMode: DOM_DELTA_PIXEL,
-        preventDefault: preventDefaultSpy,
-      });
+      const handled = applyTabStripWheel(wheel({ deltaX: 75, deltaY: 10 }), mockList);
 
       expect(handled).toBe(true);
       expect(mockList.scrollLeft).toBe(175); // 100 + 75 * 1
@@ -98,14 +76,7 @@ describe('Tab Strip Horizontal Scroll with Mouse Wheel', () => {
     });
 
     it('prioritizes deltaY when vertical movement is greater or equal to deltaX', () => {
-      const handler = createTabStripWheelHandler(mockList);
-      const handled = handler({
-        ctrlKey: false,
-        deltaX: 40,
-        deltaY: 80,
-        deltaMode: DOM_DELTA_PIXEL,
-        preventDefault: preventDefaultSpy,
-      });
+      const handled = applyTabStripWheel(wheel({ deltaX: 40, deltaY: 80 }), mockList);
 
       expect(handled).toBe(true);
       expect(mockList.scrollLeft).toBe(180); // 100 + 80
@@ -114,38 +85,22 @@ describe('Tab Strip Horizontal Scroll with Mouse Wheel', () => {
   });
 
   describe('Overflow detection and non-overflowing strip guards', () => {
-    it('does not scroll and does not prevent default when tabs fit inside strip (scrollWidth < clientWidth)', () => {
+    it('does not scroll and does not prevent default when tabs fit inside strip', () => {
       mockList.scrollWidth = 400;
-      mockList.clientWidth = 800;
       mockList.scrollLeft = 0;
 
-      const handler = createTabStripWheelHandler(mockList);
-      const handled = handler({
-        ctrlKey: false,
-        deltaX: 0,
-        deltaY: 100,
-        deltaMode: DOM_DELTA_PIXEL,
-        preventDefault: preventDefaultSpy,
-      });
+      const handled = applyTabStripWheel(wheel({ deltaY: 100 }), mockList);
 
       expect(handled).toBe(false);
       expect(mockList.scrollLeft).toBe(0);
       expect(preventDefaultSpy).not.toHaveBeenCalled();
     });
 
-    it('does not scroll when tabs exactly equal clientWidth (scrollWidth === clientWidth)', () => {
+    it('does not scroll when tabs exactly equal clientWidth', () => {
       mockList.scrollWidth = 800;
-      mockList.clientWidth = 800;
       mockList.scrollLeft = 0;
 
-      const handler = createTabStripWheelHandler(mockList);
-      const handled = handler({
-        ctrlKey: false,
-        deltaX: 0,
-        deltaY: 100,
-        deltaMode: DOM_DELTA_PIXEL,
-        preventDefault: preventDefaultSpy,
-      });
+      const handled = applyTabStripWheel(wheel({ deltaY: 100 }), mockList);
 
       expect(handled).toBe(false);
       expect(mockList.scrollLeft).toBe(0);
@@ -154,62 +109,39 @@ describe('Tab Strip Horizontal Scroll with Mouse Wheel', () => {
   });
 
   describe('Modifier keys and browser zoom protection', () => {
-    it('ignores wheel events when Ctrl key is pressed (Ctrl+Wheel is reserved for page zoom)', () => {
-      const handler = createTabStripWheelHandler(mockList);
-      const handled = handler({
-        ctrlKey: true,
-        deltaX: 0,
-        deltaY: 100,
-        deltaMode: DOM_DELTA_PIXEL,
-        preventDefault: preventDefaultSpy,
-      });
+    it('ignores wheel events when Ctrl is pressed (Ctrl+Wheel is reserved for page zoom)', () => {
+      const handled = applyTabStripWheel(wheel({ ctrlKey: true, deltaY: 100 }), mockList);
 
       expect(handled).toBe(false);
       expect(mockList.scrollLeft).toBe(100); // Unchanged
       expect(preventDefaultSpy).not.toHaveBeenCalled();
     });
+
+    it('triples the step with Shift held', () => {
+      const handled = applyTabStripWheel(wheel({ shiftKey: true, deltaY: 10 }), mockList);
+
+      expect(handled).toBe(true);
+      expect(mockList.scrollLeft).toBe(100 + 10 * TAB_STRIP_SHIFT_MULTIPLIER);
+    });
   });
 
   describe('Delta mode resolution (PIXEL, LINE, PAGE)', () => {
-    it('multiplies by 32px for line delta mode (DOM_DELTA_LINE)', () => {
-      const handler = createTabStripWheelHandler(mockList);
-      const handled = handler({
-        ctrlKey: false,
-        deltaX: 0,
-        deltaY: 3, // 3 lines
-        deltaMode: DOM_DELTA_LINE,
-        preventDefault: preventDefaultSpy,
-      });
+    it('multiplies line deltas by the shared line height', () => {
+      const handled = applyTabStripWheel(wheel({ deltaY: 3, deltaMode: DOM_DELTA_LINE }), mockList);
 
       expect(handled).toBe(true);
-      expect(mockList.scrollLeft).toBe(100 + 3 * 32); // 196
-      expect(preventDefaultSpy).toHaveBeenCalledTimes(1);
+      expect(mockList.scrollLeft).toBe(100 + 3 * TAB_STRIP_LINE_PIXELS);
     });
 
-    it('multiplies by clientWidth for page delta mode (DOM_DELTA_PAGE)', () => {
-      const handler = createTabStripWheelHandler(mockList);
-      const handled = handler({
-        ctrlKey: false,
-        deltaX: 0,
-        deltaY: 1, // 1 page
-        deltaMode: DOM_DELTA_PAGE,
-        preventDefault: preventDefaultSpy,
-      });
+    it('multiplies page deltas by the shared page ratio', () => {
+      const handled = applyTabStripWheel(wheel({ deltaY: 1, deltaMode: DOM_DELTA_PAGE }), mockList);
 
       expect(handled).toBe(true);
-      expect(mockList.scrollLeft).toBe(100 + 1 * 800); // 900
-      expect(preventDefaultSpy).toHaveBeenCalledTimes(1);
+      expect(mockList.scrollLeft).toBe(100 + 1 * 800 * TAB_STRIP_PAGE_RATIO);
     });
 
-    it('uses 1:1 pixel mapping for pixel delta mode (DOM_DELTA_PIXEL)', () => {
-      const handler = createTabStripWheelHandler(mockList);
-      const handled = handler({
-        ctrlKey: false,
-        deltaX: 0,
-        deltaY: 42,
-        deltaMode: DOM_DELTA_PIXEL,
-        preventDefault: preventDefaultSpy,
-      });
+    it('uses 1:1 pixel mapping for pixel delta mode', () => {
+      const handled = applyTabStripWheel(wheel({ deltaY: 42 }), mockList);
 
       expect(handled).toBe(true);
       expect(mockList.scrollLeft).toBe(142);
@@ -219,35 +151,51 @@ describe('Tab Strip Horizontal Scroll with Mouse Wheel', () => {
 
   describe('Edge cases', () => {
     it('ignores zero delta events without calling preventDefault', () => {
-      const handler = createTabStripWheelHandler(mockList);
-      const handled = handler({
-        ctrlKey: false,
-        deltaX: 0,
-        deltaY: 0,
-        deltaMode: DOM_DELTA_PIXEL,
-        preventDefault: preventDefaultSpy,
-      });
+      const handled = applyTabStripWheel(wheel(), mockList);
 
       expect(handled).toBe(false);
       expect(mockList.scrollLeft).toBe(100);
       expect(preventDefaultSpy).not.toHaveBeenCalled();
     });
+  });
+});
 
-    it('handles DOM wheel listener registration on strip with passive: false', () => {
-      const addEventListenerSpy = vi.fn();
-      const removeEventListenerSpy = vi.fn();
-      const dummyStrip = {
-        addEventListener: addEventListenerSpy,
-        removeEventListener: removeEventListenerSpy,
-      };
+describe('Alt+Wheel tab cycling', () => {
+  const event = (deltaY: number, deltaX = 0) => ({
+    ctrlKey: false,
+    altKey: true,
+    deltaX,
+    deltaY,
+    deltaMode: 0,
+    preventDefault: vi.fn(),
+  });
 
-      const handler = createTabStripWheelHandler(mockList);
-      dummyStrip.addEventListener('wheel', handler, { passive: false });
+  it('reports the direction of a wheel gesture', () => {
+    expect(wheelCycleDirection(event(120))).toBe(1);
+    expect(wheelCycleDirection(event(-120))).toBe(-1);
+    expect(wheelCycleDirection(event(0, 90))).toBe(1);
+    expect(wheelCycleDirection(event(0, -90))).toBe(-1);
+  });
 
-      expect(addEventListenerSpy).toHaveBeenCalledWith('wheel', handler, { passive: false });
+  it('ignores trackpad jitter below the threshold', () => {
+    expect(wheelCycleDirection(event(2))).toBe(0);
+    expect(wheelCycleDirection(event(-4, 3))).toBe(0);
+  });
 
-      dummyStrip.removeEventListener('wheel', handler);
-      expect(removeEventListenerSpy).toHaveBeenCalledWith('wheel', handler);
-    });
+  it('wraps around both ends like Ctrl+Tab', () => {
+    expect(nextTabIndex(0, 4, -1)).toBe(3);
+    expect(nextTabIndex(3, 4, 1)).toBe(0);
+    expect(nextTabIndex(1, 4, 1)).toBe(2);
+    expect(nextTabIndex(2, 4, -1)).toBe(1);
+  });
+
+  it('falls back to the first tab when no tab is active yet', () => {
+    expect(nextTabIndex(-1, 5, 1)).toBe(1);
+    expect(nextTabIndex(-1, 5, -1)).toBe(4);
+  });
+
+  it('returns -1 for an empty strip so callers never index into nothing', () => {
+    expect(nextTabIndex(0, 0, 1)).toBe(-1);
+    expect(nextTabIndex(-1, 0, -1)).toBe(-1);
   });
 });

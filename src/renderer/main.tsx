@@ -1,6 +1,6 @@
 import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '../shared/voodooContext';
 import { normalizeVoodooKeys } from '../shared/voodooKeys';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import {
@@ -81,6 +81,8 @@ import type {
 import { getGoogleAuthNotice, getSiteKey, normalizePermissionOrigin, normalizeSiteKey } from "../shared/sitePolicy";
 import { normalizeNewTabBackground } from "../shared/background";
 import { cleanTrackingLink } from "../shared/cleanLink";
+import { formatOmniboxAddress } from "../shared/addressDisplay";
+import { applyTabStripWheel, nextTabIndex, wheelCycleDirection } from "./tabStripScroll";
 import { getOmniboxSuggestions } from "../shared/omniboxSuggestions";
 import logoLight from "./assets/soul/logo-light.png";
 import logoDark from "./assets/soul/logo-dark.png";
@@ -410,8 +412,11 @@ function App(): React.JSX.Element {
   const sidebarCollapsed = snapshot?.settings.sidebarCollapsed ?? false;
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1);
   const [omniboxQuery, setOmniboxQuery] = useState("");
+  // Keystrokes must never wait for the suggestion scan: the dropdown catches up
+  // one frame later, the input itself stays synchronous.
+  const deferredOmniboxQuery = useDeferredValue(omniboxQuery);
   const omniboxSuggestions = useMemo(() => {
-    if (!editingAddress || !omniboxQuery.trim()) return [];
+    if (!editingAddress || !deferredOmniboxQuery.trim()) return [];
     const tabsForOmnibox = snapshot?.tabs
       ?.filter((t) => t.isPrivate === isPrivate)
       ?.map((t) => ({
@@ -422,7 +427,7 @@ function App(): React.JSX.Element {
         isAudible: t.isAudible,
         isMuted: t.isMuted,
       }));
-    return getOmniboxSuggestions(omniboxQuery, {
+    return getOmniboxSuggestions(deferredOmniboxQuery, {
       tabs: tabsForOmnibox,
       currentTabId: currentTab?.id,
       history: snapshot?.history,
@@ -430,7 +435,7 @@ function App(): React.JSX.Element {
       searchEngineUrl: snapshot?.settings?.searchEngine,
       maxResults: 7,
     });
-  }, [editingAddress, omniboxQuery, snapshot?.tabs, snapshot?.history, snapshot?.bookmarks, snapshot?.settings?.searchEngine, isPrivate, currentTab?.id]);
+  }, [editingAddress, deferredOmniboxQuery, snapshot?.tabs, snapshot?.history, snapshot?.bookmarks, snapshot?.settings?.searchEngine, isPrivate, currentTab?.id]);
 
   useEffect(() => {
     if (selectedSuggestionIndex >= 0 && suggestionsListRef.current) {
@@ -1205,7 +1210,7 @@ function App(): React.JSX.Element {
           <input
             ref={addressRef}
             data-omnibox
-            value={address}
+            value={editingAddress ? address : formatOmniboxAddress(address)}
             onChange={(event) => {
               const val = event.target.value;
               setAddress(val);
@@ -1229,17 +1234,47 @@ function App(): React.JSX.Element {
             onBlur={(event) => {
               omniboxJustFocusedRef.current = false;
               const related = event.relatedTarget as HTMLElement | null;
-              if (related?.closest(".omnibox")) return;
-              setTimeout(() => {
-                if (document.activeElement !== addressRef.current) {
-                  setEditingAddress(false);
-                  setSelectedSuggestionIndex(-1);
-                }
-              }, 200);
+              // Suggestion rows activate on mousedown and keep the focus, so a real
+              // blur always means "done editing" — no 200 ms guesswork needed.
+              if (related?.closest(".omnibox, .omnibox-suggestions-dropdown")) return;
+              setEditingAddress(false);
+              setSelectedSuggestionIndex(-1);
             }}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) {
                 if (event.key === "Enter") event.preventDefault();
+                return;
+              }
+              // Chrome parity: Alt/Cmd+Enter opens the value in a new tab.
+              if (event.key === "Enter" && (event.altKey || event.metaKey)) {
+                event.preventDefault();
+                const selected =
+                  selectedSuggestionIndex >= 0 && selectedSuggestionIndex < omniboxSuggestions.length
+                    ? omniboxSuggestions[selectedSuggestionIndex]
+                    : null;
+                const targetUrl = selected && selected.kind !== "tab" ? selected.url : address.trim();
+                if (targetUrl) {
+                  createTab(isPrivate, targetUrl);
+                  setEditingAddress(false);
+                  setSelectedSuggestionIndex(-1);
+                  addressRef.current?.blur();
+                }
+                return;
+              }
+              if (event.key === "PageDown" || event.key === "PageUp") {
+                if (omniboxSuggestions.length === 0) return;
+                event.preventDefault();
+                const count = omniboxSuggestions.length;
+                const step = event.key === "PageDown" ? 5 : -5;
+                const base = selectedSuggestionIndex < 0 ? -1 : selectedSuggestionIndex;
+                const next = Math.max(-1, Math.min(count - 1, base + step));
+                setSelectedSuggestionIndex(next);
+                if (next < 0) {
+                  setAddress(omniboxQuery || originalAddressRef.current);
+                } else {
+                  const item = omniboxSuggestions[next];
+                  setAddress(item.kind === "search" ? (omniboxQuery || originalAddressRef.current) : item.url);
+                }
                 return;
               }
               if (omniboxSuggestions.length > 0) {
@@ -2696,9 +2731,24 @@ function TabStrip({
   const unpinnedCount = tabs.filter((t) => !t.isPinned).length;
   const dynamicTabWidth = unpinnedCount <= 10 ? 212 : Math.max(120, Math.round(212 - (unpinnedCount - 10) * 7.5));
   const dynamicActiveTabWidth = unpinnedCount <= 10 ? 240 : Math.max(160, Math.round(240 - (unpinnedCount - 10) * 8.5));
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const snapshotActiveTabRef = useRef(snapshot.activeTabId);
+  snapshotActiveTabRef.current = snapshot.activeTabId;
+  const activateRef = useRef(onActivate);
+  activateRef.current = onActivate;
+  const ensureActiveVisible = (behavior: ScrollBehavior) => {
+    const list = listRef.current;
+    const activeEl = list?.querySelector<HTMLElement>(".tab-container.active");
+    if (!list || !activeEl) return;
+    const listRect = list.getBoundingClientRect();
+    const tabRect = activeEl.getBoundingClientRect();
+    if (tabRect.left < listRect.left + 8 || tabRect.right > listRect.right - 8) {
+      activeEl.scrollIntoView({ block: "nearest", inline: "nearest", behavior });
+    }
+  };
   useEffect(() => {
     const list = listRef.current;
-    const strip = stripRef.current;
     if (!list) return;
     const update = () => {
       const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
@@ -2710,65 +2760,48 @@ function TabStrip({
         return { left: nextLeft, right: nextRight };
       });
     };
-    const activeEl = list.querySelector<HTMLElement>(".tab-container.active");
-    if (activeEl) {
-      const listRect = list.getBoundingClientRect();
-      const tabRect = activeEl.getBoundingClientRect();
-      if (tabRect.left < listRect.left + 8 || tabRect.right > listRect.right - 8) {
-        activeEl.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
-      }
-    }
     const frame = requestAnimationFrame(update);
-    const observer = new ResizeObserver(update);
+    const observer = new ResizeObserver(() => {
+      update();
+      // A narrower window can hide the active tab; keep it reachable without
+      // fighting a scroll the user started with the mouse or wheel.
+      ensureActiveVisible("auto");
+    });
     observer.observe(list);
     list.addEventListener("scroll", update, { passive: true });
-    const scrollWithWheel = (event: WheelEvent) => {
-      if (event.ctrlKey) return;
-      if (list.scrollWidth <= list.clientWidth) return;
-
-      // Alt + Wheel: быстрый циклический переход между вкладками
-      if (event.altKey) {
-        event.preventDefault();
-        const delta = event.deltaY || event.deltaX;
-        if (Math.abs(delta) < 8) return;
-        const activeIdx = tabs.findIndex((t) => t.id === snapshot.activeTabId);
-        if (activeIdx !== -1 && tabs.length > 1) {
-          const nextIdx = delta > 0
-            ? (activeIdx + 1) % tabs.length
-            : (activeIdx - 1 + tabs.length) % tabs.length;
-          onActivate(tabs[nextIdx].id);
-        }
-        return;
-      }
-
-      const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-      if (delta === 0) return;
-      event.preventDefault();
-      const speedMultiplier = event.shiftKey ? 3.5 : 1.0;
-      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 36
-        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? list.clientWidth * 0.85 : 1;
-      list.scrollLeft += delta * unit * speedMultiplier;
-    };
-    const targetElement = strip || list;
-    targetElement.addEventListener("wheel", scrollWithWheel, { passive: false });
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       list.removeEventListener("scroll", update);
-      targetElement.removeEventListener("wheel", scrollWithWheel);
     };
-  }, [snapshot.activeTabId, tabs.length]);
+  }, []);
   useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      const list = listRef.current;
-      const activeEl = list?.querySelector<HTMLElement>(".tab-container.active");
-      if (!list || !activeEl) return;
-      const listRect = list.getBoundingClientRect();
-      const tabRect = activeEl.getBoundingClientRect();
-      if (tabRect.left < listRect.left + 8 || tabRect.right > listRect.right - 8) {
-        activeEl.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    const list = listRef.current;
+    const target = stripRef.current || list;
+    if (!list || !target) return;
+    const scrollWithWheel = (event: WheelEvent) => {
+      if (event.ctrlKey) return;
+
+      // Alt + Wheel cycles tabs, even when the strip does not overflow.
+      if (event.altKey) {
+        const direction = wheelCycleDirection(event);
+        const current = tabsRef.current;
+        if (!direction || current.length < 2) return;
+        const activeIdx = current.findIndex((t) => t.id === snapshotActiveTabRef.current);
+        if (activeIdx === -1) return;
+        event.preventDefault();
+        const nextIdx = nextTabIndex(activeIdx, current.length, direction);
+        activateRef.current(current[nextIdx].id);
+        return;
       }
-    });
+
+      applyTabStripWheel(event, list);
+    };
+    target.addEventListener("wheel", scrollWithWheel, { passive: false });
+    return () => target.removeEventListener("wheel", scrollWithWheel);
+  }, []);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => ensureActiveVisible("smooth"));
     return () => cancelAnimationFrame(frame);
   }, [snapshot.activeTabId, hasOverflow]);
   const moveFocus = (
@@ -2817,7 +2850,7 @@ function TabStrip({
           disabled={!overflow.left}
           title="Предыдущие вкладки"
           aria-label="Прокрутить вкладки влево"
-          onClick={() => listRef.current?.scrollBy({ left: -260 })}
+          onClick={() => listRef.current?.scrollBy({ left: -260, behavior: "smooth" })}
         >
           <ArrowLeft size={15} />
         </button>
@@ -3046,7 +3079,7 @@ function TabStrip({
             <button
               className="tab-close"
               draggable={false}
-              aria-label={`Закрыть вкладку ${tab.title}`}
+              aria-label={`Закрыть вкладку ${tab.title || "Новая вкладка"}`}
               title="Закрыть вкладку · Ctrl+W"
               onDragStart={(event) => {
                 event.stopPropagation();
@@ -3071,7 +3104,7 @@ function TabStrip({
           disabled={!overflow.right}
           title="Следующие вкладки"
           aria-label="Прокрутить вкладки вправо"
-          onClick={() => listRef.current?.scrollBy({ left: 260 })}
+          onClick={() => listRef.current?.scrollBy({ left: 260, behavior: "smooth" })}
         >
           <ArrowRight size={15} />
         </button>
