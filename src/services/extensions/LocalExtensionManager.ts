@@ -17,10 +17,21 @@ type SavedDirectory = { directory: string };
  * Never enable file:// access or load extensions into the private session.
  */
 export class LocalExtensionManager {
+  private static readonly managers = new WeakMap<Session, LocalExtensionManager>();
   private readonly saved: JsonStore<SavedDirectory[]>;
   private readonly active = new Map<string, LocalExtension>();
-  private readonly loading = new Map<string, Promise<LocalExtension>>();
-  constructor(private readonly browserSession: Session, userDataPath: string) {
+  private restoration?: Promise<void>;
+  private installation: Promise<void> = Promise.resolve();
+
+  static forSession(browserSession: Session, userDataPath: string): LocalExtensionManager {
+    const existing = this.managers.get(browserSession);
+    if (existing) return existing;
+    const manager = new LocalExtensionManager(browserSession, userDataPath);
+    this.managers.set(browserSession, manager);
+    return manager;
+  }
+
+  private constructor(private readonly browserSession: Session, userDataPath: string) {
     this.saved = new JsonStore(path.join(userDataPath, 'browser-data', 'extensions.json'), []);
   }
   list(): LocalExtension[] { return [...this.active.values()]; }
@@ -57,30 +68,30 @@ export class LocalExtensionManager {
   }
 
   private async load(directory: string): Promise<LocalExtension> {
-    const realPath = await fs.realpath(directory);
-    const alreadyLoaded = [...this.active.values()].find((item) => item.directory === realPath);
-    if (alreadyLoaded) return alreadyLoaded;
-    const pending = this.loading.get(realPath);
-    if (pending) return pending;
-    const loading = (async () => {
-      const manifest = await this.validate(realPath);
-      const result = await this.browserSession.extensions.loadExtension(realPath, { allowFileAccess: false });
-      const item = { id: result.id, ...manifest, directory: realPath };
-      this.active.set(item.id, item);
-      return item;
-    })();
-    this.loading.set(realPath, loading);
-    try { return await loading; }
-    finally { this.loading.delete(realPath); }
+    const manifest = await this.validate(directory);
+    const result = await this.browserSession.extensions.loadExtension(directory, { allowFileAccess: false });
+    const item = { id: result.id, ...manifest, directory };
+    this.active.set(item.id, item);
+    return item;
   }
 
-  async restore(): Promise<void> {
+  restore(): Promise<void> {
+    this.restoration ??= this.restoreSaved();
+    return this.restoration;
+  }
+
+  private async restoreSaved(): Promise<void> {
     const records = this.saved.get();
     if (!Array.isArray(records)) return;
+    const directories = new Set<string>();
     for (const item of records.slice(0, 30)) {
       if (!item || typeof item.directory !== 'string') continue;
-      try { await this.load(item.directory); }
-      catch (error) { console.warn('SOUL-M8TE extension could not be restored:', error); }
+      try {
+        const directory = await fs.realpath(item.directory);
+        if (directories.has(directory)) continue;
+        await this.load(directory);
+        directories.add(directory);
+      } catch (error) { console.warn('SOUL-M8TE extension could not be restored:', error); }
     }
   }
 
@@ -100,16 +111,25 @@ export class LocalExtensionManager {
       buttons: ['Отмена', 'Установить'], defaultId: 0, cancelId: 0, noLink: true,
     });
     if (warning.response !== 1) return null;
-    const wasAlreadyActive = [...this.active.values()].some(item => item.directory === directory);
-    if (!wasAlreadyActive && this.active.size >= 30) throw new Error('Можно установить не более 30 локальных расширений.');
-    const item = await this.load(directory);
+    const installation = this.installation.then(async () => {
+      await this.restore();
+      return this.installDirectory(directory);
+    });
+    this.installation = installation.then(() => undefined, () => undefined);
+    return installation;
+  }
+
+  private async installDirectory(directory: string): Promise<LocalExtension> {
+    const alreadyActive = [...this.active.values()].find(item => item.directory === directory);
+    if (!alreadyActive && this.active.size >= 30) throw new Error('Можно установить не более 30 локальных расширений.');
+    const item = alreadyActive ?? await this.load(directory);
     try {
       const existing = this.saved.get();
-      const directories = Array.isArray(existing) ? existing.filter((entry): entry is SavedDirectory => Boolean(entry && typeof entry.directory === 'string' && entry.directory !== directory)) : [];
+      const directories = existing.filter(entry => entry && typeof entry.directory === 'string' && entry.directory !== directory);
       this.saved.set([...directories, { directory }].slice(-30));
     } catch (error) {
       // Failed re-registration must not unload a previously working extension.
-      if (!wasAlreadyActive) {
+      if (!alreadyActive) {
         try {
           this.browserSession.extensions.removeExtension(item.id);
           this.active.delete(item.id);
@@ -123,10 +143,15 @@ export class LocalExtensionManager {
   remove(id: string): void {
     const item = this.active.get(id);
     if (!item) return;
-    // Do not erase our registry while extension code is still running after an unload failure.
-    this.browserSession.extensions.removeExtension(id);
-    this.active.delete(id);
     const current = this.saved.get();
-    if (Array.isArray(current)) this.saved.set(current.filter(entry => entry && entry.directory !== item.directory));
+    const next = current.filter(entry => entry && entry.directory !== item.directory);
+    if (next.length !== current.length) this.saved.set(next);
+    try {
+      this.browserSession.extensions.removeExtension(id);
+    } catch (error) {
+      if (next.length !== current.length) this.saved.set(current);
+      throw error;
+    }
+    this.active.delete(id);
   }
 }

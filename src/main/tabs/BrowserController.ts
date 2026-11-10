@@ -386,7 +386,7 @@ export class BrowserController {
     const initialExceptions = this.stores.settings.get().adBlockExceptions ?? [];
     this.adBlock.engine.setExceptions(initialExceptions);
     this.privateAdBlock.engine.setExceptions(initialExceptions);
-    this.extensionsManager = new LocalExtensionManager(this.browserSession, app.getPath('userData'));
+    this.extensionsManager = LocalExtensionManager.forSession(this.browserSession, app.getPath('userData'));
     this.browsec = new BrowsecService(app.getPath('userData'));
     this.browsec.setWebContentsProvider(() => {
       const contents: Electron.WebContents[] = [];
@@ -511,7 +511,7 @@ export class BrowserController {
         callback(false);
       });
 
-      // Native Chrome 134 stealth identity and header sanitization for defaultSession (privileged shell & reader mode)
+      // Header handling for the privileged shell and reader mode.
       session.defaultSession.setUserAgent(getChromeUserAgent());
       session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
         const headers = { ...details.requestHeaders };
@@ -1651,20 +1651,20 @@ export class BrowserController {
         // Private pages may contain transient authentication/unsaved state;
         // only an explicit user request may discard them.
         if (!tab || tab.isPrivate) continue;
-        if (await this.hibernateTab(tabId)) break;
+        if (await this.hibernateTab(tabId, idleMinutes)) break;
       }
     } finally {
       this.memorySweepRunning = false;
     }
   }
 
-  async hibernateTab(tabId: string): Promise<boolean> {
+  async hibernateTab(tabId: string, idleMinutes = 0): Promise<boolean> {
     const tab = this.tabs.get(tabId);
     // OAuth popups need their original WebContents/WindowProxy until the flow
     // finishes. Discarding either endpoint would silently break postMessage.
     if (this.popupOpeners.has(tabId) || [...this.popupOpeners.values()].includes(tabId) || [...this.popupToTab.values()].includes(tabId)) return false;
     if (!tab || tab.id === this.activeTabId || tab.isInternal || tab.isPictureInPicture || !tab.view) return false;
-    const eligible = this.memoryManager.canHibernate(tabId, 0);
+    const eligible = this.memoryManager.canHibernate(tabId, idleMinutes);
     if (!eligible.allowed) return false;
     const view = tab.view;
     const url = tab.url;
@@ -1682,7 +1682,7 @@ export class BrowserController {
     if (this.disposed || this.tabs.get(tabId) !== tab || tab.view !== view || tab.url !== url
       || tab.id === this.activeTabId || tab.isInternal || tab.isPictureInPicture
       || this.popupOpeners.has(tabId) || [...this.popupOpeners.values()].includes(tabId)
-      || [...this.popupToTab.values()].includes(tabId) || !this.memoryManager.canHibernate(tabId, 0).allowed) return false;
+      || [...this.popupToTab.values()].includes(tabId) || !this.memoryManager.canHibernate(tabId, idleMinutes).allowed) return false;
     tab.savedScroll = savedScroll;
     this.detachView(tab);
     tab.lifecycle = 'hibernated';
@@ -2496,12 +2496,11 @@ export class BrowserController {
     return this.passwords.getSecret(passwordId);
   }
 
-  getPageAutofillCredentials(senderId: number, data: { origin: string; hostname?: string }): { id: string; username: string; password: string; exactOrigin?: boolean }[] {
+  getPageAutofillCredentials(senderId: number, origin: string): { id: string; username: string; password: string; exactOrigin?: boolean }[] {
     if (!this.isTrustedPage(senderId)) return [];
     const tab = Array.from(this.tabs.values()).find((t) => t.webContentsId === senderId);
     if (!tab || tab.isPrivate || tab.isInternal) return [];
-    if (!data || !data.origin || typeof data.origin !== 'string') return [];
-    return this.passwords.getCredentialsForAutofill(data.origin, data.hostname);
+    return this.passwords.getCredentialsForAutofill(origin).filter(credential => credential.exactOrigin);
   }
 
   async getSavedCredentialsForOrigin(origin: string): Promise<ImportedPasswordSummary[]> {
@@ -3269,7 +3268,7 @@ export class BrowserController {
     const blocker = isPrivate ? this.privateAdBlock : this.adBlock;
     blocker.engine.setEnabled(this.stores.settings.get().adBlockEnabled !== false);
     this.browsec.applyWebRtcPolicyToSession(targetSession);
-    // Identify as native Google Chrome 134 on Linux/current OS without any Electron or custom app tokens.
+    // Keep the advertised browser version in sync with the Chromium runtime.
     targetSession.setUserAgent(getChromeUserAgent());
     const allowedPermissions = new Set<string>();
     const notificationPermissions = isPrivate ? new Map<string, NotificationPermissionDecision>() : this.notificationPermissions;
@@ -3452,17 +3451,6 @@ export class BrowserController {
       if (stripCookies(details)) {
         for (const key of Object.keys(headers)) if (key.toLowerCase() === 'cookie') delete headers[key];
       }
-      for (const key of Object.keys(headers)) {
-        const lower = key.toLowerCase();
-        if (['user-agent', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform'].includes(lower)) {
-          delete headers[key];
-        }
-      }
-      const clientHints = getClientHintHeaders();
-      headers['User-Agent'] = clientHints['User-Agent'];
-      headers['Sec-CH-UA'] = clientHints['Sec-CH-UA'];
-      headers['Sec-CH-UA-Mobile'] = clientHints['Sec-CH-UA-Mobile'];
-      headers['Sec-CH-UA-Platform'] = clientHints['Sec-CH-UA-Platform'];
       callback({ requestHeaders: headers });
     });
     targetSession.webRequest.onHeadersReceived({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
@@ -3504,63 +3492,6 @@ export class BrowserController {
     };
     this.sessionDownloadHandlers.set(targetSession, onDownload);
     targetSession.on('will-download', onDownload);
-
-    // Securely verify Russian Trusted Root CA (Минцифры / Госуслуги / abr.ru / Сбер)
-    // while keeping Chromium's strict verification for standard web domains and untrusted issuers.
-    targetSession.setCertificateVerifyProc((request, callback) => {
-      const { errorCode, certificate, verificationResult } = request;
-      if (errorCode === 0 || verificationResult === 'net::OK') {
-        callback(0);
-        return;
-      }
-
-      const isAuthorityOrRevocationError =
-        errorCode === -202 ||
-        errorCode === -207 ||
-        verificationResult === 'net::ERR_CERT_AUTHORITY_INVALID' ||
-        verificationResult === 'net::ERR_CERT_UNABLE_TO_CHECK_REVOCATION';
-
-      if (isAuthorityOrRevocationError && certificate) {
-        // Enforce valid date bounds (never accept expired or not-yet-valid certificates)
-        const nowSec = Date.now() / 1000;
-        if (certificate.validStart && certificate.validExpiry) {
-          if (nowSec < certificate.validStart || nowSec > certificate.validExpiry) {
-            callback(errorCode ?? -2);
-            return;
-          }
-        }
-
-        // Verify issuer chain matches authentic Russian National CA
-        let currentCert: Electron.Certificate | undefined = certificate;
-        let isRussianCA = false;
-
-        while (currentCert) {
-          const issuer = (currentCert.issuerName || '').toLowerCase();
-          if (
-            issuer.includes('russian trusted') ||
-            issuer.includes('минцифры') ||
-            issuer.includes('ministry of digital development') ||
-            issuer.includes('национальный удостоверяющий центр') ||
-            issuer.includes('госуслуги') ||
-            issuer.includes('минкомсвязь') ||
-            issuer.includes('sber ca') ||
-            issuer.includes('sberbank ca')
-          ) {
-            isRussianCA = true;
-            break;
-          }
-          currentCert = currentCert.issuerCert;
-        }
-
-        if (isRussianCA) {
-          callback(0);
-          return;
-        }
-      }
-
-      // For standard web domains and unrecognized issuers, delegate to Chromium default
-      callback(-3);
-    });
   }
 
   private attachWebContents(tab: TabRecord, initialUrl: string, popupOptions?: Electron.BrowserWindowConstructorOptions): Electron.WebContents | undefined {
@@ -3808,18 +3739,28 @@ export class BrowserController {
     tab.isPictureInPicture = false;
     tab.pipMode = undefined;
     if (!view) return;
-    if (contents) {
-      // Detach our closures before closing native content: late navigation,
-      // renderer-gone or window-close events must not corrupt a sleeping tab.
-      this.tabHandlerCleanup?.get(contents.id)?.();
-      this.tabHandlerCleanup?.delete(contents.id);
-      this.capturedMediaStreams?.delete(contents.id);
-    }
+    // Detach our closures before closing native content: late navigation,
+    // renderer-gone or window-close events must not corrupt a sleeping tab.
+    if (contents) this.releaseTabContents(tab, contents.id);
     if (this.window && !this.window.isDestroyed()) {
       try { this.window.contentView.removeChildView(view); } catch {}
     }
     if (contents && !contents.isDestroyed()) contents.close();
     if (wasSplit && !this.disposed) this.refreshViewBounds();
+  }
+
+  private releaseTabContents(tab: TabRecord, contentsId: number): void {
+    this.tabHandlerCleanup?.get(contentsId)?.();
+    this.tabHandlerCleanup?.delete(contentsId);
+    this.capturedMediaStreams?.delete(contentsId);
+    BrowserController.xmlDocuments.delete(contentsId);
+    BrowserController.xsltApplied.delete(contentsId);
+    BrowserController.relaxedFontResponses.delete(contentsId);
+    siteFontMonitor.clear(contentsId);
+    if (tab.webContentsId === undefined || tab.webContentsId === contentsId) {
+      this.fontCompatCssKeys?.delete(tab.id);
+      this.fontCompatFamilies?.delete(tab.id);
+    }
   }
 
   private installTabHandlers(tab: TabRecord): void {
@@ -3949,15 +3890,16 @@ export class BrowserController {
         }
       }
     };
-    contents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => { if (isMainFrame) { resetTabMediaAndReader(); this.emitSnapshot(); } });
-    contents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
-      if (!isMainFrame) return;
+    contents.on('did-start-navigation', (details, _url, isInPlace, isMainFrame) => {
+      if (!(details.isMainFrame ?? isMainFrame) || (details.isSameDocument ?? isInPlace)) return;
+      resetTabMediaAndReader();
       // Evidence and compatibility state belong to one document only.
       BrowserController.xmlDocuments.delete(contents.id);
       BrowserController.xsltApplied.delete(contents.id);
       BrowserController.relaxedFontResponses.delete(contents.id);
       siteFontMonitor.clear(contents.id);
       void this.clearFontCompatibility(tab);
+      this.emitSnapshot();
     });
 
     (contents as unknown as { on(event: 'console-message', listener: (event: Electron.Event, ...rest: unknown[]) => void): void })
@@ -3969,8 +3911,15 @@ export class BrowserController {
           : String(rest[1] ?? '');
         if (message) siteFontMonitor.noteConsole(contents.id, message);
       });
-    contents.on('did-navigate', (_event, url) => { resetTabMediaAndReader(); this.memoryManager.updateTab(tab.id, { hasFormEdits: false }); this.updateUrl(tab, url); });
-    contents.on('did-navigate-in-page', (_event, url) => { resetTabMediaAndReader(); this.updateUrl(tab, url); });
+    contents.on('did-navigate', (_event, url) => {
+      resetTabMediaAndReader();
+      this.memoryManager.updateTab(tab.id, { hasFormEdits: false });
+      if (isSafeWebUrl(url)) tab.isLoading = false;
+      this.updateUrl(tab, url);
+    });
+    contents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+      if (isMainFrame) this.updateUrl(tab, url);
+    });
     contents.on('page-title-updated', (event, title) => {
       event.preventDefault();
       if (contents.isDestroyed() || this.tabs.get(tab.id) !== tab || tab.webContentsId !== contents.id) return;
@@ -4055,22 +4004,13 @@ export class BrowserController {
       this.emitSnapshot();
     });
     contents.on('destroyed', () => {
-      this.tabHandlerCleanup?.get(contents.id)?.();
-      this.tabHandlerCleanup?.delete(contents.id);
-      this.capturedMediaStreams.delete(contents.id);
-      BrowserController.xmlDocuments.delete(contents.id);
-      BrowserController.xsltApplied.delete(contents.id);
-      BrowserController.relaxedFontResponses.delete(contents.id);
-      this.fontCompatCssKeys?.delete(tab.id);
-      this.fontCompatFamilies?.delete(tab.id);
-      siteFontMonitor.clear(contents.id);
       if (this.tabs.has(tab.id) && tab.webContentsId === contents.id) {
         if (this.popupOpeners.has(tab.id)) { void this.closeTab(tab.id); return; }
         this.detachView(tab);
         tab.lifecycle = 'crashed';
         this.memoryManager.updateTab(tab.id, { lifecycle: 'crashed', loading: false, audible: false, capturing: false });
         this.emitSnapshot();
-      }
+      } else this.releaseTabContents(tab, contents.id);
     });
     (contents as unknown as NodeJS.EventEmitter).on('window-close', () => {
       void this.closeTab(tab.id);
@@ -4090,7 +4030,6 @@ export class BrowserController {
     if (!isSafeWebUrl(url)) return;
     tab.url = url;
     tab.isInternal = false;
-    tab.isLoading = false;
     tab.lifecycle = tab.id === this.activeTabId ? 'active' : 'background';
     if (!tab.isPrivate) this.stores.addHistory({ url, title: tab.title || url, favicon: tab.favicon });
     this.memoryManager.updateTab(tab.id, { lifecycle: tab.lifecycle });

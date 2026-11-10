@@ -54,6 +54,16 @@ describe('tab hibernation race protection and restoration', () => {
     expect(controller.detachView).toHaveBeenCalledOnce();
   });
 
+  it('rechecks the automatic idle delay if a tab becomes inactive again during scroll sampling', async () => {
+    const { controller, tab, reply, memoryManager } = fixture();
+    const pending = controller.hibernateTab(tab.id, 5);
+    memoryManager.updateTab(tab.id, { active: true, lifecycle: 'active' });
+    memoryManager.updateTab(tab.id, { active: false, lifecycle: 'background' });
+    reply({ x: 12, y: 900 });
+    expect(await pending).toBe(false);
+    expect(controller.detachView).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])('restores saved scroll after attaching a discarded page; navigated=%s', (navigated) => {
     const { controller, tab, contents } = fixture();
     (tab as any).savedScroll = { x: 0, y: 900, url: tab.url };

@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import https from 'node:https';
+import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { _electron as electron, expect } from '@playwright/test';
 
@@ -55,6 +57,34 @@ try {
   shell = await app.firstWindow();
   shell.on('pageerror', error => errors.push(error.message));
   await shell.waitForSelector('.app-shell');
+  await check('HTTPS rejects a self-signed certificate posing as a trusted issuer', async () => {
+    const keyPath = path.join(dataPath, 'tls-fixture-key.pem');
+    const certPath = path.join(dataPath, 'tls-fixture-cert.pem');
+    execFileSync('openssl', [
+      'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', keyPath, '-out', certPath,
+      '-days', '1', '-subj', '/CN=Russian Trusted Test Issuer', '-addext', 'subjectAltName=IP:127.0.0.1',
+    ], { stdio: 'ignore', env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+    const tls = https.createServer({ key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) },
+      (_req, res) => res.end('<title>Untrusted certificate accepted</title>'));
+    tls.listen(0, '127.0.0.1');
+    await once(tls, 'listening');
+    const url = `https://127.0.0.1:${tls.address().port}/`;
+    try {
+      for (const isPrivate of [false, true]) {
+        const tab = await invoke('createTab', { url, isPrivate });
+        await waitTab(tab.id, { isLoading: false });
+        try {
+          const current = (await snapshot()).tabs.find(item => item.id === tab.id);
+          assert.equal(current?.lastError?.errorCode, -202, `isPrivate=${isPrivate}`);
+        } finally {
+          await invoke('closeTab', tab.id);
+        }
+      }
+    } finally {
+      tls.closeAllConnections();
+      await new Promise(resolve => tls.close(resolve));
+    }
+  });
   const normal = await invoke('createTab', {url: `${base}/first`});
   await check('navigation and history', async()=>{
     await waitTab(normal.id, {isLoading:false, title:'Browser fixture'});

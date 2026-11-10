@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron, expect } from '@playwright/test';
 
-// No Google traffic, credentials or trusted production certificates are used.
+// No production traffic, credentials or trusted certificates are used.
 // Exact fixture names are remapped to one LOCAL port; all other DNS names fail.
 // Certificate bypass and proxy disabling below apply only to this temporary test.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -27,7 +27,10 @@ try {
   fs.rmSync(dataPath, { recursive: true, force: true });
   throw new Error('The local HTTPS test requires OpenSSL on PATH to generate a disposable certificate.', { cause: error });
 }
-const hosts = ['accounts.google.com', 'accounts.youtube.com', 'www.youtube.com', 'youtube.com', 'www.google.com', 'attacker.test'];
+const challengeHost = 'challenges.cloudflare.com';
+const challengeFramePath = '/cdn-cgi/challenge-platform/h/b/turnstile/if/fixture';
+const challengeVerifyPath = '/cdn-cgi/challenge-platform/h/b/flow/ov1/fixture';
+const hosts = ['accounts.google.com', 'accounts.youtube.com', 'www.youtube.com', 'youtube.com', 'www.google.com', 'attacker.test', 'lasthavens.com', challengeHost];
 const origins = new Set(hosts.map(host => `https://${host}`));
 const received = [];
 const checks = [];
@@ -36,11 +39,12 @@ const server = https.createServer({ key: fs.readFileSync(keyPath), cert: fs.read
   const host = (req.headers.host ?? '').split(':')[0];
   if (!hosts.includes(host)) { res.writeHead(400); res.end('Unknown fixture host'); return; }
   const url = new URL(req.url, `https://${host}`);
-  received.push({ host, path: url.pathname, query: Object.fromEntries(url.searchParams), cookie: req.headers.cookie ?? '', origin: req.headers.origin ?? '', site: req.headers['sec-fetch-site'] ?? '' });
+  received.push({ host, path: url.pathname, query: Object.fromEntries(url.searchParams), method: req.method, cookie: req.headers.cookie ?? '', origin: req.headers.origin ?? '', site: req.headers['sec-fetch-site'] ?? '', userAgent: req.headers['user-agent'] ?? '' });
   const headers = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' };
   if (origins.has(req.headers.origin)) { headers['access-control-allow-origin'] = req.headers.origin; headers['access-control-allow-credentials'] = 'true'; }
   if (req.method === 'OPTIONS') { res.writeHead(204, headers); res.end(); return; }
-  if (url.pathname === '/echo' || url.pathname.startsWith('/accounts/')) {
+  const verifyChallenge = host === challengeHost && url.pathname === challengeVerifyPath && req.method === 'POST';
+  if (url.pathname === '/echo' || url.pathname.startsWith('/accounts/') || verifyChallenge) {
     const name = url.searchParams.get('responseCookie');
     if (!name || !/^[a-zA-Z0-9_]+$/.test(name)) { res.writeHead(400); res.end('Bad test cookie'); return; }
     headers['content-type'] = 'application/json';
@@ -61,6 +65,25 @@ const server = https.createServer({ key: fs.readFileSync(keyPath), cert: fs.read
         const output = document.getElementById('storage-result');
         try { if(typeof document.requestStorageAccess !== 'function') { output.textContent='unsupported'; return; } await document.requestStorageAccess(); output.textContent='granted'; }
         catch(error) { output.textContent='denied:'+error.name; }
+      };
+    </script>`);
+  } else if (host === challengeHost && url.pathname === challengeFramePath) {
+    res.end(`<!doctype html><meta charset="utf-8"><title>Local verification frame</title><button id="verify">Verify fixture</button><output id="verification"></output><script>
+      document.getElementById('verify').onclick = async event => {
+        const output = document.getElementById('verification');
+        if (!event.isTrusted || !navigator.userActivation.isActive) { output.textContent = 'untrusted'; return; }
+        const query = new URLSearchParams(location.search);
+        const endpoint = new URL(${JSON.stringify(challengeVerifyPath)}, location.origin);
+        try {
+          for (const stage of ['verify', 'confirm']) {
+            query.set('stage', stage);
+            endpoint.search = query;
+            const response = await fetch(endpoint, { method: 'POST', credentials: 'include' });
+            if (!response.ok) throw new Error('Verification request failed');
+            await response.json();
+          }
+          output.textContent = 'verified';
+        } catch (error) { output.textContent = String(error); }
       };
     </script>`);
   } else res.end('<!doctype html><meta charset="utf-8"><title>Local YouTube flow fixture</title><h1>Local HTTPS browser cookie fixture</h1>');
@@ -191,6 +214,37 @@ try {
     assert(!probe.result.cookie.includes(name), 'reverse YouTube requests outside /accounts/ must remain blocked');
     assert.equal(probe.saved.length, 0);
   });
+  await check('local cross-site verification keeps Chromium identity, trusted input and HTTPS cookies', async () => {
+    const tab = await createTab('lasthavens.com');
+    const token = `challenge_${++serial}`;
+    const seedCookie = await seed(tab, challengeHost, token);
+    const responseCookie = `response_${token}`;
+    const frameUrl = `https://${challengeHost}${challengeFramePath}?case=${token}&responseCookie=${responseCookie}`;
+    await nativeContents(tab.url, 'script', `new Promise(resolve=>{const frame=document.createElement('iframe');frame.dataset.challengeFixture='true';frame.onload=()=>resolve();frame.src=${JSON.stringify(frameUrl)};document.body.append(frame);})`);
+    await expect.poll(() => app.context().pages().some(page => page.url() === tab.url)).toBe(true);
+    const page = app.context().pages().find(page => page.url() === tab.url);
+    const frame = page.frameLocator('iframe[data-challenge-fixture]');
+    const chromiumMajor = await app.evaluate(() => process.versions.chrome.split('.')[0]);
+    const frameIdentity = await frame.locator('#verify').evaluate(() => ({ userAgent: navigator.userAgent, runtime: typeof window.chrome?.runtime }));
+    assert.equal(frameIdentity.userAgent.match(/\bChrome\/(\d+)\./)?.[1], chromiumMajor, 'frame must report the embedded Chromium version');
+    assert.equal(frameIdentity.runtime, 'undefined', 'ordinary frames must not expose a fabricated extension runtime');
+    await frame.locator('#verify').click();
+    await expect(frame.locator('#verification')).toHaveText('verified');
+    const requests = received.filter(request => request.host === challengeHost && request.query.case === token);
+    const navigation = requests.find(request => request.path === challengeFramePath);
+    assert.equal(navigation?.site, 'cross-site');
+    const posts = requests.filter(request => request.path === challengeVerifyPath);
+    assert.deepEqual(posts.map(request => [request.method, request.query.stage]), [['POST', 'verify'], ['POST', 'confirm']]);
+    assert(requests.every(request => request.userAgent.match(/\bChrome\/(\d+)\./)?.[1] === chromiumMajor), 'iframe navigation and verification requests must use the embedded Chromium version');
+    assert(posts[0].cookie.includes(`${seedCookie}=fixture`), 'verification request must receive the existing cookie');
+    assert(posts[1].cookie.includes(`${responseCookie}=accepted`), 'follow-up request must receive the response cookie');
+    const unrelated = `challenge_unrelated_${++serial}`;
+    const unrelatedCookie = await seed(tab, 'attacker.test', unrelated);
+    const probe = await fetchProbe(tab, 'attacker.test', unrelated);
+    assert(!probe.result.cookie.includes(unrelatedCookie));
+    assert.equal(probe.saved.length, 0);
+    await invoke('closeTab', tab.id);
+  });
   // Exercise the web API through a real trusted click when the Chromium backend
   // actually routes Storage Access through Electron's permission handlers.
   const storageAccessDiagnostics = [];
@@ -239,7 +293,7 @@ try {
     console.log(`PASS ${checks.at(-1)}`);
   } else console.log('SKIP Storage Access native permission assertion: Chromium did not invoke the Electron permission dialog; actual cookie restrictions above still verified.');
   assert.deepEqual(shellErrors, []);
-  console.log(JSON.stringify({ ok: true, checks, fixtureRequests: received.length, storageAccessDiagnostics, uncaughtShellErrors: shellErrors, network: 'Exact owned hostnames remapped to local HTTPS only; unmatched DNS fails; no live Google login or credentials tested.' }, null, 2));
+  console.log(JSON.stringify({ ok: true, checks, fixtureRequests: received.length, storageAccessDiagnostics, uncaughtShellErrors: shellErrors, network: 'Exact fixture hostnames remapped to local HTTPS only; unmatched DNS fails; no live sign-in, challenge or credentials tested.' }, null, 2));
 } finally {
   if (app) await app.close();
   server.closeAllConnections();

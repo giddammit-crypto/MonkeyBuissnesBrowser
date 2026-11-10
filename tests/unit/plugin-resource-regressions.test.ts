@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FilterEngine } from '../../src/services/adblock/FilterEngine';
 import { BrowsecHealthCheckEngine } from '../../src/services/browsec/BrowsecHealthCheck';
 import { BrowsecService } from '../../src/services/browsec/BrowsecService';
-vi.mock('electron', () => ({ dialog: {} }));
+const dialogs = vi.hoisted(() => ({ showOpenDialog: vi.fn(), showMessageBox: vi.fn() }));
+vi.mock('electron', () => ({ dialog: dialogs }));
 import { LocalExtensionManager } from '../../src/services/extensions/LocalExtensionManager';
 
 const directories: string[] = [];
@@ -14,6 +15,8 @@ const engines: BrowsecHealthCheckEngine[] = [];
 afterEach(() => {
   engines.forEach(engine => engine.destroy()); engines.length = 0;
   vi.useRealTimers();
+  dialogs.showOpenDialog.mockReset();
+  dialogs.showMessageBox.mockReset();
   directories.splice(0).forEach(directory => fs.rmSync(directory, { recursive: true, force: true }));
 });
 function directory() {
@@ -106,9 +109,11 @@ describe('plugin resource and lifecycle regressions', () => {
     const root = directory();
     fs.writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 'Test', version: '1' }));
     const loadExtension = vi.fn(async () => ({ id: 'test' }));
-    const manager = new LocalExtensionManager({ extensions: { loadExtension } } as any, directory());
-    const load = (manager as any).load.bind(manager);
-    const results = await Promise.all([load(root), load(root)]);
+    dialogs.showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [root] });
+    dialogs.showMessageBox.mockResolvedValue({ response: 1 });
+    const manager = LocalExtensionManager.forSession({ extensions: { loadExtension } } as any, directory());
+    const results = await Promise.all([manager.install({} as any), manager.install({} as any)]);
+    expect(results[0]).toMatchObject({ id: 'test' });
     expect(results[0]).toEqual(results[1]);
     expect(loadExtension).toHaveBeenCalledExactlyOnceWith(root, { allowFileAccess: false });
   });
@@ -116,8 +121,9 @@ describe('plugin resource and lifecycle regressions', () => {
     const root = directory();
     fs.writeFileSync(path.join(root, 'manifest.json'), ' '.repeat(1024 * 1024 + 1));
     const loadExtension = vi.fn();
-    const manager = new LocalExtensionManager({ extensions: { loadExtension } } as any, directory());
-    await expect((manager as any).load(root)).rejects.toThrow(/слишком большой/);
+    dialogs.showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [root] });
+    const manager = LocalExtensionManager.forSession({ extensions: { loadExtension } } as any, directory());
+    await expect(manager.install({} as any)).rejects.toThrow(/слишком большой/);
     expect(loadExtension).not.toHaveBeenCalled();
   });
 });

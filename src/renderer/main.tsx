@@ -360,7 +360,10 @@ function App(): React.JSX.Element {
   const [hasAvailableUpdate, setHasAvailableUpdate] = useState(false);
   const [voodooOpen, setVoodooOpen] = useState(false);
   const [pendingPasswordOffer, setPendingPasswordOffer] = useState<SavePasswordOffer | null>(null);
-  const [siteCredentials, setSiteCredentials] = useState<ImportedPasswordSummary[]>([]);
+  const [credentialsForOrigin, setCredentialsForOrigin] = useState<{
+    origin: string;
+    records: ImportedPasswordSummary[];
+  } | null>(null);
   const previousTabId = useRef<string | undefined>(undefined);
   const [findText, setFindText] = useState("");
   const [findResult, setFindResult] = useState("");
@@ -398,14 +401,8 @@ function App(): React.JSX.Element {
 
   const suggestionsListRef = useRef<HTMLDivElement>(null);
   const findRef = useRef<HTMLInputElement>(null);
+  const pendingActivation = useRef<{ id: string; acknowledged: boolean } | null>(null);
   const [optimisticTabId, setOptimisticTabId] = useState<string | null>(null);
-  useEffect(() => {
-    // An older activation response must not cancel a newer tab selection.
-    if (optimisticTabId && (snapshot?.activeTabId === optimisticTabId ||
-      !snapshot?.tabs.some((tab) => tab.id === optimisticTabId))) {
-      setOptimisticTabId(null);
-    }
-  }, [snapshot?.activeTabId, snapshot?.tabs, optimisticTabId]);
   const effectiveSnapshot = useMemo(() => {
     if (!snapshot || !optimisticTabId) return snapshot;
     return { ...snapshot, activeTabId: optimisticTabId };
@@ -425,6 +422,12 @@ function App(): React.JSX.Element {
   useEffect(() => setAuthNoticeDismissed(false), [currentTab?.id, currentTab?.url]);
   const currentSite = getSiteKey(currentTab?.url ?? "");
   const currentOrigin = normalizePermissionOrigin(currentTab?.url ?? "");
+  const credentialOrigin = useMemo(() => {
+    if (currentTab?.isPrivate || currentTab?.isInternal) return null;
+    const url = URL.parse(currentTab?.url ?? "");
+    return url?.protocol === "https:" && !url.username && !url.password ? url.origin : null;
+  }, [currentTab?.url, currentTab?.isPrivate, currentTab?.isInternal]);
+  const siteCredentials = credentialOrigin === credentialsForOrigin?.origin ? credentialsForOrigin.records : [];
   const currentDomain = normalizeSiteKey(currentTab?.url ?? "");
   const currentNotificationPermission = currentOrigin
     ? snapshot?.notificationPermissions?.find((entry) => entry.origin === currentOrigin)?.decision
@@ -512,12 +515,20 @@ function App(): React.JSX.Element {
   const activateTab = useCallback(
     (id: string) => {
       setPanel("home");
+      const request = { id, acknowledged: false };
+      pendingActivation.current = request;
       setOptimisticTabId(id);
       run(
-        window.browserApi.activateTab(id).catch((error) => {
-          setOptimisticTabId((pending) => (pending === id ? null : pending));
-          throw error;
-        }),
+        window.browserApi.activateTab(id).then(
+          () => { request.acknowledged = true; },
+          (error) => {
+            if (pendingActivation.current === request) {
+              pendingActivation.current = null;
+              setOptimisticTabId(null);
+            }
+            throw error;
+          },
+        ),
       );
     },
     [run],
@@ -553,7 +564,14 @@ function App(): React.JSX.Element {
       }),
     );
     const remove = window.browserApi.onSnapshotChanged((next) => {
-      if (alive) setSnapshot(next);
+      if (!alive) return;
+      setSnapshot(next);
+      const request = pendingActivation.current;
+      // A coalesced snapshot can already reflect a different native tab switch.
+      if (request && (request.acknowledged || next.activeTabId === request.id || !next.tabs.some(tab => tab.id === request.id))) {
+        pendingActivation.current = null;
+        setOptimisticTabId(null);
+      }
     });
     return () => {
       alive = false;
@@ -582,15 +600,6 @@ function App(): React.JSX.Element {
       }
       if (event.type === "password-save-prompt" && event.data) {
         setPendingPasswordOffer(event.data as SavePasswordOffer);
-        return;
-      }
-      if (event.type === "passwords-changed" && currentTab?.url) {
-        try {
-          const u = new URL(currentTab.url);
-          window.browserApi.getSavedCredentialsForOrigin(u.origin)
-            .then((creds) => setSiteCredentials(creds || []))
-            .catch(() => setSiteCredentials([]));
-        } catch {}
         return;
       }
       if (event.type === "toggle-click-and-clean") {
@@ -667,23 +676,33 @@ function App(): React.JSX.Element {
     }
   }, [currentTab?.id, currentTab?.url, currentTab?.isLoading, currentTab?.isInternal, editingAddress]);
   useEffect(() => {
-    if (!currentTab || currentTab.isPrivate || currentTab.isInternal || !currentTab.url) {
-      setSiteCredentials([]);
+    if (!credentialOrigin) {
+      setCredentialsForOrigin(null);
       return;
     }
-    try {
-      const u = new URL(currentTab.url);
-      if (u.protocol === "https:" || u.protocol === "http:") {
-        window.browserApi.getSavedCredentialsForOrigin(u.origin)
-          .then((creds) => setSiteCredentials(creds || []))
-          .catch(() => setSiteCredentials([]));
-      } else {
-        setSiteCredentials([]);
+    let requestId = 0;
+    const refresh = async () => {
+      const id = ++requestId;
+      try {
+        const records = await window.browserApi.getSavedCredentialsForOrigin(credentialOrigin);
+        if (id === requestId) setCredentialsForOrigin({ origin: credentialOrigin, records });
+      } catch {
+        if (id === requestId) setCredentialsForOrigin(null);
       }
-    } catch {
-      setSiteCredentials([]);
-    }
-  }, [currentTab?.id, currentTab?.url, currentTab?.isPrivate, currentTab?.isInternal]);
+    };
+    const remove = window.browserApi.onTabEvent((event) => {
+      if (event.type === "passwords-changed") void refresh();
+    });
+    window.addEventListener("soul-passwords-changed", refresh);
+    window.addEventListener("focus", refresh);
+    void refresh();
+    return () => {
+      requestId++;
+      remove();
+      window.removeEventListener("soul-passwords-changed", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [credentialOrigin]);
   useEffect(() => {
     const previous = previousTabId.current;
     if (previous && previous !== currentTab?.id) {
@@ -915,13 +934,7 @@ function App(): React.JSX.Element {
             const delta = isBack ? -1 : 1;
             const nextIdx = (currentIdx + delta + visible.length) % visible.length;
             const nextTab = visible[nextIdx];
-            if (nextTab) {
-              setOptimisticTabId(nextTab.id);
-              run(window.browserApi.activateTab(nextTab.id).catch((error) => {
-                setOptimisticTabId((pending) => pending === nextTab.id ? null : pending);
-                throw error;
-              }));
-            }
+            if (nextTab) activateTab(nextTab.id);
           }
         }
         return;
@@ -1040,18 +1053,12 @@ function App(): React.JSX.Element {
           .filter((entry) => entry.workspaceId === (currentTab?.workspaceId ?? "personal") && Boolean(entry.isPrivate) === isPrivate)
           .sort((a, b) => Number(b.isPinned) - Number(a.isPinned));
         const selected = visible[key === "9" ? visible.length - 1 : Number(key) - 1];
-        if (selected) {
-          setOptimisticTabId(selected.id);
-          run(window.browserApi.activateTab(selected.id).catch((error) => {
-            setOptimisticTabId((pending) => pending === selected.id ? null : pending);
-            throw error;
-          }));
-        }
+        if (selected) activateTab(selected.id);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [currentTab, findOpen, panel, tabSearchOpen, taskManagerOpen, clickCleanOpen, fontDiagnosticsTabId, voodooOpen, isPrivate, snapshot, run, openPanel, action]);
+  }, [currentTab, findOpen, panel, tabSearchOpen, taskManagerOpen, clickCleanOpen, fontDiagnosticsTabId, voodooOpen, isPrivate, snapshot, run, openPanel, action, activateTab]);
 
   // Google Chrome Ctrl + Wheel zoom support on shell / viewport
   useEffect(() => {
@@ -1319,9 +1326,14 @@ function App(): React.JSX.Element {
                   selectedSuggestionIndex >= 0 && selectedSuggestionIndex < omniboxSuggestions.length
                     ? omniboxSuggestions[selectedSuggestionIndex]
                     : null;
-                const targetUrl = selected && selected.kind !== "tab" ? selected.url : address.trim();
-                if (targetUrl) {
-                  createTab(isPrivate, targetUrl);
+                const value = selected && selected.kind !== "tab" ? selected.url : address.trim();
+                if (value) {
+                  const target = parseOmniboxInput(value, snapshot?.settings.searchEngine);
+                  if (target.kind === "invalid") {
+                    showError(target.reason);
+                    return;
+                  }
+                  createTab(isPrivate, target.url);
                   setEditingAddress(false);
                   setSelectedSuggestionIndex(-1);
                   addressRef.current?.blur();
@@ -2744,8 +2756,6 @@ function App(): React.JSX.Element {
                   ? `Пароль для ${pendingPasswordOffer.domain} обновлён`
                   : `Пароль для ${pendingPasswordOffer.domain} сохранён`,
               });
-              const updated = await window.browserApi.getSavedCredentialsForOrigin(orig);
-              setSiteCredentials(updated || []);
             } catch {
               showError("Не удалось сохранить пароль");
             }
