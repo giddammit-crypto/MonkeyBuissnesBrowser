@@ -1586,6 +1586,9 @@ function App(): React.JSX.Element {
                   className={`omnibox-action-btn ${popover === "qrcode" ? "active" : ""}`}
                   title="QR-код страницы · Перенести на смартфон"
                   aria-label="QR-код страницы"
+                  data-qr-code-trigger
+                  aria-haspopup="dialog"
+                  aria-expanded={popover === "qrcode"}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => {
                     setPopover((val) => (val === "qrcode" ? null : "qrcode"));
@@ -1601,16 +1604,14 @@ function App(): React.JSX.Element {
                   title="Суммаризировать страницу (Вуду AI) · 1 клик"
                   aria-label="Суммаризировать страницу"
                   onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    setVoodooOpen(true);
-                    void window.browserApi.triggerVoodooQuickAction('summary');
-                  }}
+                  onClick={() => run(window.browserApi.triggerVoodooQuickAction("summary"))}
                 >
                   <Sparkles size={15} />
                 </button>
               )}
             </div>
           )}
+          </div>
           <button
             type="button"
             className={`icon-button bookmark-button ${bookmarked ? "active" : ""}`}
@@ -1628,7 +1629,6 @@ function App(): React.JSX.Element {
           >
             <Star size={17} fill={bookmarked ? "currentColor" : "none"} />
           </button>
-          </div>
           {editingAddress && omniboxSuggestions.length > 0 && (
             <div
               ref={suggestionsListRef}
@@ -2420,53 +2420,48 @@ function App(): React.JSX.Element {
           {snapshot.workspaces.map((workspace) => (
             <div
               key={workspace.id}
-              role="button"
-              tabIndex={0}
               className={`workspace-row ${workspace.id === (currentTab?.workspaceId ?? "personal") ? "active" : ""}`}
               title={snapshot.workspaces.length > 1 ? `${workspace.name} (ПКМ — удалить)` : workspace.name}
-              onClick={() => {
-                setPanel("home");
-                run(window.browserApi.switchWorkspace(workspace.id));
-              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 if (snapshot.workspaces.length > 1) {
                   run(window.browserApi.deleteWorkspace(workspace.id));
                 }
               }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
+            >
+              <button
+                type="button"
+                className="workspace-switch"
+                aria-label={workspace.name === "Personal" ? "Личное" : workspace.name}
+                aria-pressed={workspace.id === (currentTab?.workspaceId ?? "personal")}
+                onClick={() => {
                   setPanel("home");
                   run(window.browserApi.switchWorkspace(workspace.id));
-                }
-              }}
-            >
-              <span
-                className="workspace-dot"
-                style={{ background: workspace.color }}
-              />
-              {!sidebarCollapsed && (
-                <>
-                  <span className="workspace-name">
-                    {workspace.name === "Personal" ? "Личное" : workspace.name}
-                  </span>
-                  <small>{workspace.tabIds.length}</small>
-                  {snapshot.workspaces.length > 1 && (
-                    <button
-                      type="button"
-                      className="workspace-delete-btn"
-                      title={`Удалить пространство «${workspace.name}»`}
-                      aria-label={`Удалить пространство ${workspace.name}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        run(window.browserApi.deleteWorkspace(workspace.id));
-                      }}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                </>
+                }}
+              >
+                <span
+                  className="workspace-dot"
+                  style={{ background: workspace.color }}
+                />
+                {!sidebarCollapsed && (
+                  <>
+                    <span className="workspace-name">
+                      {workspace.name === "Personal" ? "Личное" : workspace.name}
+                    </span>
+                    <small>{workspace.tabIds.length}</small>
+                  </>
+                )}
+              </button>
+              {!sidebarCollapsed && snapshot.workspaces.length > 1 && (
+                <button
+                  type="button"
+                  className="workspace-delete-btn"
+                  title={`Удалить пространство «${workspace.name}»`}
+                  aria-label={`Удалить пространство ${workspace.name}`}
+                  onClick={() => run(window.browserApi.deleteWorkspace(workspace.id))}
+                >
+                  <Trash2 size={13} />
+                </button>
               )}
             </div>
           ))}

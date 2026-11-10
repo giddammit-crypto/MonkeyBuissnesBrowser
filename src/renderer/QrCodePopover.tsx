@@ -75,6 +75,7 @@ export function QrCodePopover({ url, title, onClose, style }: QrCodePopoverProps
       if (e.key === "Escape") onClose();
     };
     const handleClickOutside = (e: MouseEvent) => {
+      if (e.target instanceof Element && e.target.closest("[data-qr-code-trigger]")) return;
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         onClose();
       }
