@@ -40,7 +40,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           mkdir -p "$GITHUB_WORKSPACE/artifacts/rea"
-          npx -y rea-agents@6.8.0 analyze-javascript-application "$GITHUB_WORKSPACE/release/linux-unpacked/resources/app.asar" --source-path dist/main/services/extensions/LocalExtensionManager.js --source-path dist/main/services/adblock/FilterEngine.js --source-path dist/main/services/browsec/BrowsecService.js --max-semantic-nodes 10000 --max-semantic-nodes-per-file 4000 --max-semantic-unknowns 2000 --max-heap-mb 512 --analysis-timeout-ms 30000 --json > "$GITHUB_WORKSPACE/artifacts/rea/plugin-audit.json"
+          npx -y rea-agents@6.8.0 analyze-javascript-application "$GITHUB_WORKSPACE/release/linux-unpacked/resources/app.asar" --source-path dist/main/services/extensions/LocalExtensionManager.js --source-path dist/main/services/adblock/FilterEngine.js --source-path dist/main/services/browsec/BrowsecService.js --source-path dist/main/main/services/ScreenshotService.js --max-semantic-nodes 10000 --max-semantic-nodes-per-file 4000 --max-semantic-unknowns 2000 --max-heap-mb 512 --analysis-timeout-ms 30000 --json > "$GITHUB_WORKSPACE/artifacts/rea/plugin-audit.json"
           node "$GITHUB_WORKSPACE/scripts/summarize-rea-audit.mjs" "$GITHUB_WORKSPACE/artifacts/rea/plugin-audit.json"
       - uses: actions/upload-artifact@v4
         if: always()
