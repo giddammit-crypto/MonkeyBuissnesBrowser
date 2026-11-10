@@ -289,6 +289,8 @@ function registerIpc(): void {
   });
   ipcMain.handle('browser:toggle-reader-mode', (event, tabId: string) => requireShell(event).toggleReaderMode(tabId));
   ipcMain.handle('browser:get-reader-article', (event, tabId: string) => requireShell(event).getReaderArticle(tabId));
+  ipcMain.handle('browser:take-screenshot', event => requireShell(event).takeTabScreenshot());
+  ipcMain.handle('browser:export-screenshot', (event, data: unknown, action: unknown) => requireShell(event).exportTabScreenshot(data, action));
   ipcMain.handle('browser:osint-page', (event, tabId: string) => requireShell(event).getOsintPage(tabId));
   ipcMain.handle('browser:osint-dns', (event, input: unknown) => requireShell(event).getOsintDns(input));
   ipcMain.handle('browser:get-page-fonts', (event, tabId: string) => requireShell(event).getPageFonts(tabId));

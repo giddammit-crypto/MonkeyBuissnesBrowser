@@ -1,3 +1,4 @@
+import { captureTabScreenshot, exportScreenshot, type TabScreenshot } from '../services/ScreenshotService';
 import { inspectOsintPage, lookupPublicDns, osintHttpEvidence } from '../services/OsintService';
 import type { DnsResult, HttpEvidence, PageOsint } from '../../shared/osint';
 import { isBrowserTheme, nativeBrowserTheme } from '../../shared/browserThemes';
@@ -4935,6 +4936,27 @@ export class BrowserController {
     return { families: applicable };
   }
 
+  async takeTabScreenshot(): Promise<TabScreenshot> {
+    const tab = this.tabs.get(this.activeTabId);
+    const contents = tab?.view?.webContents;
+    if (this.disposed || !tab || tab.isInternal || tab.isLoading || tab.lifecycle === 'crashed'
+      || !contents || contents.isDestroyed() || !isSafeWebUrl(contents.getURL())) {
+      throw new Error('Откройте загруженную веб-страницу для снимка.');
+    }
+    const url = contents.getURL();
+    const image = await captureTabScreenshot(contents);
+    if (this.disposed || this.activeTabId !== tab.id || tab.view?.webContents !== contents
+      || contents.isDestroyed() || contents.getURL() !== url) {
+      throw new Error('Страница изменилась. Сделайте снимок ещё раз.');
+    }
+    return image;
+  }
+
+  async exportTabScreenshot(dataUrl: unknown, action: unknown): Promise<boolean> {
+    if (!this.window || this.window.isDestroyed()) return false;
+    return exportScreenshot(this.window, dataUrl, action);
+  }
+
   async getOsintPage(tabId: string): Promise<PageOsint> {
     const tab = this.tabs.get(tabId);
     const contents = tab?.view?.webContents;
@@ -5304,6 +5326,9 @@ export class BrowserController {
       if (input.shift && key === 'escape') run(() => {
         this.shellView?.webContents.focus();
         this.eventListener?.({ type: 'toggle-task-manager' });
+      });
+      else if (modifier && input.shift && !input.alt && isKey('s', 'KeyS', 'ы') && tab?.webContentsId === contents.id) run(() => {
+        if (!input.isAutoRepeat) this.eventListener?.({ type: 'show-screenshot' });
       });
       else if (modifier && input.shift && isKey('v', 'KeyV', 'м')) run(() => {
         this.toggleVoodoo();

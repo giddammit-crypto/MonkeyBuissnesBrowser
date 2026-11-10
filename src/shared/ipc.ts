@@ -147,6 +147,8 @@ export interface BrowserApi {
   closeWindow(): Promise<void>;
   toggleReaderMode(tabId: string): Promise<boolean>;
   getReaderArticle(tabId: string): Promise<ReaderArticle | null>;
+  takeTabScreenshot(): Promise<{ dataUrl: string; width: number; height: number }>;
+  exportTabScreenshot(dataUrl: string, action: 'copy' | 'save'): Promise<boolean>;
   getOsintPage(tabId: string): Promise<PageOsint>;
   getOsintDns(hostname: string): Promise<DnsResult[]>;
   getPageFonts(tabId: string): Promise<PageFontReport>;

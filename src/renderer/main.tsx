@@ -123,11 +123,12 @@ import { QuickNotesDrawer } from "./QuickNotesDrawer";
 import VoodooChatBubble from "./VoodooChatBubble";
 import SplitViewControls, { SplitViewStatus } from "./SplitViewControls";
 import voodooAvatar from "./assets/voodoo-256.png";
+const ScreenshotEditor = React.lazy(() => import("./ScreenshotEditor"));
 const OsintPanel = React.lazy(() => import("./OsintPanel"));
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
-type Panel = "home" | "bookmarks" | "history" | "downloads" | "privacy" | "settings" | "osint";
+type Panel = "home" | "bookmarks" | "history" | "downloads" | "privacy" | "settings" | "osint" | "screenshot";
 type Toast = { tone: "error" | "success" | "info" | "warning"; message: string };
 // User wallpapers are kept in the trusted shell's IndexedDB. Never load
 // remote/CSS URLs, SVG or arbitrary files into the privileged browser shell.
@@ -347,6 +348,8 @@ function App(): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<BrowserSnapshot | null>(null);
   const [customWallpaper] = useCustomWallpaper();
   const [panel, setPanel] = useState<Panel>("home");
+  const [screenshot, setScreenshot] = useState<Awaited<ReturnType<typeof window.browserApi.takeTabScreenshot>>>();
+  const screenshotPending = useRef(false);
   const [address, setAddress] = useState("");
   const [editingAddress, setEditingAddress] = useState(false);
   const [splitControlsOpen, setSplitControlsOpen] = useState(false);
@@ -582,6 +585,19 @@ function App(): React.JSX.Element {
       remove();
     };
   }, [run]);
+  const startScreenshot = useCallback(() => {
+    if (screenshotPending.current) return;
+    screenshotPending.current = true;
+    setPopover(null);
+    run(window.browserApi.takeTabScreenshot().then(image => {
+      setScreenshot(image);
+      setPanel("screenshot");
+    }).finally(() => { screenshotPending.current = false; }));
+  }, [run]);
+  useEffect(() => {
+    if (panel !== "screenshot") setScreenshot(undefined);
+  }, [panel]);
+
   useEffect(() => {
     const remove = window.browserApi.onTabEvent((event) => {
       if (event.type === "focus-address") {
@@ -595,6 +611,10 @@ function App(): React.JSX.Element {
         };
         focusAndSelect();
         requestAnimationFrame(focusAndSelect);
+        return;
+      }
+      if (event.type === "show-screenshot") {
+        startScreenshot();
         return;
       }
       if (event.type === "toggle-task-manager") {
@@ -657,7 +677,7 @@ function App(): React.JSX.Element {
       }
     });
     return remove;
-  }, [openPanel]);
+  }, [openPanel, startScreenshot]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 4000);
@@ -914,6 +934,12 @@ function App(): React.JSX.Element {
         return;
       }
 
+      if (modifier && event.shiftKey && !event.altKey && (key === "s" || event.code === "KeyS") && panel === "home" && currentTab && !currentTab.isInternal) {
+        event.preventDefault();
+        if (!event.repeat) startScreenshot();
+        return;
+      }
+
       // Fullscreen: F11
       if (key === "f11") {
         event.preventDefault();
@@ -1065,7 +1091,7 @@ function App(): React.JSX.Element {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [currentTab, findOpen, panel, tabSearchOpen, taskManagerOpen, clickCleanOpen, fontDiagnosticsTabId, voodooOpen, isPrivate, snapshot, run, openPanel, action, activateTab]);
+  }, [currentTab, findOpen, panel, tabSearchOpen, taskManagerOpen, clickCleanOpen, fontDiagnosticsTabId, voodooOpen, isPrivate, snapshot, run, openPanel, action, activateTab, startScreenshot]);
 
   // Google Chrome Ctrl + Wheel zoom support on shell / viewport
   useEffect(() => {
@@ -1980,6 +2006,13 @@ function App(): React.JSX.Element {
               }}
             />
             <MenuAction
+              icon={<Image size={16} />}
+              label="Снимок вкладки"
+              detail={navigator.platform.startsWith("Mac") ? "⌘+Shift+S" : "Ctrl+Shift+S"}
+              disabled={panel !== "home" || !currentTab || currentTab.isInternal || currentTab.lifecycle === "crashed" || currentTab.isLoading}
+              onClick={startScreenshot}
+            />
+            <MenuAction
               icon={<Search size={16} />}
               label="OSINT · Исследовать сайт"
               disabled={isPrivate}
@@ -2684,6 +2717,11 @@ function App(): React.JSX.Element {
                  setPopover("protection");
                }}
              />
+           )}
+           {panel === "screenshot" && screenshot && (
+             <React.Suspense fallback={<p role="status">Открываем редактор снимка…</p>}>
+               <ScreenshotEditor image={screenshot} onClose={() => openPanel("home")} />
+             </React.Suspense>
            )}
            {panel === "osint" && !isPrivate && (
              <React.Suspense fallback={<p role="status">Открываем панель OSINT…</p>}>
