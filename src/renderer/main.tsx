@@ -596,6 +596,10 @@ function App(): React.JSX.Element {
       setPanel("screenshot");
     }).finally(() => { screenshotPending.current = false; }));
   }, [run]);
+  const toggleScreenshot = useCallback(() => {
+    if (panelRef.current === "screenshot") setPanel("home");
+    else startScreenshot();
+  }, [startScreenshot]);
   useEffect(() => {
     if (panel !== "screenshot") setScreenshot(undefined);
   }, [panel]);
@@ -616,11 +620,7 @@ function App(): React.JSX.Element {
         return;
       }
       if (event.type === "show-screenshot") {
-        if (panelRef.current === "screenshot") {
-          setPanel("home");
-        } else {
-          startScreenshot();
-        }
+        toggleScreenshot();
         return;
       }
       if (event.type === "toggle-task-manager") {
@@ -683,7 +683,7 @@ function App(): React.JSX.Element {
       }
     });
     return remove;
-  }, [openPanel, startScreenshot]);
+  }, [openPanel, toggleScreenshot]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 4000);
@@ -943,13 +943,7 @@ function App(): React.JSX.Element {
       const isScreenshotKey = modifier && event.shiftKey && !event.altKey && (key === "s" || key === "ы" || event.code === "KeyS");
       if (isScreenshotKey) {
         event.preventDefault();
-        if (!event.repeat) {
-          if (panel === "screenshot") {
-            setPanel("home");
-          } else {
-            startScreenshot();
-          }
-        }
+        if (!event.repeat) toggleScreenshot();
         return;
       }
 
@@ -1104,7 +1098,7 @@ function App(): React.JSX.Element {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [currentTab, findOpen, panel, tabSearchOpen, taskManagerOpen, clickCleanOpen, fontDiagnosticsTabId, voodooOpen, isPrivate, snapshot, run, openPanel, action, activateTab, startScreenshot]);
+  }, [currentTab, findOpen, panel, tabSearchOpen, taskManagerOpen, clickCleanOpen, fontDiagnosticsTabId, voodooOpen, isPrivate, snapshot, run, openPanel, action, activateTab, toggleScreenshot]);
 
   // Google Chrome Ctrl + Wheel zoom support on shell / viewport
   useEffect(() => {

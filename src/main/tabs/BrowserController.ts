@@ -5355,10 +5355,11 @@ export class BrowserController {
         this.shellView?.webContents.focus();
         this.eventListener?.({ type: 'toggle-task-manager' });
       });
-      else if (modifier && input.shift && !input.alt && isKey('s', 'KeyS', 'ы') && contents.id !== this.shellView?.webContents.id) run(() => {
+      else if (modifier && input.shift && !input.alt && isKey('s', 'KeyS', 'ы')) run(() => {
+        if (input.isAutoRepeat) return;
         this.exitPageFullscreen();
         this.shellView?.webContents.focus();
-        if (!input.isAutoRepeat) this.eventListener?.({ type: 'show-screenshot' });
+        this.eventListener?.({ type: 'show-screenshot' });
       });
       else if (modifier && input.shift && isKey('v', 'KeyV', 'м')) run(() => {
         this.toggleVoodoo();
