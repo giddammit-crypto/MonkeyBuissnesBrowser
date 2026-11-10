@@ -35,35 +35,27 @@ const origin = (raw?: string): string | null => {
   }
 };
 
-function generateSecurePassword(length = 18): string {
+export function generateSecurePassword(length = 18): string {
   const lowercase = 'abcdefghjkmnpqrstuvwxyz';
   const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
   const numbers = '23456789';
   const symbols = '!@#$%^&*-_+=';
   const all = lowercase + uppercase + numbers + symbols;
 
-  const result: string[] = [
-    lowercase[Math.floor(Math.random() * lowercase.length)],
-    uppercase[Math.floor(Math.random() * uppercase.length)],
-    numbers[Math.floor(Math.random() * numbers.length)],
-    symbols[Math.floor(Math.random() * symbols.length)],
-  ];
+  const randomValue = new Uint32Array(1);
+  const randomIndex = (size: number) => {
+    const limit = Math.floor(2 ** 32 / size) * size;
+    do {
+      crypto.getRandomValues(randomValue);
+    } while (randomValue[0] >= limit);
+    return randomValue[0] % size;
+  };
 
-  const remaining = Math.max(0, length - result.length);
-  if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
-    const array = new Uint32Array(remaining);
-    window.crypto.getRandomValues(array);
-    for (let i = 0; i < array.length; i++) {
-      result.push(all[array[i] % all.length]);
-    }
-  } else {
-    for (let i = 0; i < remaining; i++) {
-      result.push(all[Math.floor(Math.random() * all.length)]);
-    }
-  }
+  const result = [lowercase, uppercase, numbers, symbols].map(charset => charset[randomIndex(charset.length)]);
+  while (result.length < length) result.push(all[randomIndex(all.length)]);
 
   for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomIndex(i + 1);
     const temp = result[i];
     result[i] = result[j];
     result[j] = temp;

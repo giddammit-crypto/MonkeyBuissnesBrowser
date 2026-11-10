@@ -107,6 +107,17 @@ try {
     assert(!fs.readFileSync(path.join(dataPath, 'browser-data/passwords.enc'), 'utf8').includes(fakePassword));
     assert(!JSON.stringify(await snapshot()).includes(fakePassword));
   });
+  await check('address-bar credential badge refreshes while the same HTTPS tab stays active', async () => {
+    await create();
+    const badge = shell.getByRole('button', { name: 'Сохранённые пароли', exact: true });
+    await expect(badge).toHaveText('Вход');
+    const extra = await invoke('saveCredential', loginOrigin, 'additional-fixture-user', fakePassword);
+    await expect(badge).toHaveText('2');
+    assert.equal(await invoke('deleteSavedPassword', extra.id), true);
+    await expect(badge).toHaveText('Вход');
+    await create('/login', { isPrivate: true });
+    await expect(badge).toHaveCount(0);
+  });
   await check('explicit exact-origin HTTPS fill uses native setters and never submits the form', async () => {
     const tab = await create('/tampered');
     assert.deepEqual(await values(tab), { username: '', password: '', submits: 0, mainSetter: false });

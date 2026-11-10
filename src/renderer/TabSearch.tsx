@@ -89,6 +89,7 @@ export default function TabSearch({ snapshot, onActivate, onCloseTab, onDismiss,
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.nativeEvent.isComposing) return;
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onDismiss(); return; }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault(); event.stopPropagation(); move(event.key === 'ArrowDown' ? 1 : -1); return;
@@ -98,7 +99,8 @@ export default function TabSearch({ snapshot, onActivate, onCloseTab, onDismiss,
       if (selected) void perform(selected.id, true);
       return;
     }
-    if ((event.key === 'Delete' || (event.ctrlKey && event.key === 'w')) && selected) {
+    const deletingResult = event.key === 'Delete' && event.target instanceof Element && event.target.closest('.tab-search-row');
+    if ((deletingResult || (event.ctrlKey && event.key === 'w')) && selected) {
       event.preventDefault(); event.stopPropagation();
       void perform(selected.id, false);
       return;
@@ -130,7 +132,7 @@ export default function TabSearch({ snapshot, onActivate, onCloseTab, onDismiss,
               <span className="tab-search-icon" aria-hidden="true">{isPrivate ? <Shield size={18} /> : <Globe2 size={18} />}</span>
               <span className="tab-search-copy"><strong className="tab-search-title">{title}</strong><span className="tab-search-url" title={tab.url}>{tab.url}</span><span className="tab-search-meta">{workspace}{snapshot.activeTabId === tab.id ? ' · Текущая' : ''}{tab.isPinned ? ' · Закреплена' : ''}{tab.lifecycle === 'hibernated' ? ' · Спит' : ''}{tab.lifecycle === 'crashed' ? ' · Требует перезагрузки' : ''}</span></span>
             </button>
-            <button type="button" className="tab-search-close icon-button" disabled={pendingIds.has(tab.id)} aria-label={`Закрыть вкладку ${title}`} title={`Закрыть вкладку ${title}`} onClick={() => void perform(tab.id, false)}><X size={17} /></button>
+            <button type="button" className="tab-search-close icon-button" disabled={pendingIds.has(tab.id)} onFocus={() => setSelectedId(tab.id)} aria-label={`Закрыть вкладку ${title}`} title={`Закрыть вкладку ${title}`} onClick={() => void perform(tab.id, false)}><X size={17} /></button>
           </li>;
         })}</ul>}
       </div>

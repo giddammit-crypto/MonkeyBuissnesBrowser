@@ -262,7 +262,7 @@ describe('Password and login input scoping', () => {
     // Give any async calls a tick to complete
     await new Promise(r => setTimeout(r, 10));
     expect(appendedElements.length).toBe(0);
-    expect(invoke).not.toHaveBeenCalledWith('page:get-autofill-credentials', expect.anything());
+    expect(invoke).not.toHaveBeenCalledWith('page:get-autofill-credentials');
 
     // 2. Focusing a password input SHOULD invoke credentials and create a dropdown
     const passInput = new MockInput();

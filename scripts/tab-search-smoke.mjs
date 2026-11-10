@@ -63,6 +63,22 @@ try {
   await expect.poll(async()=>(await snapshot()).activeTabId).not.toBe(alpha.id);
   await invoke('activateTab',alpha.id);
   console.log('PASS tab-strip Home/End/arrows keep focus and Enter activates a native page');
+  const address = shell.getByRole('textbox', { name: 'Адресная строка', exact: true });
+  await expect(address).toHaveValue(`${new URL(base).host}/alpha`);
+  await nativeKey(`${base}/alpha`, 'L', [primary]);
+  await expect(address).toBeFocused();
+  await expect(address).toHaveValue(`${base}/alpha`);
+  await shell.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve())));
+  await address.fill(`${new URL(base).host}/keyboard-shortcut`);
+  await expect(address).toHaveValue(`${new URL(base).host}/keyboard-shortcut`);
+  await address.press('Alt+Enter');
+  await expect.poll(async () => {
+    const state = await snapshot();
+    return state.tabs.find(tab => tab.id === state.activeTabId)?.url;
+  }).toBe(`${base}/keyboard-shortcut`);
+  await invoke('closeTab', (await snapshot()).activeTabId);
+  await invoke('activateTab', alpha.id);
+  console.log('PASS Omnibox Alt+Enter resolves a scheme-less address and opens a separate tab');
   const secondWorkspace = await invoke('createWorkspace', 'Second workspace');
   await invoke('switchWorkspace', secondWorkspace.id);
   const longPath = `/beta?unique-only-url=${'complete-address-'.repeat(24)}end`;
@@ -105,6 +121,11 @@ try {
 
   await shell.getByRole('button', { name: 'Поиск по вкладкам', exact: true }).click();
   await input().fill('Alpha library');
+  await input().press('Home');
+  await input().press('Delete');
+  await expect(input()).toHaveValue('lpha library');
+  await expect(dialog().locator('.tab-search-row')).toHaveCount(1);
+  assert((await snapshot()).tabs.some(entry => entry.id === alpha.id), 'Delete in the search field edits the query, not the tab');
   await dialog().getByRole('button', { name: 'Закрыть вкладку Alpha library', exact: true }).click();
   await expect.poll(async () => (await snapshot()).tabs.some(entry => entry.id === alpha.id)).toBe(false);
   await expect(dialog().locator('.tab-search-empty')).toBeVisible();

@@ -1,6 +1,5 @@
-import { ipcRenderer, webFrame } from 'electron';
+import { ipcRenderer } from 'electron';
 import type { ReaderArticle } from '../shared/types';
-import { getPageStealthScript } from '../shared/chromiumIdentity';
 
 /** A disabled/unavailable main-process policy must leave the site's DOM alone. */
 export function createYouTubeAdBlockPolicyGate(start: () => (() => void) | undefined) {
@@ -19,19 +18,6 @@ export function createYouTubeAdBlockPolicyGate(start: () => (() => void) | undef
   };
 }
 
-// Chromium 134 native Chrome stealth injection for sandboxed preloads
-const STEALTH_SCRIPT = getPageStealthScript();
-
-// Apply Chromium stealth injection in main world before page scripts run
-try {
-  if (typeof webFrame !== 'undefined' && typeof webFrame.executeJavaScript === 'function') {
-    void webFrame.executeJavaScript(STEALTH_SCRIPT);
-  }
-} catch {
-  // Environments without webFrame (e.g. unit tests) gracefully ignore this
-}
-
-// No bridge is exposed to websites. A dirty form conservatively prevents discarding
 // No bridge is exposed to websites. A dirty form conservatively prevents discarding
 // unsaved input; a completed main-frame navigation resets this in the controller.
 let dirty = false;
@@ -555,11 +541,8 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
     if (fetchingCredentialsPromise) return fetchingCredentialsPromise;
     fetchingCredentialsPromise = (async () => {
       try {
-        if (!window.location.protocol.startsWith('http')) return [];
-        const res = await ipcRenderer.invoke('page:get-autofill-credentials', {
-          origin: window.location.origin,
-          hostname: window.location.hostname,
-        });
+        if (window.location.protocol !== 'https:') return [];
+        const res = await ipcRenderer.invoke('page:get-autofill-credentials');
         cachedCredentials = Array.isArray(res) ? res : [];
       } catch {
         cachedCredentials = [];

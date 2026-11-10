@@ -31,42 +31,10 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('use-webgpu-adapter', 'opengles');
   app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
 }
-app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp');
 app.commandLine.appendSwitch('enable-features', 'DnsOverHttps');
 app.commandLine.appendSwitch('dns-over-https-mode', 'secure');
 app.commandLine.appendSwitch('dns-over-https-templates', 'https://cloudflare-dns.com/dns-query');
-
-app.on('certificate-error', (event, _webContents, _url, error, certificate, callback) => {
-  const isAuthorityOrRevocation = error === 'net::ERR_CERT_AUTHORITY_INVALID' || error === 'net::ERR_CERT_UNABLE_TO_CHECK_REVOCATION';
-  if (isAuthorityOrRevocation && certificate) {
-    const nowSec = Date.now() / 1000;
-    if (certificate.validStart && certificate.validExpiry && (nowSec < certificate.validStart || nowSec > certificate.validExpiry)) {
-      callback(false);
-      return;
-    }
-    let currentCert: Electron.Certificate | undefined = certificate;
-    while (currentCert) {
-      const issuer = (currentCert.issuerName || '').toLowerCase();
-      if (
-        issuer.includes('russian trusted') ||
-        issuer.includes('минцифры') ||
-        issuer.includes('ministry of digital development') ||
-        issuer.includes('национальный удостоверяющий центр') ||
-        issuer.includes('госуслуги') ||
-        issuer.includes('минкомсвязь') ||
-        issuer.includes('sber ca') ||
-        issuer.includes('sberbank ca')
-      ) {
-        event.preventDefault();
-        callback(true);
-        return;
-      }
-      currentCert = currentCert.issuerCert;
-    }
-  }
-  callback(false);
-});
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -162,18 +130,14 @@ function registerIpc(): void {
     if (event.senderFrame !== event.sender.mainFrame || !c) return false;
     return c.getPageAdBlockPolicy(event.sender.id);
   });
-  ipcMain.handle('page:get-autofill-credentials', (event, data: { origin: string; hostname?: string }) => {
+  ipcMain.handle('page:get-autofill-credentials', (event) => {
     const c = BrowserController.findControllerForPage(event.sender.id);
-    if (event.senderFrame !== event.sender.mainFrame || !c) return [];
-    if (event.senderFrame?.url) {
-      try {
-        const frameOrigin = new URL(event.senderFrame.url).origin;
-        if (frameOrigin !== data?.origin) return [];
-      } catch {
-        return [];
-      }
-    }
-    return c.getPageAutofillCredentials(event.sender.id, data);
+    const frame = event.senderFrame;
+    if (!c || !frame || frame !== event.sender.mainFrame) return [];
+    let url: URL;
+    try { url = new URL(frame.url); } catch { return []; }
+    if (url.protocol !== 'https:') return [];
+    return c.getPageAutofillCredentials(event.sender.id, url.origin);
   });
   ipcMain.on('page:form-state', (event, dirty: unknown) => {
     const c = BrowserController.findControllerForPage(event.sender.id);

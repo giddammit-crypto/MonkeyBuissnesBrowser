@@ -7,6 +7,7 @@ vi.mock('electron', () => ({
 }));
 import { MemoryManager } from '../../src/services/memory/MemoryManager';
 import { BrowserController } from '../../src/main/tabs/BrowserController';
+import { siteFontMonitor } from '../../src/main/services/SiteFontMonitor';
 
 function memoryTab(tabId: string, lastInteractionAt: number) {
   return { tabId, active: false, pinned: false, audible: false, loading: false, downloading: false, lastInteractionAt, lifecycle: 'background' as const };
@@ -14,6 +15,7 @@ function memoryTab(tabId: string, lastInteractionAt: number) {
 function nativeFixture() {
   const contents = Object.assign(new EventEmitter(), {
     id: 7, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), close: vi.fn(),
+    navigationHistory: { canGoBack: () => false, canGoForward: () => false },
   });
   const external = vi.fn();
   contents.on('destroyed', external);
@@ -27,6 +29,7 @@ function nativeFixture() {
     tabs: new Map([[tab.id, tab]]), activeTabId: 'other', memoryManager,
     tabHandlerCleanup: new Map(), capturedMediaStreams: new Map([[7, { audio: 'captured' }]]),
     popupOpeners: new Map(), popupToTab: new Map(), installShortcuts: vi.fn(), emitSnapshot: vi.fn(),
+    stores: { addHistory: vi.fn() }, fontCompatCssKeys: new Map(), fontCompatFamilies: new Map(),
   });
   controller.installTabHandlers(tab);
   return { controller, contents, tab, external };
@@ -71,7 +74,7 @@ describe('Browser memory runtime regressions', () => {
     const controller = Object.create(BrowserController.prototype) as any;
     Object.assign(controller, { tabs, memoryManager: memory, hibernateTab: vi.fn().mockResolvedValue(true) });
     await controller.hibernateIdleTabs(0);
-    expect(controller.hibernateTab.mock.calls).toEqual([['oldest']]);
+    expect(controller.hibernateTab.mock.calls).toEqual([['oldest', 0]]);
     expect(controller.memorySweepRunning).toBe(false);
   });
 
@@ -98,5 +101,45 @@ describe('Browser memory runtime regressions', () => {
     expect(tab.view).toBeUndefined();
     expect(controller.tabHandlerCleanup.size).toBe(0);
     expect(controller.memoryManager.canHibernate(tab.id, 0).reason).toBe('not-background-tab');
+  });
+
+  it('releases document diagnostics even when detaching removes the destroyed listener', () => {
+    const { controller, contents, tab } = nativeFixture();
+    const caches = BrowserController as any;
+    caches.xmlDocuments.set(contents.id, { url: tab.url, contentType: 'text/xml' });
+    caches.xsltApplied.add(contents.id);
+    caches.relaxedFontResponses.set(contents.id, 1);
+    siteFontMonitor.noteHttpStatus(contents.id, 'https://example.com/missing.woff2', 404);
+    controller.fontCompatCssKeys.set(tab.id, ['old-css']);
+    controller.fontCompatFamilies.set(tab.id, ['Old Font']);
+
+    controller.detachView(tab);
+
+    expect(caches.xmlDocuments.has(contents.id)).toBe(false);
+    expect(caches.xsltApplied.has(contents.id)).toBe(false);
+    expect(caches.relaxedFontResponses.has(contents.id)).toBe(false);
+    expect(siteFontMonitor.snapshot(contents.id)).toEqual([]);
+    expect(controller.fontCompatCssKeys.has(tab.id)).toBe(false);
+    expect(controller.fontCompatFamilies.has(tab.id)).toBe(false);
+  });
+
+  it('preserves current media during same-document navigation and ignores subframe addresses', () => {
+    const { controller, contents, tab } = nativeFixture();
+    controller.fontCompatFamilies.set(tab.id, ['Substitute']);
+    contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true });
+    contents.emit('did-navigate-in-page', {}, 'https://embed.example/frame#anchor', false);
+    expect(tab.url).toBe('https://example.com');
+    expect(controller.stores.addHistory).not.toHaveBeenCalled();
+
+    contents.emit('did-navigate-in-page', {}, 'https://example.com/#anchor', true);
+    expect(tab).toMatchObject({ url: 'https://example.com/#anchor', isLoading: true, isAudible: true, hasVideoMedia: true, hasDownloadableMedia: true });
+    expect(controller.capturedMediaStreams.has(contents.id)).toBe(true);
+    expect(controller.fontCompatFamilies.get(tab.id)).toEqual(['Substitute']);
+    expect(controller.stores.addHistory).toHaveBeenCalledOnce();
+
+    contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    expect(tab).toMatchObject({ isAudible: false, hasVideoMedia: false, hasDownloadableMedia: false });
+    expect(controller.capturedMediaStreams.has(contents.id)).toBe(false);
+    expect(controller.fontCompatFamilies.has(tab.id)).toBe(false);
   });
 });

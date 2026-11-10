@@ -42,6 +42,21 @@ describe('Browser page IPC ownership lifecycle', () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  it('returns autofill secrets only for the exact origin and only in a normal page tab', () => {
+    const controller = controllerFixture();
+    const tab = { webContentsId: 42, isPrivate: false, isInternal: false };
+    controller.tabs.set('active', tab);
+    const exact = { id: 'exact', username: 'same-site', password: 'fixture-1', exactOrigin: true };
+    const sibling = { id: 'sibling', username: 'other-site', password: 'fixture-2', exactOrigin: false };
+    controller.passwords = { getCredentialsForAutofill: vi.fn(() => [exact, sibling]) };
+
+    expect(controller.getPageAutofillCredentials(42, 'https://login.example.com')).toEqual([exact]);
+    expect(controller.passwords.getCredentialsForAutofill).toHaveBeenCalledExactlyOnceWith('https://login.example.com');
+    expect(controller.getPageAutofillCredentials(99, 'https://login.example.com')).toEqual([]);
+    tab.isPrivate = true;
+    expect(controller.getPageAutofillCredentials(42, 'https://login.example.com')).toEqual([]);
+  });
+
   it('repeated controller disposal removes owned listeners while retaining unrelated listeners', () => {
     const foreign = vi.fn();
     ipcMain.on('page:test-lifecycle', foreign);

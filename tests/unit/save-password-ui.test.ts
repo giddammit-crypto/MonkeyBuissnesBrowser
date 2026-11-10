@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SavePasswordOffer } from '../../src/shared/types';
+import { generateSecurePassword } from '../../src/renderer/PasswordManager';
 
 describe('Save Password UI & CyberLife HUD logic', () => {
   function extractDomain(rawOrigin: string): string {
@@ -9,35 +10,6 @@ describe('Save Password UI & CyberLife HUD logic', () => {
     } catch {
       return rawOrigin.replace(/^https?:\/\//, '').split('/')[0] || rawOrigin;
     }
-  }
-
-  function generateSecurePassword(length = 18): string {
-    const lowercase = 'abcdefghjkmnpqrstuvwxyz';
-    const uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-    const numbers = '23456789';
-    const symbols = '!@#$%^&*-_+=';
-    const all = lowercase + uppercase + numbers + symbols;
-
-    const result: string[] = [
-      lowercase[Math.floor(Math.random() * lowercase.length)],
-      uppercase[Math.floor(Math.random() * uppercase.length)],
-      numbers[Math.floor(Math.random() * numbers.length)],
-      symbols[Math.floor(Math.random() * symbols.length)],
-    ];
-
-    const remaining = Math.max(0, length - result.length);
-    for (let i = 0; i < remaining; i++) {
-      result.push(all[Math.floor(Math.random() * all.length)]);
-    }
-
-    for (let i = result.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      const temp = result[i];
-      result[i] = result[j];
-      result[j] = temp;
-    }
-
-    return result.join('');
   }
 
   it('correctly extracts display domain for badges', () => {
@@ -60,6 +32,25 @@ describe('Save Password UI & CyberLife HUD logic', () => {
     // Multiple generations should not produce duplicates
     const set = new Set(Array.from({ length: 20 }, () => generateSecurePassword(18)));
     expect(set.size).toBe(20);
+  });
+
+  it('uses Web Crypto for every password character and shuffle step and rejects biased samples', () => {
+    const insecureRandom = vi.spyOn(Math, 'random');
+    const cryptoRandom = vi.spyOn(crypto, 'getRandomValues').mockImplementation(values => {
+      (values as Uint32Array)[0] = 0;
+      return values;
+    }).mockImplementationOnce(values => {
+      (values as Uint32Array)[0] = 0xffffffff;
+      return values;
+    });
+    try {
+      generateSecurePassword();
+      expect(cryptoRandom).toHaveBeenCalledTimes(18 + 17 + 1);
+      expect(insecureRandom).not.toHaveBeenCalled();
+    } finally {
+      insecureRandom.mockRestore();
+      cryptoRandom.mockRestore();
+    }
   });
 
   it('handles SavePasswordOffer structure for both new and updating passwords', () => {

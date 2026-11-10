@@ -14,9 +14,47 @@ function fixture(version = '1') {
   dialogs.showOpenDialog.mockResolvedValue({ canceled: false, filePaths: [extension] });
   dialogs.showMessageBox.mockResolvedValue({ response: 1 });
   const runtime = { loadExtension: vi.fn(async () => ({ id: 'test' })), removeExtension: vi.fn() };
-  return { manager: new LocalExtensionManager({ extensions: runtime } as any, root), runtime, root };
+  const session = { extensions: runtime } as any;
+  return { manager: LocalExtensionManager.forSession(session, root), session, runtime, root, extension };
 }
 describe('local extensions failure consistency', () => {
+  it('shares registration across windows and restores a saved extension only once per session', async () => {
+    const { manager, session, runtime, root, extension } = fixture();
+    fs.mkdirSync(path.join(root, 'browser-data'));
+    fs.writeFileSync(path.join(root, 'browser-data/extensions.json'), JSON.stringify([{ directory: extension }]));
+    // A different Electron Session represents the next browser process.
+    const nextSession = { ...session };
+    const firstWindow = LocalExtensionManager.forSession(nextSession, root);
+    const secondWindow = LocalExtensionManager.forSession(nextSession, root);
+    expect(firstWindow).not.toBe(manager);
+    await Promise.all([firstWindow.restore(), secondWindow.restore()]);
+    expect(runtime.loadExtension).toHaveBeenCalledExactlyOnceWith(extension, { allowFileAccess: false });
+    expect(firstWindow.list()).toHaveLength(1);
+    secondWindow.remove('test');
+    expect(firstWindow.list()).toEqual([]);
+    await firstWindow.restore();
+    expect(runtime.loadExtension).toHaveBeenCalledOnce();
+  });
+
+  it('retries a concurrent install after an earlier persistence failure rolls back', async () => {
+    const { manager, runtime } = fixture();
+    vi.spyOn((manager as any).saved, 'set').mockImplementationOnce(() => { throw new Error('Disk full'); });
+    const results = await Promise.allSettled([manager.install({} as any), manager.install({} as any)]);
+    expect(results.map(result => result.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(runtime.removeExtension).toHaveBeenCalledOnce();
+    expect(runtime.loadExtension).toHaveBeenCalledTimes(2);
+    expect(manager.list()).toHaveLength(1);
+  });
+
+  it('retains the running extension when its removal cannot be saved', async () => {
+    const { manager, runtime } = fixture();
+    await manager.install({} as any);
+    vi.spyOn((manager as any).saved, 'set').mockImplementationOnce(() => { throw new Error('Disk full'); });
+    expect(() => manager.remove('test')).toThrow('Disk full');
+    expect(runtime.removeExtension).not.toHaveBeenCalled();
+    expect(manager.list()).toHaveLength(1);
+  });
+
   it('retains active and durable registration when Electron refuses removal', async () => {
     const { manager, runtime, root } = fixture();
     await manager.install({} as any);
