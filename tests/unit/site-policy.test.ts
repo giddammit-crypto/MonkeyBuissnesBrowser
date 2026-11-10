@@ -100,7 +100,7 @@ describe('Google auth help and explicit external navigation', () => {
     expect(shouldStripThirdPartyCookies({ ...input, requestUrl: 'https://accounts.google.com/v3/signin-elsewhere' })).toBe(true);
   });
   it('recognizes actual rejection routes but leaves normal sign-in flows unobstructed', () => {
-    expect(getGoogleAuthNotice('https://accounts.google.com/v3/signin/rejected?continue=x')?.title).toContain('ограничил');
+    expect(getGoogleAuthNotice('https://accounts.google.com/v3/signin/rejected?continue=x')?.title).toContain('отклонил');
     for (const path of ['/o/oauth2/v2/auth?client_id=x','/ServiceLogin?service=youtube','/AccountChooser?service=youtube','/v3/signin/identifier?service=youtube','/v3/signin/challenge/pwd']) {
       expect(getGoogleAuthNotice(`https://accounts.google.com${path}`)).toBeNull();
     }
@@ -112,6 +112,16 @@ describe('Google auth help and explicit external navigation', () => {
   it('opens a fresh supported sign-in entry for rejected YouTube logins without copying hostile continue URLs', () => {
     expect(getExternalPageUrl('https://accounts.google.com/v3/signin/rejected?continue=https%3A%2F%2Fwww.youtube.com%2F')).toBe('https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.youtube.com%2F');
     expect(getExternalPageUrl('https://accounts.google.com/signin/rejected?continue=https://evil.test')).not.toContain('evil.test');
+    for (const [raw, destination] of [
+      ['https://accounts.google.com/v3/signin/rejected?continue=https://mail.google.com/mail/u/0/?token=private', 'https://mail.google.com/'],
+      ['https://accounts.google.com/o/oauth2/error?error=disallowed_useragent&service=wise&state=old', 'https://drive.google.com/'],
+      ['https://accounts.google.com/v3/signin/rejected?continue=https://evil.youtube.com/', 'https://www.google.com/'],
+      ['https://accounts.google.com/v3/signin/rejected?continue=https://drive.google.com:8443/', 'https://www.google.com/'],
+    ]) {
+      const target = new URL(getExternalPageUrl(raw)!);
+      expect(target.pathname).toBe('/ServiceLogin');
+      expect([...target.searchParams.entries()]).toEqual([['continue', destination]]);
+    }
     expect(getExternalPageUrl('https://www.youtube.com/')).toBe('https://www.youtube.com/');
     expect(getExternalPageUrl('javascript:alert(1)')).toBeNull();
     expect(getExternalPageUrl('https://username:password@example.com')).toBeNull();

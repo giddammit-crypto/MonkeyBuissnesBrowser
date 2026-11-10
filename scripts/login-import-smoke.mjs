@@ -70,7 +70,8 @@ try {
   target.protocol.handle('https',()=>new Response('<title>Local Google rejection fixture</title><h1>Local fixture — no real Google sign-in</h1>',{headers:{'content-type':'text/html'}}));
   globalThis.__originalMessageBox=dialog.showMessageBox;globalThis.__originalExternal=shell.openExternal;
   globalThis.__openedUrls=[];
-  dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});
+  globalThis.__confirmBrowser=0;
+  dialog.showMessageBox=async()=>({response:globalThis.__confirmBrowser,checkboxChecked:false});
   shell.openExternal=async url=>{globalThis.__openedUrls.push(url);};
  });
  const ordinary=await invoke('createTab',{url:'https://accounts.google.com/ServiceLogin?service=youtube',isPrivate:false});
@@ -80,13 +81,37 @@ try {
  await expect(shell.locator('.auth-help-banner')).toHaveCount(0);
  assert.deepEqual(await app.evaluate(()=>globalThis.__openedUrls),[],'normal sign-in must stay inside the browser');
  const denied=await invoke('createTab',{url:'https://accounts.google.com/v3/signin/rejected?continue=https%3A%2F%2Fwww.youtube.com%2F',isPrivate:false});
- await expect(shell.locator('.auth-help-banner')).toBeVisible();
- await expect(shell.locator('.auth-help-banner')).toContainText('не переносит');
- await app.evaluate(({BaseWindow})=>BaseWindow.getAllWindows()[0].setSize(920,640));
- await expect.poll(()=>shell.locator('.app-shell').evaluate(element=>Math.round(element.getBoundingClientRect().width))).toBe(920);
- assert(await shell.locator('.auth-help-banner').evaluate(element=>element.scrollWidth<=element.clientWidth),'rejection help controls must fit the compact window');
- await invoke('openCurrentPageExternally',denied.id);
- assert.deepEqual(await app.evaluate(()=>globalThis.__openedUrls),['https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.youtube.com%2F']);
+ const banner = shell.getByRole('region', { name: 'Помощь со входом Google' });
+ const open = banner.getByRole('button', { name: 'Продолжить вход', exact: true });
+ await expect(banner).toBeVisible();
+ await expect(banner).toContainText('в системном браузере');
+ for (const [width, theme] of [[360, 'light'], [920, 'dark'], [1280, 'graphite']]) {
+  await invoke('updateSettings', { theme });
+  await app.evaluate(({BaseWindow}, width)=>BaseWindow.getAllWindows()[0].setSize(width,640), width);
+  await expect.poll(()=>shell.locator('.app-shell').evaluate(element=>Math.round(element.getBoundingClientRect().width))).toBe(width);
+  await expect(shell.locator('html')).toHaveAttribute('data-theme', theme);
+  await expect(open).toBeInViewport({ ratio: 1 });
+  const surface = await banner.evaluate(element=>{
+   const canvas=document.createElement('canvas');
+   const ctx=canvas.getContext('2d');
+   const layers=[element,element.parentElement];
+   return layers.map(layer=>{
+    ctx.clearRect(0,0,1,1);
+    ctx.fillStyle=getComputedStyle(layer).backgroundColor;
+    ctx.fillRect(0,0,1,1);
+    return { alpha:ctx.getImageData(0,0,1,1).data[3], overflow:layer.scrollWidth>layer.clientWidth };
+   });
+  });
+  assert.deepEqual(surface,[{alpha:255,overflow:false},{alpha:255,overflow:false}]);
+  const viewportTop=await shell.locator('.page-viewport').evaluate(element=>Math.round(element.getBoundingClientRect().top));
+  await expect.poll(()=>app.evaluate(({BaseWindow}, url)=>BaseWindow.getAllWindows()[0].contentView.children
+   .find(view=>view.webContents?.getURL()===url)?.getBounds().y, denied.url)).toBe(viewportTop);
+ }
+ await open.click();
+ assert.deepEqual(await app.evaluate(()=>globalThis.__openedUrls),[]);
+ await app.evaluate(()=>{globalThis.__confirmBrowser=1;});
+ await open.click();
+ await expect.poll(()=>app.evaluate(()=>globalThis.__openedUrls)).toEqual(['https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.youtube.com%2F']);
  const beforeDismiss=await shell.locator('.page-viewport').evaluate(element=>element.getBoundingClientRect().top);
  await shell.getByRole('button',{name:'Скрыть помощь со входом Google',exact:true}).click();
  await expect(shell.locator('.auth-help-banner')).toHaveCount(0);
