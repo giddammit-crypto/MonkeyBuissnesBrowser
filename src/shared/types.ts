@@ -1,3 +1,4 @@
+import type { BrowserTheme } from './browserThemes';
 export type TabLifecycle = 'active' | 'background' | 'hibernated' | 'crashed';
 
 export interface TabSnapshot {
@@ -125,7 +126,7 @@ export interface SaveNoteInput {
 }
 
 export interface BrowserSettings {
-  theme: 'light' | 'dark' | 'graphite' | 'system';
+  theme: BrowserTheme;
   sidebarCollapsed: boolean;
   searchEngine: string;
   newTabBackground: NewTabBackground;

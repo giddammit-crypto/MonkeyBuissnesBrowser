@@ -15,10 +15,12 @@ export function GoogleAccountPopover({
   snapshot,
   onClose,
   onCreateTab,
+  onError,
 }: {
   snapshot: BrowserSnapshot;
   onClose: () => void;
   onCreateTab: (url: string) => void;
+  onError: (error: unknown) => void;
 }): React.JSX.Element {
   const accounts = snapshot.googleAccounts || [];
   const activeAccount =
@@ -35,7 +37,7 @@ export function GoogleAccountPopover({
     const handlePointer = (e: MouseEvent) => {
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         const target = e.target as HTMLElement | null;
-        if (!target?.closest(".account-toolbar-btn")) {
+        if (!target?.closest(".google-account-toolbar-btn")) {
           onClose();
         }
       }
@@ -63,8 +65,20 @@ export function GoogleAccountPopover({
       setAddName("");
       setShowAddForm(false);
     } catch (err) {
-      console.error("Не удалось добавить аккаунт Google:", err);
+      onError(err);
     }
+  };
+
+  const openService = (target: string) => {
+    if (!activeAccount) {
+      onCreateTab(target);
+    } else {
+      const chooser = new URL("https://accounts.google.com/AccountChooser");
+      chooser.searchParams.set("Email", activeAccount.email);
+      chooser.searchParams.set("continue", target);
+      onCreateTab(chooser.href);
+    }
+    onClose();
   };
 
   return (
@@ -97,13 +111,7 @@ export function GoogleAccountPopover({
           </svg>
           <span>Google Аккаунт</span>
         </div>
-        <div
-          className="google-sso-badge"
-          title="Сайты автоматически распознают ваш Google аккаунт через OAuth и One-Tap"
-        >
-          <span className="google-sso-dot" />
-          <span>SSO Авто-вход</span>
-        </div>
+
       </div>
 
       {activeAccount ? (
@@ -135,17 +143,20 @@ export function GoogleAccountPopover({
         </button>
       )}
 
-      {accounts.length > 1 && (
+      {accounts.length > 0 && (
         <div className="google-account-list">
           {accounts.map((acc) => (
             <div
               key={acc.id}
               className={`google-account-item ${acc.id === activeAccount?.id ? "active" : ""}`}
-              onClick={() => {
-                void window.browserApi.switchGoogleAccount(acc.id).catch(console.error);
-              }}
             >
-              <div className="google-account-item-left">
+              <button
+                type="button"
+                className="google-account-item-left google-account-select"
+                aria-label={`Выбрать аккаунт ${acc.email}`}
+                aria-pressed={acc.id === activeAccount?.id}
+                onClick={() => void window.browserApi.switchGoogleAccount(acc.id).catch(onError)}
+              >
                 {acc.avatar ? (
                   <img
                     src={acc.avatar}
@@ -163,13 +174,15 @@ export function GoogleAccountPopover({
                   </div>
                   <div className="google-account-item-email">{acc.email}</div>
                 </div>
-              </div>
+              </button>
               <button
+                type="button"
+                aria-label={`Удалить аккаунт ${acc.email} из панели`}
                 className="icon-button danger-hover"
                 title="Удалить аккаунт"
                 onClick={(e) => {
                   e.stopPropagation();
-                  void window.browserApi.removeGoogleAccount(acc.id).catch(console.error);
+                  void window.browserApi.removeGoogleAccount(acc.id).catch(onError);
                 }}
               >
                 <Trash2 size={14} />
@@ -256,10 +269,7 @@ export function GoogleAccountPopover({
       <div className="google-services-grid">
         <button
           className="google-service-chip"
-          onClick={() => {
-            onCreateTab("https://www.youtube.com");
-            onClose();
-          }}
+          onClick={() => openService("https://www.youtube.com/")}
           title="Открыть YouTube"
         >
           <Film size={16} color="#FF0000" />
@@ -267,10 +277,7 @@ export function GoogleAccountPopover({
         </button>
         <button
           className="google-service-chip"
-          onClick={() => {
-            onCreateTab("https://mail.google.com");
-            onClose();
-          }}
+          onClick={() => openService("https://mail.google.com/")}
           title="Открыть Gmail"
         >
           <Globe2 size={16} color="#EA4335" />
@@ -278,10 +285,7 @@ export function GoogleAccountPopover({
         </button>
         <button
           className="google-service-chip"
-          onClick={() => {
-            onCreateTab("https://drive.google.com");
-            onClose();
-          }}
+          onClick={() => openService("https://drive.google.com/")}
           title="Открыть Google Диск"
         >
           <Database size={16} color="#34A853" />
@@ -289,10 +293,7 @@ export function GoogleAccountPopover({
         </button>
         <button
           className="google-service-chip"
-          onClick={() => {
-            onCreateTab("https://www.google.com");
-            onClose();
-          }}
+          onClick={() => openService("https://www.google.com/")}
           title="Открыть Google Поиск"
         >
           <Search size={16} color="#4285F4" />
@@ -301,7 +302,7 @@ export function GoogleAccountPopover({
       </div>
 
       <div className="google-auto-sync-hint">
-        💡 Сайты (Pinterest, Figma, Spotify и др.) автоматически подхватывают выбранный аккаунт.
+        Выбор в панели используется при открытии сервисов Google. На стороннем сайте нажмите «Войти через Google» и подтвердите нужный аккаунт в окне входа.
       </div>
     </div>
   );

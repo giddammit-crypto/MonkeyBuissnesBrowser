@@ -276,14 +276,16 @@ function registerIpc(): void {
     }
   });
   ipcMain.on('page:google-account-detected', (event, data: { email: string; name?: string; avatar?: string }) => {
+    const frame = event.senderFrame;
+    if (!frame || frame !== event.sender.mainFrame || typeof data?.email !== 'string') return;
     const c = BrowserController.findControllerForPage(event.sender.id);
-    if (event.senderFrame === event.sender.mainFrame && c && typeof data?.email === 'string' && data.email) {
-      c.registerGoogleAccount(
-        data.email,
-        typeof data.name === 'string' ? data.name : undefined,
-        typeof data.avatar === 'string' ? data.avatar : undefined,
-      );
-    }
+    c?.registerGoogleAccount(
+      event.sender.session,
+      frame.url,
+      data.email,
+      typeof data.name === 'string' ? data.name : undefined,
+      typeof data.avatar === 'string' ? data.avatar : undefined,
+    );
   });
   ipcMain.handle('browser:toggle-reader-mode', (event, tabId: string) => requireShell(event).toggleReaderMode(tabId));
   ipcMain.handle('browser:get-reader-article', (event, tabId: string) => requireShell(event).getReaderArticle(tabId));
