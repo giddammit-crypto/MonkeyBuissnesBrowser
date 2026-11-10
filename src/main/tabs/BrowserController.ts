@@ -1,3 +1,5 @@
+import { inspectOsintPage, lookupPublicDns, osintHttpEvidence } from '../services/OsintService';
+import type { DnsResult, HttpEvidence, PageOsint } from '../../shared/osint';
 import { isBrowserTheme, nativeBrowserTheme } from '../../shared/browserThemes';
 import { exportBookmarksHtml } from '../services/BookmarkExportService';
 import { createMediaCookieFile } from '../services/MediaCookieFile';
@@ -358,6 +360,7 @@ export class BrowserController {
    */
   private static readonly xmlDocuments = new Map<number, { contentType: string; url: string }>();
   private static readonly xsltApplied = new Set<number>();
+  private static readonly osintResponses = new WeakMap<Electron.WebContents, { url: string; http: HttpEvidence }>();
   private static readonly relaxedFontResponses = new Map<number, number>();
   private readonly xsltServices = new Map<'normal' | 'private', XsltSupport>();
   private readonly fontCompatCssKeys = new Map<string, string[]>();
@@ -3461,7 +3464,15 @@ export class BrowserController {
         for (const key of Object.keys(headers)) if (key.toLowerCase() === 'set-cookie') delete headers[key];
       }
       if (details.webContentsId !== undefined) {
-        if (details.resourceType === 'mainFrame') this.noteMainFrameContentType(details.webContentsId, details.url, headers);
+        if (details.resourceType === 'mainFrame') {
+          this.noteMainFrameContentType(details.webContentsId, details.url, headers);
+          if (!isPrivate && details.webContents && details.statusCode >= 200 && details.statusCode !== 204 && details.statusCode !== 205 &&
+            (details.statusCode < 300 || details.statusCode >= 400)) {
+            BrowserController.osintResponses.set(details.webContents, {
+              url: details.url, http: osintHttpEvidence(details.statusCode, headers),
+            });
+          }
+        }
         const relaxed = relaxFontResponseHeaders(headers, {
           enabled: this.stores.settings.get().fontCompatibility !== false,
           resourceType: details.resourceType,
@@ -3899,6 +3910,7 @@ export class BrowserController {
       BrowserController.xmlDocuments.delete(contents.id);
       BrowserController.xsltApplied.delete(contents.id);
       BrowserController.relaxedFontResponses.delete(contents.id);
+      BrowserController.osintResponses.delete(contents);
       siteFontMonitor.clear(contents.id);
       void this.clearFontCompatibility(tab);
       this.emitSnapshot();
@@ -4921,6 +4933,41 @@ export class BrowserController {
     this.fontCompatCssKeys.set(tab.id, [...(this.fontCompatCssKeys.get(tab.id) ?? []), key]);
     this.fontCompatFamilies.set(tab.id, applicable);
     return { families: applicable };
+  }
+
+  async getOsintPage(tabId: string): Promise<PageOsint> {
+    const tab = this.tabs.get(tabId);
+    const contents = tab?.view?.webContents;
+    if (this.disposed || !tab || tabId !== this.activeTabId || tab.isPrivate || tab.isInternal
+      || tab.lifecycle === 'crashed' || tab.isLoading || !contents || contents.isDestroyed()) {
+      throw new Error('Откройте загруженную страницу в обычной вкладке.');
+    }
+    const url = contents.getURL();
+    if (!isSafeWebUrl(url)) throw new Error('Поддерживаются только страницы HTTP и HTTPS.');
+    const result = await inspectOsintPage(contents);
+    if (this.disposed || this.activeTabId !== tabId || tab.view?.webContents !== contents
+      || contents.isDestroyed() || contents.getURL() !== url || result.origin !== new URL(url).origin) {
+      throw new Error('Страница изменилась. Повторите проверку.');
+    }
+    const observed = BrowserController.osintResponses.get(contents);
+    const canonical = new URL(url);
+    canonical.hash = '';
+    return { ...result, http: observed?.url === canonical.href ? observed.http : undefined };
+  }
+
+  private osintDnsPending = false;
+
+  async getOsintDns(input: unknown): Promise<DnsResult[]> {
+    if (this.disposed || this.tabs.get(this.activeTabId)?.isPrivate) {
+      throw new Error('Откройте инструменты OSINT в обычной вкладке.');
+    }
+    if (this.osintDnsPending) throw new Error('Дождитесь завершения предыдущего запроса DNS.');
+    this.osintDnsPending = true;
+    try {
+      return await lookupPublicDns(this.browserSession, input);
+    } finally {
+      this.osintDnsPending = false;
+    }
   }
 
   async getPageFonts(tabId: string): Promise<PageFontReport> {

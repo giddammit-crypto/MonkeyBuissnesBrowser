@@ -1,6 +1,6 @@
 {
   "name": "soulm8te",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "description": "soulm8te — Electron browser with private sessions, tab sleeping and native Chromium tabs.",
   "main": "dist/main/main/main.js",
   "author": {
@@ -28,7 +28,7 @@
     "check": "npm run typecheck && npm test && npm run check:release-assets",
     "check:release-assets": "node scripts/check-release-assets.mjs",
     "test:e2e:voodoo": "node scripts/voodoo-agent-smoke.mjs",
-    "test:e2e:features": "node scripts/run-smoke-suite.mjs scripts/split-view-smoke.mjs scripts/bookmark-export-smoke.mjs scripts/youtube-icons-smoke.mjs scripts/site-fonts-smoke.mjs scripts/xslt-smoke.mjs scripts/pdf-viewer-smoke.mjs scripts/release-ui-smoke.mjs scripts/site-error-smoke.mjs scripts/google-themes-smoke.mjs",
+    "test:e2e:features": "node scripts/run-smoke-suite.mjs scripts/split-view-smoke.mjs scripts/bookmark-export-smoke.mjs scripts/youtube-icons-smoke.mjs scripts/site-fonts-smoke.mjs scripts/xslt-smoke.mjs scripts/pdf-viewer-smoke.mjs scripts/release-ui-smoke.mjs scripts/site-error-smoke.mjs scripts/google-themes-smoke.mjs scripts/osint-smoke.mjs",
     "test:e2e:youtube-icons": "node scripts/youtube-icons-smoke.mjs",
     "test:e2e:xslt": "node scripts/xslt-smoke.mjs",
     "test:e2e:pdf": "node scripts/pdf-viewer-smoke.mjs"

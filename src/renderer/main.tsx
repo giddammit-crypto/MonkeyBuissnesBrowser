@@ -123,10 +123,11 @@ import { QuickNotesDrawer } from "./QuickNotesDrawer";
 import VoodooChatBubble from "./VoodooChatBubble";
 import SplitViewControls, { SplitViewStatus } from "./SplitViewControls";
 import voodooAvatar from "./assets/voodoo-256.png";
+const OsintPanel = React.lazy(() => import("./OsintPanel"));
 const EntriesPanel = React.lazy(()=>import("./EntriesManager"));
 const PasswordManager = React.lazy(()=>import("./PasswordManager"));
 
-type Panel = "home" | "bookmarks" | "history" | "downloads" | "privacy" | "settings";
+type Panel = "home" | "bookmarks" | "history" | "downloads" | "privacy" | "settings" | "osint";
 type Toast = { tone: "error" | "success" | "info" | "warning"; message: string };
 // User wallpapers are kept in the trusted shell's IndexedDB. Never load
 // remote/CSS URLs, SVG or arbitrary files into the privileged browser shell.
@@ -1979,6 +1980,12 @@ function App(): React.JSX.Element {
               }}
             />
             <MenuAction
+              icon={<Search size={16} />}
+              label="OSINT · Исследовать сайт"
+              disabled={isPrivate}
+              onClick={() => openPanel("osint")}
+            />
+            <MenuAction
               icon={<Type size={16} />}
               label="Шрифты страницы"
               disabled={!currentTab || currentTab.isInternal || currentTab.lifecycle === "crashed"}
@@ -2677,6 +2684,12 @@ function App(): React.JSX.Element {
                  setPopover("protection");
                }}
              />
+           )}
+           {panel === "osint" && !isPrivate && (
+             <React.Suspense fallback={<p role="status">Открываем панель OSINT…</p>}>
+               <OsintPanel key={currentTab?.id} tab={currentTab} onClose={() => openPanel("home")}
+                 onOpen={(url) => run(window.browserApi.createTab({ url, isPrivate: false, active: false }))} />
+             </React.Suspense>
            )}
            {panel === "settings" && (
             <SettingsPanel

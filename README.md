@@ -1,6 +1,6 @@
 # <p align="center"><img src="src/renderer/assets/soul/chloe-icon-512.png" alt="soulm8te" width="96" height="96" /><br/>soulm8te Browser</p>
 
-Текущая версия: **1.1.4** · [Изменения](docs/RELEASE_1.1.4.md) · [Аудит 1.0.1](docs/FUNCTIONAL_AUDIT_1.0.1.md) · [Шрифт «Мономах»](docs/MONOMAKH_FONT_DIAGNOSIS_1.0.1.md)
+Текущая версия: **1.2.0** · [Изменения](docs/RELEASE_1.2.0.md) · [Аудит 1.0.1](docs/FUNCTIONAL_AUDIT_1.0.1.md) · [Шрифт «Мономах»](docs/MONOMAKH_FONT_DIAGNOSIS_1.0.1.md)
 
 <p align="center">
   <strong>Современный, быстрый и стильный веб-браузер нового поколения на Chromium & Electron</strong><br/>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.1.4-blue?style=for-the-badge" alt="Version 1.1.4" />
+  <img src="https://img.shields.io/badge/version-1.2.0-blue?style=for-the-badge" alt="Version 1.2.0" />
   <img src="https://img.shields.io/badge/Electron-45.0-blueviolet?style=for-the-badge" alt="Electron 45" />
   <img src="https://img.shields.io/badge/React-19-cyan?style=for-the-badge" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-7.0-blue?style=for-the-badge" alt="TypeScript" />
@@ -292,6 +292,10 @@
 - **XSLT-стилизация XML (RSS/Atom, sitemap).** Chrome 158 (17.11.2026) удаляет XSLT, поэтому браузер несёт собственный движок XSLT 1.0 + XPath на TypeScript: рендер `<?xml-stylesheet?>`, сохранение адреса, кеш стилей, полоса ошибки вместо «тихого» сырого XML. Лимиты и запреты (`document()`, `xsl:script`, внешние сущности) описаны в [аудите](docs/CHROMIUM_ENGINE_AND_PLUGINS_AUDIT_2026-11-05.md).
 - **Совместимость веб-шрифтов и панель диагностики.** Браузер возвращает привычное поведение до Chrome 143: шрифт с другого origin не отбрасывается только из-за отсутствия `Access-Control-Allow-Origin`, если политика страницы его не запрещает. Настройка «Совместимость шрифтов» отключаемая; при отключении действует строгая проверка CORS. Панель «Шрифты страницы» показывает, почему шрифт не применился (сеть/404, CORS, нет в системе, ошибка декодирования) и может подставить похожие локальные гарнитуры.
 - **Кнопка очистки — веник.** «Click & Clean» в панели, меню и окне очистки использует классическую иконку веника.
+
+## Инструменты OSINT
+
+Откройте «Меню браузера → OSINT · Исследовать сайт». Панель собирает метаданные открытой страницы, внешние источники, информацию о формах и наблюдаемые защитные HTTP-заголовки. Запрос публичных DNS-записей выполняется по кнопке через Google Public DNS. Ссылки на RDAP, журналы сертификатов, веб-архив и публичный поиск открываются в фоновых вкладках. Отчёт можно скопировать в JSON.
 
 ## Плавающий мини-плеер (PiP)
 
