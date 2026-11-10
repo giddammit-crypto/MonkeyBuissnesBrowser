@@ -2687,7 +2687,7 @@ function App(): React.JSX.Element {
            )}
            {panel === "osint" && !isPrivate && (
              <React.Suspense fallback={<p role="status">Открываем панель OSINT…</p>}>
-               <OsintPanel key={currentTab?.id} tab={currentTab} onClose={() => openPanel("home")}
+               <OsintPanel key={`${currentTab?.id ?? ""}:${currentTab?.url ?? ""}`} tab={currentTab} onClose={() => openPanel("home")}
                  onOpen={(url) => run(window.browserApi.createTab({ url, isPrivate: false, active: false }))} />
              </React.Suspense>
            )}

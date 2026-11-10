@@ -73,6 +73,9 @@ try {
     return { source: snapshot.tabs.some(item => item.url === 'https://lookup.icann.org/en/lookup?name=example.org'), active: snapshot.activeTabId };
   }).toEqual({ source: true, active: tab.id });
   await expect(panel).toBeVisible();
+  await invoke('navigate', tab.id, new URL('/next', url).href);
+  await expect(panel.getByRole('button', { name: 'Скопировать отчёт JSON' })).toBeDisabled();
+  await expect(panel.getByText('Fixture CMS')).toHaveCount(0);
   await invoke('createTab', { isPrivate: true });
   await assert.rejects(() => invoke('getOsintPage', tab.id), /обычной вкладке/);
   await assert.rejects(() => invoke('getOsintDns', 'example.org'), /обычной вкладке/);

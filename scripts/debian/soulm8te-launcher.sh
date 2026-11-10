@@ -7,11 +7,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CHROME_SANDBOX="${SCRIPT_DIR}/chrome-sandbox"
 
-if [ -f "${SCRIPT_DIR}/soulm8te-bin" ]; then
-  SOULM8TE_BIN="${SCRIPT_DIR}/soulm8te-bin"
-else
-  SOULM8TE_BIN="${SCRIPT_DIR}/soulm8te"
-fi
+SOULM8TE_BIN="${SCRIPT_DIR}/soulm8te"
 
 EXTRA_ARGS=()
 
