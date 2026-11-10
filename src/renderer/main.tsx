@@ -2562,33 +2562,31 @@ function App(): React.JSX.Element {
           !authNoticeDismissed &&
           currentTab &&
           !currentTab.isInternal && (
-            <section
-              className="auth-help-banner"
-              aria-label="Помощь со входом Google"
-            >
-              <LockKeyhole size={20} />
-              <div style={{ flex: 1 }}>
-                <strong>{authNotice.title}</strong>
-                <p>{authNotice.message}</p>
-              </div>
-              <button
-                className="action-button secondary"
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, padding: "6px 12px", cursor: "pointer", whiteSpace: "nowrap" }}
-                onClick={() => {
-                  run(window.browserApi.openCurrentPageExternally(currentTab.id));
-                }}
-              >
-                <ExternalLink size={15} /> Открыть в системном браузере
-              </button>
-              <button
-                className="icon-button"
-                aria-label="Скрыть помощь со входом Google"
-                title="Скрыть помощь"
-                onClick={() => setAuthNoticeDismissed(true)}
-              >
-                <X size={16} />
-              </button>
-            </section>
+            <div className="auth-help-region">
+              <section className="auth-help-banner" aria-label="Помощь со входом Google">
+                <LockKeyhole className="auth-help-icon" size={19} aria-hidden="true" />
+                <div className="auth-help-copy">
+                  <strong>{authNotice.title}</strong>
+                  <p>{authNotice.message}</p>
+                </div>
+                <button
+                  type="button"
+                  className="auth-help-open"
+                  onClick={() => run(window.browserApi.openCurrentPageExternally(currentTab.id))}
+                >
+                  <ExternalLink size={15} aria-hidden="true" /> Продолжить вход
+                </button>
+                <button
+                  type="button"
+                  className="icon-button auth-help-close"
+                  aria-label="Скрыть помощь со входом Google"
+                  title="Скрыть помощь"
+                  onClick={() => setAuthNoticeDismissed(true)}
+                >
+                  <X size={16} aria-hidden="true" />
+                </button>
+              </section>
+            </div>
           )}
         <div
           ref={viewportRef}

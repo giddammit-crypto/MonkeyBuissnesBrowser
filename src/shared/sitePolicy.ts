@@ -306,35 +306,46 @@ export function canRequestStorageAccess(input: {
   } catch { return false; }
 }
 
-/** Identify Google's documented embedded-browser/OAuth restriction, not a generic network failure. */
-export function getGoogleAuthNotice(rawUrl: string): { title: string; message: string } | null {
-  try {
-    const url = new URL(rawUrl);
-    if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 'accounts.google.com') return null;
-    const denied = /\/(?:rejected|deniedsigninrejected)(?:\/|$)/i.test(url.pathname) || /^(?:disallowed_useragent|deniedsigninrejected)$/i.test(url.searchParams.get('error') || '');
-    // A normal sign-in page is not an error. Do not pre-empt the website's flow
-    // with an external-browser suggestion before Google has reported rejection.
-    if (!denied) return null;
-    return {
-      title: 'Google ограничил вход в этом браузере',
-      message: 'Страница Google сообщает об отказе во входе. Открытие в другом браузере не переносит авторизацию обратно в soulm8te автоматически.',
-    };
-  } catch { return null; }
+function isRejectedGoogleSignIn(url: URL): boolean {
+  return url.origin === 'https://accounts.google.com' && !url.username && !url.password && (
+    /\/(?:rejected|deniedsigninrejected)(?:\/|$)/i.test(url.pathname) ||
+    /^(?:disallowed_useragent|deniedsigninrejected)$/i.test(url.searchParams.get('error') || '')
+  );
 }
 
-/** Rejected-login error URLs are not useful entry points in a supported browser. */
+/** Identify Google's embedded-browser/OAuth restriction. */
+export function getGoogleAuthNotice(rawUrl: string): { title: string; message: string } | null {
+  const url = URL.parse(rawUrl);
+  if (!url || !isRejectedGoogleSignIn(url)) return null;
+  return {
+    title: 'Google отклонил вход',
+    message: 'Продолжите вход в системном браузере. Сессия останется в том браузере, в котором вы войдёте.',
+  };
+}
+
+const googleSignInDestinations = new Map([
+  ['youtube.com', 'https://www.youtube.com/'],
+  ['www.youtube.com', 'https://www.youtube.com/'],
+  ['m.youtube.com', 'https://www.youtube.com/'],
+  ['mail.google.com', 'https://mail.google.com/'],
+  ['drive.google.com', 'https://drive.google.com/'],
+]);
+const googleSignInServices = new Map([
+  ['youtube', 'https://www.youtube.com/'],
+  ['mail', 'https://mail.google.com/'],
+  ['wise', 'https://drive.google.com/'],
+]);
+
+/** Start a fresh sign-in at a known Google service after rejection. */
 export function getExternalPageUrl(rawUrl: string): string | null {
-  try {
-    const url = new URL(rawUrl);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
-    if (url.hostname === 'accounts.google.com' && /\/(?:rejected|deniedsigninrejected)(?:\/|$)/i.test(url.pathname)) {
-      let destination = 'https://www.google.com/';
-      try {
-        const target = new URL(url.searchParams.get('continue') || '');
-        if (target.protocol === 'https:' && (target.hostname === 'youtube.com' || target.hostname.endsWith('.youtube.com'))) destination = 'https://www.youtube.com/';
-      } catch { /* Use the standard Google landing page. */ }
-      return `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(destination)}`;
-    }
-    return url.href;
-  } catch { return null; }
+  const url = URL.parse(rawUrl);
+  if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+  if (!isRejectedGoogleSignIn(url)) return url.href;
+
+  const target = URL.parse(url.searchParams.get('continue') || '');
+  const continued = target?.protocol === 'https:' && !target.port && !target.username && !target.password
+    ? googleSignInDestinations.get(target.hostname)
+    : undefined;
+  const destination = continued || googleSignInServices.get(url.searchParams.get('service') || '') || 'https://www.google.com/';
+  return `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(destination)}`;
 }
