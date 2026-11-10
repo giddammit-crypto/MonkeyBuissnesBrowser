@@ -407,7 +407,6 @@ export interface BrowserSnapshot {
     blockedByHost: Record<string, number>;
     exceptions?: string[];
   };
-  notes?: NoteEntry[];
   readerSettings?: ReaderSettings;
   performance: {
     sampledAt: number;
@@ -415,6 +414,13 @@ export interface BrowserSnapshot {
     processCount: number;
     totalWorkingSet: number;
   } | null;
+}
+
+export interface VoodooViewState {
+  currentTab?: Pick<TabSnapshot, 'url' | 'title' | 'isPrivate'>;
+  bubbleVisible: boolean;
+  model?: string;
+  contextWindowTokens?: number;
 }
 
 export type NavigationIntent =

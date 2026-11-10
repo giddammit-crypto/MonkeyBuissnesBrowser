@@ -5842,26 +5842,30 @@ function SettingsPanel({
   );
 }
 function VoodooStandaloneApp(): React.JSX.Element {
-  const [snapshot, setSnapshot] = useState<BrowserSnapshot | null>(null);
+  const [state, setState] = useState<Awaited<ReturnType<typeof window.browserApi.getVoodooViewState>>>();
 
   useEffect(() => {
     document.documentElement.classList.add("voodoo-standalone");
     document.body.classList.add("voodoo-standalone");
-
-    void window.browserApi.getSnapshot().then(setSnapshot).catch(console.error);
-    const remove = window.browserApi.onSnapshotChanged((next) => {
-      setSnapshot(next);
+    let active = true;
+    let receivedUpdate = false;
+    const remove = window.browserApi.onVoodooViewStateChanged((next) => {
+      receivedUpdate = true;
+      setState(next);
     });
-    return remove;
+    void window.browserApi.getVoodooViewState().then(next => {
+      if (active && !receivedUpdate) setState(next);
+    }).catch(console.error);
+    return () => { active = false; remove(); };
   }, []);
-
-  const currentTab = snapshot?.tabs.find((t) => t.id === snapshot.activeTabId);
 
   return (
     <VoodooChatBubble
       standalone={true}
-      bubbleVisible={snapshot?.settings?.voodooBubbleVisible !== false && snapshot?.settings?.voodooEnabled !== false}
-      currentTab={currentTab}
+      bubbleVisible={state?.bubbleVisible ?? true}
+      currentTab={state?.currentTab}
+      modelLabel={state?.model || undefined}
+      contextWindowTokens={state?.contextWindowTokens}
     />
   );
 }

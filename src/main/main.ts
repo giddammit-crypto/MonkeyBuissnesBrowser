@@ -100,6 +100,7 @@ function registerIpc(): void {
   if (ipcRegistered) return;
   ipcRegistered = true;
   ipcMain.handle('browser:get-snapshot', (event) => requireShell(event).getSnapshot());
+  ipcMain.handle('voodoo:view-state', (event) => requireShell(event).getVoodooViewState());
   ipcMain.handle('browser:get-privacy-dashboard', (event, tabId?: string) => requireShell(event).getPrivacyDashboard(typeof tabId === 'string' ? tabId : undefined));
   ipcMain.handle('browser:create-tab', (event, input: { url?: string; isPrivate?: boolean; active?: boolean } = {}) =>
     requireShell(event).createTab(input),
@@ -297,6 +298,7 @@ function registerIpc(): void {
   ipcMain.handle('browser:apply-font-substitutions', (event, tabId: string) => requireShell(event).applyFontSubstitutions(tabId));
   ipcMain.handle('browser:update-reader-settings', (event, patch: Partial<import('../shared/types').ReaderSettings>) => requireShell(event).updateReaderSettings(patch));
   ipcMain.handle('browser:toggle-pip', (event, tabId: string) => requireShell(event).togglePictureInPicture(tabId));
+  ipcMain.handle('browser:export-notes', (event, noteId?: string) => requireShell(event).exportNotes(noteId));
   ipcMain.handle('browser:get-notes', (event, query?: string) => requireShell(event).getNotes(query));
   ipcMain.handle('browser:save-note', (event, input: import('../shared/types').SaveNoteInput) => requireShell(event).saveNote(input));
   ipcMain.handle('browser:delete-note', (event, id: string) => requireShell(event).deleteNote(id));
@@ -329,10 +331,19 @@ function registerIpc(): void {
 
 function setupController(c: BrowserController): void {
   if (!primaryController) primaryController = c;
+  let lastVoodooState = "";
   c.setListeners(
     (snapshot) => {
       c.shellView?.webContents.send('browser:snapshot', snapshot);
-      c.voodooView?.webContents.send('browser:snapshot', snapshot);
+      const view = c.voodooView?.webContents;
+      if (view && !view.isDestroyed()) {
+        const state = c.getVoodooViewState();
+        const signature = JSON.stringify(state);
+        if (signature !== lastVoodooState) {
+          lastVoodooState = signature;
+          view.send('voodoo:view-state', state);
+        }
+      }
     },
     (event) => {
       c.shellView?.webContents.send('browser:event', event);

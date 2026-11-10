@@ -72,7 +72,7 @@ export function getCurrentAppVersion(): string {
   } catch {
     // ignore
   }
-  return '1.2.2';
+  return '1.2.3';
 }
 
 let pendingGhToken: Promise<string | undefined> | undefined;

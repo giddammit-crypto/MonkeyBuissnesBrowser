@@ -1,8 +1,6 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { dialog, type BaseWindow } from 'electron';
 import type { BookmarkEntry } from '../../shared/types';
+import { writeTextAtomically } from './AtomicTextFile';
 
 const MAX_BOOKMARKS = 5000;
 const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (character) => ({
@@ -37,16 +35,7 @@ export function buildBookmarksHtml(bookmarks: readonly BookmarkEntry[]): { html:
   };
 }
 
-/** Write beside the selected destination, then atomically replace it after success. */
-export async function writeBookmarksHtml(filePath: string, html: string): Promise<void> {
-  const temporaryPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`);
-  try {
-    const handle = await fs.open(temporaryPath, 'wx', 0o600);
-    try { await handle.writeFile(html, 'utf8'); await handle.sync(); }
-    finally { await handle.close(); }
-    await fs.rename(temporaryPath, filePath);
-  } finally { await fs.rm(temporaryPath, { force: true }); }
-}
+export { writeTextAtomically as writeBookmarksHtml };
 
 export async function exportBookmarksHtml(
   owner: BaseWindow,
@@ -61,6 +50,6 @@ export async function exportBookmarksHtml(
     properties: ['showOverwriteConfirmation'],
   });
   if (picked.canceled || !picked.filePath) return { saved: false, count: 0 };
-  await writeBookmarksHtml(picked.filePath, document.html);
+  await writeTextAtomically(picked.filePath, document.html);
   return { saved: true, count: document.count, path: picked.filePath };
 }

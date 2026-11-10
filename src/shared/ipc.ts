@@ -5,6 +5,7 @@ import type {
   BrowsecState,
   BrowserSettings,
   BrowserSnapshot,
+  VoodooViewState,
   DownloadEntry,
   HistoryEntry,
   ImportDataKind,
@@ -52,6 +53,7 @@ export type DownloadAction = 'pause' | 'resume' | 'cancel' | 'delete';
 
 export interface BrowserApi {
   getSnapshot(): Promise<BrowserSnapshot>;
+  getVoodooViewState(): Promise<VoodooViewState>;
   getPrivacyDashboard(tabId?: string): Promise<PrivacyDashboardSnapshot>;
   createTab(input?: { url?: string; isPrivate?: boolean; active?: boolean }): Promise<TabSnapshot>;
   openNewWindow(url?: string): Promise<void>;
@@ -155,6 +157,7 @@ export interface BrowserApi {
   applyFontSubstitutions(tabId: string): Promise<{ families: string[] }>;
   updateReaderSettings(patch: Partial<ReaderSettings>): Promise<ReaderSettings>;
   togglePictureInPicture(tabId: string): Promise<{ success: boolean; isPip: boolean }>;
+  exportNotes(noteId?: string): Promise<boolean>;
   getNotes(query?: string): Promise<NoteEntry[]>;
   saveNote(input: SaveNoteInput): Promise<NoteEntry>;
   deleteNote(id: string): Promise<boolean>;
@@ -179,6 +182,7 @@ export interface BrowserApi {
   downloadUpdate(assetUrl?: string, customFilename?: string): Promise<{ success: boolean; filePath?: string; error?: string }>;
   openDownloadedUpdate(filePath: string): Promise<boolean>;
   getUpdateStatus(): Promise<{ lastCheck?: UpdateCheckResult; downloadProgress?: UpdateDownloadProgress }>;
+  onVoodooViewStateChanged(callback: (state: VoodooViewState) => void): () => void;
   onSnapshotChanged(callback: (snapshot: BrowserSnapshot) => void): () => void;
   onTabEvent(callback: (event: { type: string; tab?: TabSnapshot; message?: string; data?: unknown }) => void): () => void;
   onBrowsecSnapshot(callback: (snapshot: BrowsecState) => void): () => void;

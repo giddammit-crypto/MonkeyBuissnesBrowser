@@ -4,6 +4,7 @@ import type { BrowserSettings, CleanTargetOptions } from '../shared/types';
 
 const api: BrowserApi = {
   getSnapshot: () => ipcRenderer.invoke('browser:get-snapshot'),
+  getVoodooViewState: () => ipcRenderer.invoke('voodoo:view-state'),
   getPrivacyDashboard: (tabId) => ipcRenderer.invoke('browser:get-privacy-dashboard', tabId),
   createTab: (input) => ipcRenderer.invoke('browser:create-tab', input),
   openNewWindow: (url) => ipcRenderer.invoke('browser:open-new-window', url),
@@ -107,6 +108,7 @@ const api: BrowserApi = {
   applyFontSubstitutions: (tabId) => ipcRenderer.invoke('browser:apply-font-substitutions', tabId),
   updateReaderSettings: (patch) => ipcRenderer.invoke('browser:update-reader-settings', patch),
   togglePictureInPicture: (tabId) => ipcRenderer.invoke('browser:toggle-pip', tabId),
+  exportNotes: (noteId) => ipcRenderer.invoke('browser:export-notes', noteId),
   getNotes: (query) => ipcRenderer.invoke('browser:get-notes', query),
   saveNote: (input) => ipcRenderer.invoke('browser:save-note', input),
   deleteNote: (id) => ipcRenderer.invoke('browser:delete-note', id),
@@ -131,6 +133,11 @@ const api: BrowserApi = {
   downloadUpdate: (assetUrl, customFilename) => ipcRenderer.invoke('browser:download-update', assetUrl, customFilename),
   openDownloadedUpdate: (filePath) => ipcRenderer.invoke('browser:open-downloaded-update', filePath),
   getUpdateStatus: () => ipcRenderer.invoke('browser:get-update-status'),
+  onVoodooViewStateChanged: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: Parameters<typeof callback>[0]) => callback(state);
+    ipcRenderer.on('voodoo:view-state', listener);
+    return () => ipcRenderer.removeListener('voodoo:view-state', listener);
+  },
   onSnapshotChanged: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: Parameters<typeof callback>[0]) => callback(snapshot);
     ipcRenderer.on('browser:snapshot', listener);
