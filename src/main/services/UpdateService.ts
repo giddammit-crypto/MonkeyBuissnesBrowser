@@ -309,7 +309,7 @@ export class UpdateService {
   }
 
   async checkForUpdates(manual = false): Promise<UpdateCheckResult> {
-    const currentVersion = app?.getVersion ? app.getVersion() : '1.1.1';
+    const currentVersion = app?.getVersion ? app.getVersion() : '1.1.2';
     try {
       const releaseData = await this.fetchLatestRelease();
       const tagName = releaseData.tag_name || '';
@@ -396,7 +396,7 @@ export class UpdateService {
    */
   private async resolveReleaseFromWebRedirect(): Promise<any | null> {
     const webLatestUrl = `https://github.com/${GITHUB_REPO}/releases/latest`;
-    const currentVersion = app?.getVersion ? app.getVersion() : '1.1.1';
+    const currentVersion = app?.getVersion ? app.getVersion() : '1.1.2';
 
     if (typeof net?.fetch === 'function') {
       try {
@@ -483,7 +483,7 @@ export class UpdateService {
   }
 
   private async httpGetJson(urlStr: string, retries = 2, delayMs = 1000): Promise<any> {
-    const currentVersion = app?.getVersion ? app.getVersion() : '1.1.1';
+    const currentVersion = app?.getVersion ? app.getVersion() : '1.1.2';
     const headers: Record<string, string> = {
       'User-Agent': `soulm8te-browser/${currentVersion}`,
       'Accept': 'application/vnd.github.v3+json',
@@ -723,7 +723,7 @@ export class UpdateService {
     }
 
     const client = parsedUrl.protocol === 'http:' ? http : https;
-    const currentVersion = app?.getVersion ? app.getVersion() : '1.1.1';
+    const currentVersion = app?.getVersion ? app.getVersion() : '1.1.2';
 
     const req = client.get(urlStr, {
       headers: {

@@ -50,6 +50,18 @@ it('formats user-friendly error details for unavailable sites and network failur
   expect(internetDisconnected.title).toBe('Отсутствует подключение к сети');
   expect(internetDisconnected.code).toBe('ERR_INTERNET_DISCONNECTED');
 
+  const expiredCert = getErrorDetails({
+    ...baseTab,
+    lastError: { errorCode: -201, errorDescription: 'net::ERR_CERT_DATE_INVALID' },
+  });
+  expect(expiredCert).toMatchObject({ variant: 'security', code: 'ERR_CERT_DATE_INVALID' });
+
+  const unknownFailure = getErrorDetails({
+    ...baseTab,
+    lastError: { errorCode: -2, errorDescription: 'ERR_FAILED' },
+  });
+  expect(unknownFailure).toMatchObject({ variant: 'page', code: 'ERR_FAILED' });
+
   const fallback = getErrorDetails(baseTab);
   expect(fallback.title).toBe('Страница временно недоступна');
 });

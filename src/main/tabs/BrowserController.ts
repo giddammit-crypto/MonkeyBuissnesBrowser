@@ -1621,7 +1621,8 @@ export class BrowserController {
   async reload(tabId: string, ignoreCache = false): Promise<void> {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.isInternal) return;
-    if (tab.lifecycle === 'crashed' || !tab.view || tab.view.webContents.isDestroyed()) {
+    // A failed navigation can be reloaded in its original view, preserving Back/Forward.
+    if ((tab.lifecycle === 'crashed' && !tab.lastError?.validatedURL) || !tab.view || tab.view.webContents.isDestroyed()) {
       this.detachView(tab);
       tab.lifecycle = 'active';
       this.attachWebContents(tab, tab.url);
