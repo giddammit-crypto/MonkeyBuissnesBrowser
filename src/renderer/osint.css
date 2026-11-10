@@ -1,0 +1,36 @@
+.osint-panel {
+  max-width: 1240px;
+  min-height: 100%;
+  margin-inline: auto;
+  padding: clamp(12px, 3vw, 36px);
+  color: var(--text);
+  background: var(--canvas);
+}
+.osint-header, .osint-title, .osint-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.osint-header { justify-content: space-between; margin-bottom: 18px; }
+.osint-title > svg { flex: none; color: var(--accent); }
+.osint-title h1, .osint-card h2 { margin: 0; }
+.osint-panel p { color: var(--text-secondary); line-height: 1.5; margin: 6px 0 14px; }
+.osint-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 14px; align-items: start; }
+.osint-card { min-width: 0; padding: 15px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.osint-card h2 { font-size: 17px; }
+.osint-card form { display: grid; gap: 8px; margin-block: 12px; }
+.osint-card input { min-width: 0; width: 100%; padding: 8px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface-subtle); }
+.osint-card form button { justify-self: start; }
+.osint-records { display: grid; gap: 6px; margin-block: 12px; overflow-wrap: anywhere; }
+.osint-records > div { display: grid; grid-template-columns: minmax(70px, 1fr) minmax(0, 2fr); gap: 8px; }
+.osint-records dt, .osint-sources small, .osint-records small { color: var(--text-secondary); }
+.osint-records dd { margin: 0; }
+.osint-card details { margin-top: 8px; padding: 8px; border-radius: 7px; background: var(--surface-subtle); overflow-wrap: anywhere; }
+.osint-card summary { cursor: pointer; }
+.osint-card ul { margin-block: 6px; padding-inline-start: 17px; }
+.osint-card .osint-sources { display: grid; gap: 6px; list-style: none; padding: 0; }
+.osint-sources button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); text-align: start; }
+.osint-sources button:hover { border-color: var(--accent); }
+.osint-sources small, .osint-records small { display: block; }
+.osint-footer { flex-wrap: wrap; margin-top: 14px; }
+.osint-panel .osint-error { color: var(--text); padding: 8px; border: 1px solid var(--border-strong); }

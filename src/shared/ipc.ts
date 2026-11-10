@@ -1,3 +1,4 @@
+import type { DnsResult, PageOsint } from './osint';
 import type {
   BookmarkEntry,
   BrowsecCountry,
@@ -52,7 +53,7 @@ export type DownloadAction = 'pause' | 'resume' | 'cancel' | 'delete';
 export interface BrowserApi {
   getSnapshot(): Promise<BrowserSnapshot>;
   getPrivacyDashboard(tabId?: string): Promise<PrivacyDashboardSnapshot>;
-  createTab(input?: { url?: string; isPrivate?: boolean }): Promise<TabSnapshot>;
+  createTab(input?: { url?: string; isPrivate?: boolean; active?: boolean }): Promise<TabSnapshot>;
   openNewWindow(url?: string): Promise<void>;
   openPrivateWindow(url?: string): Promise<void>;
   activateTab(tabId: string): Promise<void>;
@@ -146,6 +147,8 @@ export interface BrowserApi {
   closeWindow(): Promise<void>;
   toggleReaderMode(tabId: string): Promise<boolean>;
   getReaderArticle(tabId: string): Promise<ReaderArticle | null>;
+  getOsintPage(tabId: string): Promise<PageOsint>;
+  getOsintDns(hostname: string): Promise<DnsResult[]>;
   getPageFonts(tabId: string): Promise<PageFontReport>;
   applyFontSubstitutions(tabId: string): Promise<{ families: string[] }>;
   updateReaderSettings(patch: Partial<ReaderSettings>): Promise<ReaderSettings>;
