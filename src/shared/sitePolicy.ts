@@ -75,20 +75,24 @@ export function isGoogleYouTubeSignInRequest(requestUrl: string, topLevelUrl: st
     if (request.protocol !== 'https:' || top.protocol !== 'https:' || request.port || top.port || request.username || request.password || top.username || top.password) return false;
     const requestSite = getSiteKey(request.href);
     const topSite = getSiteKey(top.href);
-    if (topSite === 'https://youtube.com' && requestSite === 'https://google.com') {
+    const isGoogleTop = topSite === 'https://google.com' || topSite === 'https://google.ru';
+    const isGoogleRequest = requestSite === 'https://google.com' || requestSite === 'https://google.ru';
+    if (topSite === 'https://youtube.com' && isGoogleRequest) {
       return request.hostname === 'accounts.google.com' ||
         request.hostname === 'myaccount.google.com' ||
         request.hostname === 'apis.google.com' ||
         request.hostname === 'accounts.youtube.com' ||
         request.hostname === 'ogs.google.com' ||
         request.hostname === 'play.google.com' ||
-        request.hostname === 'www.google.com';
+        request.hostname === 'www.google.com' ||
+        request.hostname === 'google.ru' ||
+        request.hostname === 'www.google.ru';
     }
     if (topSite === 'https://youtube.com' && (requestSite === 'https://googleapis.com' || request.hostname.endsWith('.googleapis.com'))) {
       return request.hostname === 'youtubei.googleapis.com' ||
         request.hostname === 'youtube.googleapis.com';
     }
-    if (topSite === 'https://google.com' && requestSite === 'https://youtube.com') {
+    if (isGoogleTop && requestSite === 'https://youtube.com') {
       return request.hostname === 'accounts.youtube.com' ||
         (['youtube.com', 'www.youtube.com'].includes(request.hostname) &&
           /^\/(?:accounts|youtubei|signin|signin_passive|oops|redirect|service_ajax)(?:\/|$)/i.test(request.pathname));
@@ -166,13 +170,25 @@ export function isFederatedSSOSignInRequest(requestUrl: string, topLevelUrl: str
     if (host === 'id.vk.com' || host === 'oauth.vk.com' || host === 'vk.com') {
       return /^\/(?:authorize|oauth|auth|widget_auth)(?:\/|$)/i.test(request.pathname);
     }
-    // Yandex ID / Passport
-    if (host === 'oauth.yandex.ru' || host === 'passport.yandex.ru') {
+    // Yandex ID / Passport (including international ccTLDs)
+    if (/^(?:oauth|passport)\.yandex\.(?:ru|com|by|kz)$/.test(host)) {
       return /^\/(?:authorize|auth|am)(?:\/|$)/i.test(request.pathname);
+    }
+    // Mail.ru ID / OAuth
+    if (host === 'o2.mail.ru' || host === 'connect.mail.ru' || host === 'account.mail.ru') {
+      return /^\/(?:login|oauth|auth|connect)(?:\/|$)/i.test(request.pathname);
     }
     // Apple ID
     if (host === 'appleid.apple.com') {
       return /^\/auth\//i.test(request.pathname);
+    }
+    // GitHub OAuth
+    if (host === 'github.com') {
+      return /^\/login\/oauth\/(?:authorize|access_token)(?:\/|$)/i.test(request.pathname);
+    }
+    // Discord OAuth
+    if (host === 'discord.com') {
+      return /^\/api(?:\/v\d+)?\/oauth2\/(?:authorize|token)(?:\/|$)/i.test(request.pathname);
     }
     // Telegram OAuth
     if (host === 'oauth.telegram.org') {

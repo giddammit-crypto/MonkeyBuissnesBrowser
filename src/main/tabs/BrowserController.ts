@@ -2378,8 +2378,8 @@ export class BrowserController {
       type: 'question', title: 'Открыть системный браузер',
       message: `Открыть ${new URL(url).hostname} в системном браузере?`,
       detail: tab.isPrivate
-        ? 'Адрес будет передан обычному системному браузеру. Приватная сессия и её прокси не распространяются на него. Выполненный там вход не переносится в SOUL-M8TE.'
-        : 'Страница откроется в системном браузере. Выполненный там вход не переносится в SOUL-M8TE автоматически.',
+        ? 'Адрес будет передан обычному системному браузеру. Приватная сессия и её прокси не распространяются на него. Выполненный там вход не переносится в soulm8te.'
+        : 'Страница откроется в системном браузере. Выполненный там вход не переносится в soulm8te автоматически.',
       buttons: ['Отмена', 'Открыть'], defaultId: 0, cancelId: 0, noLink: true,
     });
     if (result.response === 1) await shell.openExternal(url);
@@ -5327,7 +5327,9 @@ export class BrowserController {
         this.shellView?.webContents.focus();
         this.eventListener?.({ type: 'toggle-task-manager' });
       });
-      else if (modifier && input.shift && !input.alt && isKey('s', 'KeyS', 'ы') && tab?.webContentsId === contents.id) run(() => {
+      else if (modifier && input.shift && !input.alt && isKey('s', 'KeyS', 'ы') && contents.id !== this.shellView?.webContents.id) run(() => {
+        this.exitPageFullscreen();
+        this.shellView?.webContents.focus();
         if (!input.isAutoRepeat) this.eventListener?.({ type: 'show-screenshot' });
       });
       else if (modifier && input.shift && isKey('v', 'KeyV', 'м')) run(() => {

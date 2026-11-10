@@ -348,6 +348,8 @@ function App(): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<BrowserSnapshot | null>(null);
   const [customWallpaper] = useCustomWallpaper();
   const [panel, setPanel] = useState<Panel>("home");
+  const panelRef = useRef(panel);
+  panelRef.current = panel;
   const [screenshot, setScreenshot] = useState<Awaited<ReturnType<typeof window.browserApi.takeTabScreenshot>>>();
   const screenshotPending = useRef(false);
   const [address, setAddress] = useState("");
@@ -614,7 +616,11 @@ function App(): React.JSX.Element {
         return;
       }
       if (event.type === "show-screenshot") {
-        startScreenshot();
+        if (panelRef.current === "screenshot") {
+          setPanel("home");
+        } else {
+          startScreenshot();
+        }
         return;
       }
       if (event.type === "toggle-task-manager") {
@@ -934,9 +940,16 @@ function App(): React.JSX.Element {
         return;
       }
 
-      if (modifier && event.shiftKey && !event.altKey && (key === "s" || event.code === "KeyS") && panel === "home" && currentTab && !currentTab.isInternal) {
+      const isScreenshotKey = modifier && event.shiftKey && !event.altKey && (key === "s" || key === "ы" || event.code === "KeyS");
+      if (isScreenshotKey) {
         event.preventDefault();
-        if (!event.repeat) startScreenshot();
+        if (!event.repeat) {
+          if (panel === "screenshot") {
+            setPanel("home");
+          } else {
+            startScreenshot();
+          }
+        }
         return;
       }
 

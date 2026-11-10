@@ -129,8 +129,63 @@ try {
   await expect(panel.getByRole('status')).toHaveCount(0);
   await panel.getByRole('button', { name: 'Закрыть редактор снимка' }).click();
   await expect(panel).toHaveCount(0);
+
+  // Hotkey when shell is focused
+  const shortcutKey = process.platform === 'darwin' ? 'Meta+Shift+KeyS' : 'Control+Shift+KeyS';
+  await shell.keyboard.press(shortcutKey);
+  await expect(panel).toBeVisible();
+
+  // Toggling hotkey closes the screenshot panel
+  await shell.keyboard.press(shortcutKey);
+  await expect(panel).toHaveCount(0);
+
+  // Hotkey with Cyrillic layout simulation from webContents
+  await app.evaluate(({ webContents }, pageUrl) => {
+    const page = webContents.getAllWebContents().find(contents => contents.getURL() === pageUrl);
+    page.emit('before-input-event', { preventDefault() {} }, {
+      type: 'keyDown',
+      key: 'ы',
+      code: '',
+      shift: true,
+      control: process.platform !== 'darwin',
+      meta: process.platform === 'darwin',
+      alt: false,
+      isAutoRepeat: false,
+    });
+  }, url);
+  await expect(panel).toBeVisible();
+
+  // Close via Escape
+  await shell.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+
+  // Hotkey with Cyrillic layout simulation from renderer DOM
+  await shell.evaluate((isMac) => {
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      ctrlKey: !isMac,
+      metaKey: isMac,
+      shiftKey: true,
+      key: 'ы',
+      code: '',
+      bubbles: true,
+    }));
+  }, process.platform === 'darwin');
+  await expect(panel).toBeVisible();
+
+  // Close via Escape
+  await shell.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+
+  // Hotkey on internal tab shows user-friendly toast error
+  const internalTab = await invoke('createTab', { url: 'browser://newtab' });
+  await expect.poll(async () => (await invoke('getSnapshot')).activeTabId).toBe(internalTab.id);
+  await shell.keyboard.press(shortcutKey);
+  const toast = shell.locator('.app-toast');
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText(/веб-страницу/);
+
   assert.deepEqual(errors, []);
-  console.log('Screenshot capture, markup, clipboard and PNG export passed');
+  console.log('Screenshot capture, markup, clipboard, hotkey in Latin and Cyrillic and internal tab warning passed');
 } finally {
   if (app) await app.close();
   server.closeAllConnections();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canRequestStorageAccess, getExternalPageUrl, getGoogleAuthNotice, getSiteKey, isAdBlockDisabledForSite, isBotVerificationOrCaptchaRequest, isGoogleYouTubeSignInRequest, normalizeCookieExceptions, normalizePermissionOrigin, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../src/shared/sitePolicy';
+import { canRequestStorageAccess, getExternalPageUrl, getGoogleAuthNotice, getSiteKey, isAdBlockDisabledForSite, isBotVerificationOrCaptchaRequest, isGoogleYouTubeSignInRequest, isFederatedSSOSignInRequest, normalizeCookieExceptions, normalizePermissionOrigin, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../src/shared/sitePolicy';
 const policy = (requestUrl: string, topLevelUrl: string, extra = {}) => shouldStripThirdPartyCookies({ requestUrl, topLevelUrl, resourceType: 'xhr', isPrivate: false, enabled: true, ...extra });
 describe('site-aware cookie policy', () => {
   it('keeps search engine login subdomains same-site', () => {
@@ -42,6 +42,8 @@ describe('site-aware cookie policy', () => {
       ['https://accounts.google.com/ListAccounts', 'https://music.youtube.com/'],
       ['https://www.youtube.com/youtubei/v1/verifyAccount', 'https://accounts.google.com/'],
       ['https://youtubei.googleapis.com/youtubei/v1/account/account_menu', 'https://www.youtube.com/'],
+      ['https://www.google.ru/', 'https://www.youtube.com/'],
+      ['https://www.youtube.com/signin?action_handle_signin=true', 'https://google.ru/'],
     ]) {
       expect(isGoogleYouTubeSignInRequest(request, top)).toBe(true);
       expect(policy(request, top)).toBe(false);
@@ -74,6 +76,38 @@ describe('site-aware cookie policy', () => {
     ]) {
       expect(policy(request, top)).toBe(false);
     }
+  });
+  it('allows federated SSO sign-in for major identity providers (VK, Yandex, Mail.ru, Apple, GitHub, Discord, MS)', () => {
+    const ssoCases = [
+      'https://id.vk.com/auth',
+      'https://oauth.vk.com/authorize',
+      'https://passport.yandex.ru/auth',
+      'https://oauth.yandex.ru/authorize',
+      'https://passport.yandex.com/auth',
+      'https://oauth.yandex.com/authorize',
+      'https://passport.yandex.by/auth',
+      'https://passport.yandex.kz/auth',
+      'https://o2.mail.ru/login',
+      'https://connect.mail.ru/oauth',
+      'https://account.mail.ru/auth',
+      'https://appleid.apple.com/auth/authorize',
+      'https://github.com/login/oauth/authorize',
+      'https://discord.com/api/oauth2/authorize',
+      'https://oauth.telegram.org/auth',
+      'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+    ];
+    for (const ssoUrl of ssoCases) {
+      expect(isFederatedSSOSignInRequest(ssoUrl, 'https://example-service.com/login')).toBe(true);
+      expect(policy(ssoUrl, 'https://example-service.com/login')).toBe(false);
+      expect(policy(ssoUrl, 'https://example-service.com/login', { googleSignInCompatibility: false })).toBe(true);
+      expect(policy(ssoUrl, 'https://example-service.com/login', { isPrivate: true })).toBe(true);
+    }
+
+    // Hostile / non-SSO URLs are rejected
+    expect(isFederatedSSOSignInRequest('https://evil.yandex.ru.attacker.com/auth', 'https://example.com')).toBe(false);
+    expect(isFederatedSSOSignInRequest('https://github.com/torvalds/linux', 'https://example.com')).toBe(false);
+    expect(isFederatedSSOSignInRequest('https://discord.com/channels/@me', 'https://example.com')).toBe(false);
+    expect(isFederatedSSOSignInRequest('https://mail.ru/messages', 'https://example.com')).toBe(false);
   });
   it('permits requesting storage access only in eligible secure normal contexts', () => {
     const input = {requestUrl:'https://accounts.google.com/',topLevelUrl:'https://www.youtube.com/',isPrivate:false};

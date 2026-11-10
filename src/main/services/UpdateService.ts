@@ -45,6 +45,36 @@ export function getGitHubToken(): string | undefined {
   return undefined;
 }
 
+/**
+ * Resolves current application version from Electron app metadata or package.json fallback.
+ */
+export function getCurrentAppVersion(): string {
+  try {
+    if (typeof app?.getVersion === 'function') {
+      const v = app.getVersion();
+      if (v) return v;
+    }
+  } catch {
+    // fallback below
+  }
+  try {
+    const candidatePaths = [
+      path.resolve(__dirname, '../../../package.json'),
+      path.resolve(process.cwd(), 'package.json'),
+    ];
+    for (const p of candidatePaths) {
+      if (fs.existsSync(p)) {
+        const raw = fs.readFileSync(p, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed?.version) return String(parsed.version);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return '1.2.2';
+}
+
 let pendingGhToken: Promise<string | undefined> | undefined;
 
 /**
@@ -314,7 +344,7 @@ export class UpdateService {
   }
 
   async checkForUpdates(manual = false): Promise<UpdateCheckResult> {
-    const currentVersion = app?.getVersion ? app.getVersion() : '1.2.2';
+    const currentVersion = getCurrentAppVersion();
     try {
       const releaseData = await this.fetchLatestRelease();
       const tagName = releaseData.tag_name || '';
@@ -401,7 +431,7 @@ export class UpdateService {
    */
   private async resolveReleaseFromWebRedirect(): Promise<any | null> {
     const webLatestUrl = `https://github.com/${GITHUB_REPO}/releases/latest`;
-    const currentVersion = app?.getVersion ? app.getVersion() : '1.2.2';
+    const currentVersion = getCurrentAppVersion();
 
     if (typeof net?.fetch === 'function') {
       try {
@@ -488,7 +518,7 @@ export class UpdateService {
   }
 
   private async httpGetJson(urlStr: string, retries = 2, delayMs = 1000): Promise<any> {
-    const currentVersion = app?.getVersion ? app.getVersion() : '1.2.2';
+    const currentVersion = getCurrentAppVersion();
     const headers: Record<string, string> = {
       'User-Agent': `soulm8te-browser/${currentVersion}`,
       'Accept': 'application/vnd.github.v3+json',
@@ -726,7 +756,7 @@ export class UpdateService {
   }
 
   private async openUpdateResponse(url: string, signal: AbortSignal): Promise<IncomingMessage> {
-    const version = app?.getVersion ? app.getVersion() : '1.2.2';
+    const version = getCurrentAppVersion();
     for (let redirects = 0; redirects <= 5; redirects++) {
       signal.throwIfAborted();
       if (!isTrustedUpdateUrl(url)) throw new Error('Перенаправление на недоверенный адрес заблокировано.');

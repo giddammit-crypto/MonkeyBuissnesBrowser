@@ -123,6 +123,23 @@ describe('Hotkeys and Chromium Shortcuts logic', () => {
       expect(isReaderModeShortcut({ ctrlOrCmd: false, altKey: false, key: 'F9' })).toBe(true);
       expect(isReaderModeShortcut({ ctrlOrCmd: true, altKey: false, key: 'r' })).toBe(false); // standard reload, not reader
     });
+
+    function isScreenshotShortcut(e: { ctrlOrCmd: boolean; shiftKey: boolean; altKey?: boolean; key: string; code?: string }): boolean {
+      const key = e.key.toLowerCase();
+      const code = e.code || '';
+      return Boolean(e.ctrlOrCmd && e.shiftKey && !e.altKey && (key === 's' || key === 'ы' || code === 'KeyS'));
+    }
+
+    it('activates Tab Screenshot on Ctrl+Shift+S, Cmd+Shift+S, and Cyrillic Ctrl+Shift+ы', () => {
+      expect(isScreenshotShortcut({ ctrlOrCmd: true, shiftKey: true, key: 's' })).toBe(true);
+      expect(isScreenshotShortcut({ ctrlOrCmd: true, shiftKey: true, key: 'S' })).toBe(true);
+      expect(isScreenshotShortcut({ ctrlOrCmd: true, shiftKey: true, key: 'ы' })).toBe(true);
+      expect(isScreenshotShortcut({ ctrlOrCmd: true, shiftKey: true, key: 'Ы' })).toBe(true);
+      expect(isScreenshotShortcut({ ctrlOrCmd: true, shiftKey: true, key: '', code: 'KeyS' })).toBe(true);
+      expect(isScreenshotShortcut({ ctrlOrCmd: true, shiftKey: false, key: 's' })).toBe(false);
+      expect(isScreenshotShortcut({ ctrlOrCmd: false, shiftKey: true, key: 's' })).toBe(false);
+      expect(isScreenshotShortcut({ ctrlOrCmd: true, shiftKey: true, altKey: true, key: 's' })).toBe(false);
+    });
   });
 });
 

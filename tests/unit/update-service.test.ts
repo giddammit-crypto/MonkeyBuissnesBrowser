@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   isNewerVersion,
   pickRecommendedAsset,
+  getCurrentAppVersion,
   UpdateService,
   formatGitHubError,
   getGitHubToken,
@@ -35,6 +36,12 @@ describe('UpdateService version comparison', () => {
     expect(isNewerVersion('', '0.9.0')).toBe(false);
     expect(isNewerVersion('0.9.0', '')).toBe(false);
     expect(isNewerVersion('invalid', '0.9.0')).toBe(false);
+  });
+
+  it('resolves the current application version correctly', () => {
+    const version = getCurrentAppVersion();
+    expect(version).toBeTruthy();
+    expect(/^\d+\.\d+\.\d+/.test(version)).toBe(true);
   });
 });
 

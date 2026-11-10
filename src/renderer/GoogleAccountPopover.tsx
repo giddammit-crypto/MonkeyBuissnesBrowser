@@ -43,7 +43,13 @@ export function GoogleAccountPopover({
       }
     };
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        if (showAddForm) {
+          setShowAddForm(false);
+        } else {
+          onClose();
+        }
+      }
     };
     document.addEventListener("mousedown", handlePointer);
     document.addEventListener("keydown", handleKey);
@@ -51,7 +57,7 @@ export function GoogleAccountPopover({
       document.removeEventListener("mousedown", handlePointer);
       document.removeEventListener("keydown", handleKey);
     };
-  }, [onClose]);
+  }, [onClose, showAddForm]);
 
   const handleAddAccount = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,6 +138,7 @@ export function GoogleAccountPopover({
         </div>
       ) : (
         <button
+          type="button"
           className="google-btn-primary"
           onClick={() => {
             onCreateTab("https://accounts.google.com/ServiceLogin");
@@ -247,6 +254,7 @@ export function GoogleAccountPopover({
       ) : (
         <div style={{ display: "flex", gap: "8px" }}>
           <button
+            type="button"
             className="google-btn-secondary"
             onClick={() => {
               onCreateTab("https://accounts.google.com/AddSession");
@@ -257,6 +265,7 @@ export function GoogleAccountPopover({
             Добавить аккаунт
           </button>
           <button
+            type="button"
             className="google-btn-secondary"
             onClick={() => setShowAddForm(true)}
           >
@@ -268,6 +277,7 @@ export function GoogleAccountPopover({
 
       <div className="google-services-grid">
         <button
+          type="button"
           className="google-service-chip"
           onClick={() => openService("https://www.youtube.com/")}
           title="Открыть YouTube"
@@ -276,6 +286,7 @@ export function GoogleAccountPopover({
           <span>YouTube</span>
         </button>
         <button
+          type="button"
           className="google-service-chip"
           onClick={() => openService("https://mail.google.com/")}
           title="Открыть Gmail"
@@ -284,6 +295,7 @@ export function GoogleAccountPopover({
           <span>Gmail</span>
         </button>
         <button
+          type="button"
           className="google-service-chip"
           onClick={() => openService("https://drive.google.com/")}
           title="Открыть Google Диск"
@@ -292,6 +304,7 @@ export function GoogleAccountPopover({
           <span>Диск</span>
         </button>
         <button
+          type="button"
           className="google-service-chip"
           onClick={() => openService("https://www.google.com/")}
           title="Открыть Google Поиск"

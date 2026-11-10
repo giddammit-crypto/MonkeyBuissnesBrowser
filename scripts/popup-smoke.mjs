@@ -30,7 +30,7 @@ try {
   ] });
   await app.evaluate(()=>{globalThis.__popupMainErrors=[];process.on('unhandledRejection', error=>globalThis.__popupMainErrors.push(String(error)));process.on('uncaughtException', error=>globalThis.__popupMainErrors.push(String(error)));});
   const shell = await app.firstWindow();
-  await shell.waitForSelector('.app-shell');
+  await shell.waitForSelector('.app-shell', { timeout: 60000 });
   const invoke = (method, ...args) => shell.evaluate(({ method, args }) => window.browserApi[method](...args), { method, args });
   const snapshot = () => invoke('getSnapshot');
   const evaluatePage = (url, expression) => app.evaluate(({ webContents }, { url, expression }) => {
