@@ -81,12 +81,9 @@ export function QrCodePopover({ url, title, onClose, style }: QrCodePopoverProps
       }
     };
     window.addEventListener("keydown", handleKeyDown);
-    const timeout = setTimeout(() => {
-      window.addEventListener("mousedown", handleClickOutside);
-    }, 50);
+    window.addEventListener("mousedown", handleClickOutside);
 
     return () => {
-      clearTimeout(timeout);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("mousedown", handleClickOutside);
     };

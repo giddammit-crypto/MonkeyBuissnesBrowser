@@ -91,10 +91,7 @@ try {
   await shell.keyboard.press('Escape');
   await expect(qr).toHaveCount(0);
   await qrButton.click();
-  const scrim = shell.getByRole('button', { name: 'Закрыть меню', exact: true });
-  const scrimBounds = await scrim.boundingBox();
-  assert(scrimBounds);
-  await scrim.click({ position: { x: 12, y: scrimBounds.height - 12 } });
+  await shell.getByRole('button', { name: 'Обновить', exact: true }).click();
   await expect(qr).toHaveCount(0);
   console.log('PASS QR popup copies the current URL and closes by toggle, close button, Escape and outside click');
 
