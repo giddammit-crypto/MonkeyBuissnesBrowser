@@ -1,0 +1,87 @@
+/* The palette overrides are scoped to the five new themes. The underlying
+   light/dark mode still controls native widgets and theme-specific layouts. */
+:root[data-theme][data-accent][data-palette="parchment"] {
+  --canvas: #f6efe3;
+  --surface: #fffaf0;
+  --surface-subtle: #eee1ce;
+  --chrome: #eadcc9;
+  --text: #332718;
+  --text-secondary: #5a4936;
+  --text-muted: #695541;
+  --border: #dfceb7;
+  --border-strong: #ab9172;
+  --accent: #8c4028;
+  --signal: #9a492e;
+  --accent-soft: #f0d9c7;
+  --accent-contrast: #fffaf0;
+}
+:root[data-theme][data-accent][data-palette="arctic-glass"] {
+  --canvas: #edf5fa;
+  --surface: #f8fcff;
+  --surface-subtle: #dbeaf4;
+  --chrome: #d6e6f1;
+  --text: #132a3d;
+  --text-secondary: #304e66;
+  --text-muted: #436078;
+  --border: #c4d9e8;
+  --border-strong: #8eafc6;
+  --accent: #1d558d;
+  --signal: #235d99;
+  --accent-soft: #d7e8f9;
+  --accent-contrast: #f8fcff;
+}
+:root[data-theme][data-accent][data-palette="pine-forest"] {
+  --canvas: #111d17;
+  --surface: #19291f;
+  --surface-subtle: #24392b;
+  --chrome: #16241b;
+  --text: #e8f3e6;
+  --text-secondary: #bbd3bf;
+  --text-muted: #a1bfa7;
+  --border: #314a38;
+  --border-strong: #577962;
+  --accent: #a4d88f;
+  --signal: #a8e78c;
+  --accent-soft: #314a2e;
+  --accent-contrast: #152319;
+}
+:root[data-theme][data-accent][data-palette="deep-ocean"] {
+  --canvas: #0c1828;
+  --surface: #122338;
+  --surface-subtle: #1a304a;
+  --chrome: #0f1e32;
+  --text: #e6f4ff;
+  --text-secondary: #bdd5eb;
+  --text-muted: #a0bdd6;
+  --border: #284461;
+  --border-strong: #4b7091;
+  --accent: #79c9ed;
+  --signal: #85d8f7;
+  --accent-soft: #20455d;
+  --accent-contrast: #102238;
+}
+:root[data-theme][data-accent][data-palette="copper-night"] {
+  --canvas: #221718;
+  --surface: #302124;
+  --surface-subtle: #412d30;
+  --chrome: #281b1d;
+  --text: #fff0e7;
+  --text-secondary: #ead0c6;
+  --text-muted: #d2b1a6;
+  --border: #53383d;
+  --border-strong: #866066;
+  --accent: #f4b485;
+  --signal: #ffc394;
+  --accent-soft: #593c32;
+  --accent-contrast: #2c1c1d;
+}
+:root[data-theme][data-accent][data-palette] .window-titlebar {
+  border-bottom-color: var(--signal);
+}
+:root[data-theme][data-accent][data-palette] .tab-container.active::after {
+  background: var(--signal);
+}
+:root[data-theme][data-accent][data-palette] .omnibox:focus-within {
+  border-color: var(--signal);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 22%, transparent);
+}

@@ -86,6 +86,19 @@ describe('site-aware cookie policy', () => {
   });
 });
 describe('Google auth help and explicit external navigation', () => {
+  it('preserves cookies for the modern Google sign-in route only under the compatibility policy', () => {
+    const input = {
+      requestUrl: 'https://accounts.google.com/v3/signin/identifier',
+      topLevelUrl: 'https://www.figma.com/',
+      resourceType: 'subFrame',
+      isPrivate: false,
+      enabled: true,
+    };
+    expect(shouldStripThirdPartyCookies(input)).toBe(false);
+    expect(shouldStripThirdPartyCookies({ ...input, googleSignInCompatibility: false })).toBe(true);
+    expect(shouldStripThirdPartyCookies({ ...input, isPrivate: true })).toBe(true);
+    expect(shouldStripThirdPartyCookies({ ...input, requestUrl: 'https://accounts.google.com/v3/signin-elsewhere' })).toBe(true);
+  });
   it('recognizes actual rejection routes but leaves normal sign-in flows unobstructed', () => {
     expect(getGoogleAuthNotice('https://accounts.google.com/v3/signin/rejected?continue=x')?.title).toContain('ограничил');
     for (const path of ['/o/oauth2/v2/auth?client_id=x','/ServiceLogin?service=youtube','/AccountChooser?service=youtube','/v3/signin/identifier?service=youtube','/v3/signin/challenge/pwd']) {

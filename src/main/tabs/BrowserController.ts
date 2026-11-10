@@ -1,3 +1,4 @@
+import { isBrowserTheme, nativeBrowserTheme } from '../../shared/browserThemes';
 import { exportBookmarksHtml } from '../services/BookmarkExportService';
 import { createMediaCookieFile } from '../services/MediaCookieFile';
 import { permissionRequestGuard } from '../services/PermissionRequestGuard';
@@ -371,7 +372,7 @@ export class BrowserController {
     if (initialSettings.voodooBubblePosition) {
       this.voodooBubblePosition = { ...initialSettings.voodooBubblePosition };
     }
-    nativeTheme.themeSource = initialSettings.theme === 'graphite' ? 'dark' : (initialSettings.theme || 'system');
+    nativeTheme.themeSource = nativeBrowserTheme(initialSettings.theme);
     // Runtime entries include private downloads and native item ownership, so
     // windows share persistence but retain separate runtime arrays.
     this.downloads = structuredClone(this.stores.downloads.get());
@@ -1971,7 +1972,7 @@ export class BrowserController {
 
   updateSettings(patch: Partial<BrowserSettings>): BrowserSettings {
     const next = this.stores.settings.update((current) => {
-      const theme = patch.theme === 'light' || patch.theme === 'dark' || patch.theme === 'graphite' || patch.theme === 'system' ? patch.theme : current.theme;
+      const theme = isBrowserTheme(patch.theme) ? patch.theme : current.theme;
       const searchEngine = typeof patch.searchEngine === 'string' && /^https?:\/\//i.test(patch.searchEngine) ? patch.searchEngine : current.searchEngine;
       const sleepAfterMinutes = patch.sleepAfterMinutes === 0 || patch.sleepAfterMinutes === 5 || patch.sleepAfterMinutes === 15 || patch.sleepAfterMinutes === 30 || patch.sleepAfterMinutes === 60
         ? patch.sleepAfterMinutes
@@ -2014,7 +2015,7 @@ export class BrowserController {
       };
     });
     if (next.theme) {
-      nativeTheme.themeSource = next.theme === 'graphite' ? 'dark' : next.theme;
+      nativeTheme.themeSource = nativeBrowserTheme(next.theme);
     }
     this.adBlock.engine.setEnabled(next.adBlockEnabled !== false);
     this.privateAdBlock.engine.setEnabled(next.adBlockEnabled !== false);
@@ -5150,6 +5151,9 @@ export class BrowserController {
   }
 
   addGoogleAccount(email: string, name?: string): GoogleAccount {
+    email = typeof email === 'string' ? email.trim() : '';
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Введите корректный адрес электронной почты.');
+    name = typeof name === 'string' ? name.trim().slice(0, 100) : undefined;
     const data = this.stores.googleAccounts.get();
     const existing = data.accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
     if (existing) {
@@ -5161,6 +5165,7 @@ export class BrowserController {
       this.emitSnapshot();
       return existing;
     }
+    if (data.accounts.length >= 20) throw new Error('В панели можно сохранить до 20 аккаунтов.');
     const newAccount: GoogleAccount = {
       id: crypto.randomUUID(),
       email,
@@ -5197,8 +5202,12 @@ export class BrowserController {
     this.emitSnapshot();
   }
 
-  registerGoogleAccount(email: string, name?: string, avatar?: string): void {
-    if (!email || !email.includes('@')) return;
+  registerGoogleAccount(sourceSession: Electron.Session, sourceUrl: string, email: string, name?: string, avatar?: string): void {
+    if (sourceSession !== this.browserSession) return;
+    const url = URL.parse(sourceUrl);
+    if (!url || url.protocol !== 'https:' || url.port || url.username || url.password) return;
+    if (!['google.com', 'www.google.com', 'google.ru', 'www.google.ru', 'accounts.google.com', 'myaccount.google.com', 'mail.google.com', 'drive.google.com'].includes(url.hostname)) return;
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
     const data = this.stores.googleAccounts.get();
     const existing = data.accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
     if (existing) {
@@ -5211,6 +5220,7 @@ export class BrowserController {
       }
       return;
     }
+    if (data.accounts.length >= 20) return;
     const newAcc: GoogleAccount = {
       id: crypto.randomUUID(),
       email,

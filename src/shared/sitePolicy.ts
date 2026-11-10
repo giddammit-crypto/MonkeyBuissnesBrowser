@@ -144,7 +144,7 @@ export function isGoogleFederatedSignInRequest(requestUrl: string, topLevelUrl: 
     if (topHost.endsWith('.test') || topHost.endsWith('.example')) return false;
 
     if (host === 'accounts.google.com') {
-      return /^\/(?:gsi|_|ListAccounts|rotatecookies|o\/oauth2|oauth2|embedded|signin|ServiceLogin|AccountChooser)(?:\/|$)/i.test(request.pathname);
+      return /^\/(?:gsi|_|ListAccounts|rotatecookies|o\/oauth2|oauth2|embedded|(?:v3\/)?signin|ServiceLogin|AccountChooser)(?:\/|$)/i.test(request.pathname);
     }
     if (host === 'smartlock.google.com' || host === 'apis.google.com') {
       return true;
