@@ -120,13 +120,16 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ onDismiss, onFeedback 
       }
     } catch (e) {
       onFeedback?.('Сбой скачивания обновления', true);
+    } finally {
+      setDownloading(false);
     }
   };
 
   const openFile = async () => {
     if (!downloadProgress?.savePath) return;
     try {
-      await window.browserApi.openDownloadedUpdate(downloadProgress.savePath);
+      const opened = await window.browserApi.openDownloadedUpdate(downloadProgress.savePath);
+      if (!opened) onFeedback?.('Файл обновления недоступен или изменился. Скачайте его снова.', true);
     } catch {
       onFeedback?.('Не удалось запустить файл', true);
     }
@@ -173,7 +176,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ onDismiss, onFeedback 
           <div className="update-version-card">
             <div className="version-item">
               <span className="version-label">Текущая версия</span>
-              <span className="version-value">v{checkResult?.currentVersion || '1.2.0'}</span>
+              <span className="version-value">v{checkResult?.currentVersion || '1.2.1'}</span>
             </div>
             <div className="version-arrow">
               <ArrowRight size={20} />
@@ -181,7 +184,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ onDismiss, onFeedback 
             <div className="version-item" style={{ textAlign: 'right' }}>
               <span className="version-label">Новая версия</span>
               <span className="version-value" style={{ color: hasUpdate ? '#00e5ff' : '#4ade80' }}>
-                v{checkResult?.latestVersion || checkResult?.currentVersion || '1.2.0'}
+                v{checkResult?.latestVersion || checkResult?.currentVersion || '1.2.1'}
               </span>
             </div>
           </div>

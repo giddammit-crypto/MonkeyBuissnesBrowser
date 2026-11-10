@@ -7228,6 +7228,7 @@ export class BrowserController {
   dispose(): void {
     BrowserController.controllers.delete(this);
     this.updateService?.stopAutoCheckTimer();
+    this.updateService?.cancelDownload();
     this.voodooModelCatalog?.dispose();
     if (this.disposed) return;
     this.persistSession();
