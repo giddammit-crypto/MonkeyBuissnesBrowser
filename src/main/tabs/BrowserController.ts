@@ -2,6 +2,7 @@ import { captureTabScreenshot, exportScreenshot, type TabScreenshot } from '../s
 import { inspectOsintPage, lookupPublicDns, osintHttpEvidence } from '../services/OsintService';
 import type { DnsResult, HttpEvidence, PageOsint } from '../../shared/osint';
 import { isBrowserTheme, nativeBrowserTheme } from '../../shared/browserThemes';
+import { exportNotesToFile } from '../services/NotesExportService';
 import { exportBookmarksHtml } from '../services/BookmarkExportService';
 import { createMediaCookieFile } from '../services/MediaCookieFile';
 import { permissionRequestGuard } from '../services/PermissionRequestGuard';
@@ -56,6 +57,7 @@ import type {
   BrowsecState,
   BrowserSettings,
   BrowserSnapshot,
+  VoodooViewState,
   DownloadEntry,
   HistoryEntry,
   TabSnapshot,
@@ -738,7 +740,13 @@ export class BrowserController {
   getSnapshot(): BrowserSnapshot {
     const storedWorkspaces = this.stores.workspaces.get();
     const tabsByWorkspace = new Map<string, string[]>();
+    const settings = this.stores.settings.get();
+    const metrics = this.memoryManager.metrics();
+    const tabs: TabSnapshot[] = [];
+    let privateTabCount = 0;
     for (const tab of this.tabs.values()) {
+      tabs.push(this.toSnapshot(tab));
+      if (tab.isPrivate) privateTabCount++;
       const tabIds = tabsByWorkspace.get(tab.workspaceId) ?? [];
       tabIds.push(tab.id);
       tabsByWorkspace.set(tab.workspaceId, tabIds);
@@ -746,32 +754,42 @@ export class BrowserController {
     const gData = this.stores.googleAccounts.get();
     const activeGoogleAccount = gData.accounts.find((a) => a.id === gData.activeId) || gData.accounts[0] || null;
     return {
-      tabs: Array.from(this.tabs.values()).map((tab) => this.toSnapshot(tab)),
+      tabs,
       activeTabId: this.activeTabId,
       splitView: this.splitView ? { secondaryTabId: this.splitView.secondaryTabId, ratio: this.splitView.ratio } : undefined,
       isFullScreen: Boolean(this.window && !this.window.isDestroyed() && this.window.isFullScreen()),
-      privacy: { privateTabCount: [...this.tabs.values()].filter((tab) => tab.isPrivate).length, proxy: this.privateProxy },
+      privacy: { privateTabCount, proxy: this.privateProxy },
       history: this.stores.history.get(),
       bookmarks: this.stores.bookmarks.get(),
       downloads: this.downloads,
       workspaces: storedWorkspaces.map((workspace) => ({ ...workspace, tabIds: tabsByWorkspace.get(workspace.id) ?? [] })),
-      settings: this.stores.settings.get(),
-      readerSettings: this.stores.settings.get().readerSettings || defaultReaderSettings,
-      notes: this.stores.notes.get(),
+      settings,
+      readerSettings: settings.readerSettings || defaultReaderSettings,
       notificationPermissions: this.stores.notificationPermissions.get(),
       vpn: this.vpn.getSnapshot(),
       browsec: this.browsec.getSnapshot(),
       adBlock: this.adBlock.engine.stats(),
       googleAccounts: gData.accounts,
       activeGoogleAccount,
-      performance: this.memoryManager.metrics()
+      performance: metrics
         ? {
-            sampledAt: this.memoryManager.metrics()!.sampledAt,
-            availableMemory: this.memoryManager.metrics()!.availableMemory,
-            processCount: this.memoryManager.metrics()!.processes.length,
-            totalWorkingSet: this.memoryManager.metrics()!.processes.reduce((sum, process) => sum + process.workingSetSize, 0),
+            sampledAt: metrics.sampledAt,
+            availableMemory: metrics.availableMemory,
+            processCount: metrics.processes.length,
+            totalWorkingSet: metrics.processes.reduce((sum, process) => sum + process.workingSetSize, 0),
           }
         : null,
+    };
+  }
+
+  getVoodooViewState(): VoodooViewState {
+    const settings = this.stores.settings.get();
+    const tab = this.getActiveTab();
+    return {
+      currentTab: tab && { url: tab.isPrivate ? '' : tab.url, title: tab.isPrivate ? '' : tab.title, isPrivate: tab.isPrivate },
+      bubbleVisible: settings.voodooBubbleVisible !== false && settings.voodooEnabled !== false,
+      model: settings.voodooModel,
+      contextWindowTokens: settings.voodooContextWindowTokens,
     };
   }
 
@@ -5093,6 +5111,13 @@ export class BrowserController {
     }
   }
 
+  async exportNotes(noteId?: string): Promise<boolean> {
+    if (!this.window || this.window.isDestroyed()) return false;
+    if (noteId !== undefined && (typeof noteId !== 'string' || !noteId)) throw new Error('Некорректная заметка.');
+    const notes = this.stores.notes.get();
+    return exportNotesToFile(this.window, notes, app.getPath('documents'), noteId);
+  }
+
   async getNotes(query?: string): Promise<NoteEntry[]> {
     let items = this.stores.notes.get();
     if (query && typeof query === 'string' && query.trim()) {
@@ -5116,7 +5141,8 @@ export class BrowserController {
       throw new Error('Укажите текст заметки.');
     }
     const items = this.stores.notes.get();
-    const existingIndex = input.id ? items.findIndex((n) => n.id === input.id) : -1;
+    const existingIndex = input.id === undefined ? -1 : items.findIndex((n) => n.id === input.id);
+    if (input.id !== undefined && existingIndex === -1) throw new Error('Заметка была удалена. Скопируйте текст, чтобы сохранить его в новой заметке.');
     const now = Date.now();
     let note: NoteEntry;
 
@@ -5140,7 +5166,7 @@ export class BrowserController {
         throw new Error('Достигнут лимит 500 заметок. Удалите ненужную заметку перед созданием новой; существующие заметки сохранены.');
       }
       note = {
-        id: input.id || crypto.randomUUID(),
+        id: crypto.randomUUID(),
         title: (input.title || '').trim().slice(0, 500),
         content: input.content.slice(0, 50000),
         color: input.color || 'default',
@@ -5152,7 +5178,6 @@ export class BrowserController {
       };
       this.stores.notes.set([note, ...items]);
     }
-    this.emitSnapshot();
     return note;
   }
 
@@ -5161,7 +5186,6 @@ export class BrowserController {
     const next = items.filter((n) => n.id !== id);
     if (next.length === items.length) return false;
     this.stores.notes.set(next);
-    this.emitSnapshot();
     return true;
   }
 
@@ -5178,29 +5202,33 @@ export class BrowserController {
     const next = [...items];
     next[index] = updated;
     this.stores.notes.set(next);
-    this.emitSnapshot();
     return updated;
   }
 
   async createNoteFromTab(tabId: string, textSnippet?: string): Promise<NoteEntry> {
     const tab = this.tabs.get(tabId);
+    if (!tab || tab.isPrivate || tab.isInternal) throw new Error('Создать заметку со страницы можно только в обычной веб-вкладке.');
+    const { url, title } = tab;
+    const contents = tab.view?.webContents;
     let snippet = textSnippet;
-    if (snippet === undefined && tab?.view && !tab.view.webContents.isDestroyed()) {
+    if (snippet === undefined && contents && !contents.isDestroyed()) {
       try {
-        snippet = await tab.view.webContents.executeJavaScript('window.getSelection() ? window.getSelection().toString() : ""', true);
+        snippet = await contents.executeJavaScript('window.getSelection()?.toString() ?? ""');
       } catch {
         snippet = '';
       }
+      if (this.tabs.get(tabId) !== tab || tab.view?.webContents !== contents || tab.url !== url) {
+        throw new Error('Страница изменилась. Создайте заметку ещё раз.');
+      }
     }
-    const note = await this.saveNote({
-      title: tab?.title || 'Заметка со страницы',
-      content: (snippet || '').trim(),
-      url: tab?.url,
-      tabTitle: tab?.title,
+    return this.saveNote({
+      title: title || 'Заметка со страницы',
+      content: typeof snippet === 'string' ? snippet.trim() : '',
+      url,
+      tabTitle: title,
       color: 'default',
       isPinned: false,
     });
-    return note;
   }
 
   registerCapturedAudio(webContentsId: number, url: string, _title?: string, _artist?: string, filename?: string): void {
@@ -5327,10 +5355,11 @@ export class BrowserController {
         this.shellView?.webContents.focus();
         this.eventListener?.({ type: 'toggle-task-manager' });
       });
-      else if (modifier && input.shift && !input.alt && isKey('s', 'KeyS', 'ы') && contents.id !== this.shellView?.webContents.id) run(() => {
+      else if (modifier && input.shift && !input.alt && isKey('s', 'KeyS', 'ы')) run(() => {
+        if (input.isAutoRepeat) return;
         this.exitPageFullscreen();
         this.shellView?.webContents.focus();
-        if (!input.isAutoRepeat) this.eventListener?.({ type: 'show-screenshot' });
+        this.eventListener?.({ type: 'show-screenshot' });
       });
       else if (modifier && input.shift && isKey('v', 'KeyV', 'м')) run(() => {
         this.toggleVoodoo();
@@ -5411,17 +5440,11 @@ export class BrowserController {
 
   private persistSession(): void {
     if (this.restoring) return;
-    let allTabs: TabSnapshot[] = [];
-    if (BrowserController.controllers.size > 1) {
-      for (const c of BrowserController.controllers) {
-        if (!c.disposed) {
-          allTabs.push(...[...c.tabs.values()].map((tab) => c.toSnapshot(tab)));
-        }
-      }
-    } else {
-      allTabs = [...this.tabs.values()].map((tab) => this.toSnapshot(tab));
-    }
-    const saved = this.stores.settings.get().restoreSession !== false ? buildStoredSession(allTabs, this.activeTabId) : { tabs: [], activeIndex: 0 };
+    const controllers = BrowserController.controllers;
+    const saved = this.stores.settings.get().restoreSession !== false
+      ? buildStoredSession(controllers.size > 1 ? [...controllers].flatMap(controller =>
+          controller.disposed ? [] : [...controller.tabs.values()]) : this.tabs.values(), this.activeTabId)
+      : { tabs: [], activeIndex: 0 };
     const signature = JSON.stringify(saved);
     if (signature === this.sessionSignature) return;
     try {

@@ -281,10 +281,18 @@ function normalizeSession(value: unknown): StoredSession {
 }
 
 /** Session persistence is an allowlist: private tabs and runtime fields never reach disk. */
-export function buildStoredSession(tabs: TabSnapshot[], activeTabId: string): StoredSession {
-  const eligible = tabs.filter((tab) => !tab.isPrivate && (tab.url === 'browser://newtab' || isSafeWebUrl(tab.url)));
-  const active = eligible.find((tab) => tab.id === activeTabId);
-  const regularTabs = eligible.slice(0, 100);
+type SessionTab = Pick<TabSnapshot, 'id' | 'url' | 'title' | 'workspaceId' | 'isPrivate' | 'isPinned' | 'isMuted'>;
+
+export function buildStoredSession(tabs: Iterable<SessionTab>, activeTabId: string): StoredSession {
+  const regularTabs: SessionTab[] = [];
+  let active: SessionTab | undefined;
+  for (const tab of tabs) {
+    if (regularTabs.length === 100 && active) break;
+    if (regularTabs.length === 100 && tab.id !== activeTabId) continue;
+    if (tab.isPrivate || (tab.url !== 'browser://newtab' && !isSafeWebUrl(tab.url))) continue;
+    if (tab.id === activeTabId) active = tab;
+    if (regularTabs.length < 100) regularTabs.push(tab);
+  }
   if (active && !regularTabs.includes(active)) {
     if (regularTabs.length === 100) regularTabs.pop();
     regularTabs.push(active);

@@ -35,7 +35,7 @@ import {
   Zap,
   Power,
 } from 'lucide-react';
-import type { TabSnapshot, VoodooChatMessage, VoodooTabContext } from '../shared/types';
+import type { VoodooChatMessage, VoodooTabContext, VoodooViewState } from '../shared/types';
 import MarkdownView from './MarkdownView';
 import { boundVoodooHistory, compactVoodooMessage, restoreVoodooHistory, serializeVoodooHistory } from '../shared/voodooHistory';
 
@@ -95,7 +95,9 @@ interface VoodooChatBubbleProps {
   onClose?: () => void;
   bubbleVisible?: boolean;
   onHideBubble?: () => void;
-  currentTab?: TabSnapshot;
+  currentTab?: VoodooViewState['currentTab'];
+  modelLabel?: string;
+  contextWindowTokens?: number;
   standalone?: boolean;
 }
 
@@ -159,12 +161,14 @@ export default function VoodooChatBubble({
   bubbleVisible = true,
   onHideBubble: propsOnHideBubble,
   currentTab,
+  modelLabel = 'ИИ агент',
+  contextWindowTokens = DEFAULT_CONTEXT_WINDOW_TOKENS,
   standalone = false,
 }: VoodooChatBubbleProps): React.JSX.Element {
   const [isOpenState, setIsOpenState] = useState(false);
   const isOpen = standalone ? isOpenState : (propsIsOpen ?? isOpenState);
 
-  const historyBudgetRef = useRef(DEFAULT_CONTEXT_WINDOW_TOKENS);
+  const historyBudgetRef = useRef(contextWindowTokens);
   const [messages, setStoredMessages] = useState<VoodooChatMessage[]>(() => {
     try {
       const restored = restoreVoodooHistory(sessionStorage.getItem('voodoo_chat_history'));
@@ -185,7 +189,6 @@ export default function VoodooChatBubble({
   const [loading, setLoading] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [agentProgress, setAgentProgress] = useState('');
-  const [modelLabel, setModelLabel] = useState('ИИ агент');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [insertedKey, setInsertedKey] = useState<string | null>(null);
@@ -300,22 +303,9 @@ export default function VoodooChatBubble({
   }, [isOpen, messages, loading, agentProgress, scrollToBottom]);
 
   useEffect(() => {
-    let active = true;
-    void window.browserApi.getSnapshot().then((snapshot) => {
-      if (active) {
-        setModelLabel(snapshot.settings.voodooModel || 'ИИ агент');
-        historyBudgetRef.current = snapshot.settings.voodooContextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
-      }
-    }).catch((err) => {
-      console.error('Не удалось получить снимок браузера для Вуду:', err);
-    });
-    const unsubscribe = window.browserApi.onSnapshotChanged((snapshot) => {
-      setModelLabel(snapshot.settings.voodooModel || 'ИИ агент');
-      historyBudgetRef.current = snapshot.settings.voodooContextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
-      setMessages((previous) => previous);
-    });
-    return () => { active = false; unsubscribe(); };
-  }, []);
+    historyBudgetRef.current = contextWindowTokens;
+    setMessages(previous => previous);
+  }, [contextWindowTokens, setMessages]);
 
   // Debounce synchronous Web Storage work; tool bodies have already been
   // compacted. Persistence has its own quota, separate from live model context.

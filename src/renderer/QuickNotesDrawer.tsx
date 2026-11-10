@@ -14,6 +14,7 @@ import {
   Download,
 } from "lucide-react";
 import type { NoteColor, NoteEntry, SaveNoteInput, TabSnapshot } from "../shared/types";
+import { userFacingError } from "./userFacingError";
 import "./quick-notes.css";
 
 // Serialize persistence so a delayed save can never overtake pin or delete.
@@ -58,6 +59,8 @@ export function QuickNotesDrawer({
 }: QuickNotesDrawerProps): React.JSX.Element {
   const [notes, setNotes] = useState<NoteEntry[]>([]);
   const [createError, setCreateError] = useState("");
+  const [exportFeedback, setExportFeedback] = useState("");
+  const [exporting, setExporting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "site">("all");
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
@@ -80,21 +83,6 @@ export function QuickNotesDrawer({
     } catch {}
   };
 
-  const handleExportTxt = () => {
-    if (!selectedNoteId) return;
-    const filename = `${(title.trim() || "Заметка").replace(/[/\\?%*:|"<>]/g, "-")}.txt`;
-    const fullText = `${title ? `${title}\n\n` : ""}${content}${url ? `\n\nИсточник: ${url}` : ""}`;
-    const blob = new Blob([fullText], { type: "text/plain;charset=utf-8" });
-    const downloadUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = downloadUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(downloadUrl);
-  };
-
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const queue = useRef(new NoteMutationQueue()).current;
@@ -115,9 +103,27 @@ export function QuickNotesDrawer({
     return queue.flush();
   };
 
+  const exportNotes = async (noteId?: string) => {
+    if (exporting) return;
+    setExporting(true);
+    setExportFeedback("");
+    setCreateError("");
+    try {
+      await flush();
+      if (failedSaves.current.size) throw new Error("Сначала сохраните изменения в заметках.");
+      if (await window.browserApi.exportNotes(noteId)) {
+        setExportFeedback(noteId ? "Заметка экспортирована" : "Архив заметок экспортирован");
+      }
+    } catch (error) {
+      setCreateError(userFacingError(error));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Extract current tab host
   const currentTabHost = useMemo(() => {
-    if (!currentTab?.url || currentTab.isInternal) return "";
+    if (!currentTab?.url || currentTab.isInternal || currentTab.isPrivate) return "";
     try {
       return new URL(currentTab.url).hostname;
     } catch {
@@ -255,12 +261,12 @@ export function QuickNotesDrawer({
     setCreateError("");
     void flush();
     const version = selectionVersion.current;
+    const page = currentTab && !currentTab.isPrivate && !currentTab.isInternal ? currentTab : undefined;
     try {
-      const note = await queue.enqueue(() => fromTab && currentTab && !currentTab.isInternal
-        ? window.browserApi.createNoteFromTab(currentTab.id)
+      const note = await queue.enqueue(() => fromTab && page
+        ? window.browserApi.createNoteFromTab(page.id)
         : window.browserApi.saveNote({ title: "Новая заметка", content: "", color: "default",
-            url: currentTab && !currentTab.isInternal ? currentTab.url : undefined,
-            tabTitle: currentTab && !currentTab.isInternal ? currentTab.title : undefined }));
+            url: page?.url, tabTitle: page?.title }));
       updateNotes([note, ...notesRef.current]);
       if (mounted.current && selectionVersion.current === version) selectNote(note);
     } catch (err) {
@@ -337,6 +343,10 @@ export function QuickNotesDrawer({
         </div>
 
         <div className="notes-header-actions">
+          <button type="button" className="icon-button" disabled={!notes.length || exporting}
+            onClick={() => void exportNotes()} title="Экспорт всех заметок в JSON" aria-label="Экспорт всех заметок в JSON">
+            <Download size={16} />
+          </button>
           <button
             type="button"
             className="notes-btn-new"
@@ -359,6 +369,7 @@ export function QuickNotesDrawer({
       </div>
 
       {createError && <p className="notes-create-error" role="alert">{createError}</p>}
+      {exportFeedback && <p className="notes-export-feedback" role="status">{exportFeedback}</p>}
 
       {/* Search and Filters */}
       <div className="notes-search-section">
@@ -579,7 +590,8 @@ export function QuickNotesDrawer({
               <button
                 type="button"
                 className="note-action-icon-btn"
-                onClick={handleExportTxt}
+                onClick={() => void exportNotes(selectedNoteId)}
+                disabled={exporting}
                 title="Экспортировать в файл .txt"
                 aria-label="Экспортировать в файл"
               >

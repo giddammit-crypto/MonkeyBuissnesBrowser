@@ -41,6 +41,31 @@ try {
   await card('Alpha note').click();
   await expect(content).toHaveValue('Saved on close');
   console.log('PASS close and reopen flushes pending note draft');
+
+  const single = path.join(profile, 'note.txt');
+  const archive = path.join(profile, 'archive.json');
+  await app.evaluate(({ dialog }, destinations) => {
+    dialog.showSaveDialog = async (_window, options) => {
+      const ext = options.filters[0].extensions[0];
+      return { canceled: false, filePath: destinations[ext] };
+    };
+  }, { txt: single, json: archive });
+  await content.fill('Кириллица и незаписанный черновик 📌');
+  await drawer.getByRole('button', { name: 'Экспортировать в файл' }).click();
+  await expect(drawer.getByRole('status')).toHaveText('Заметка экспортирована');
+  assert.equal(fs.readFileSync(single, 'utf8'), 'Alpha note\n\nКириллица и незаписанный черновик 📌');
+  await drawer.getByRole('button', { name: 'Экспорт всех заметок в JSON' }).click();
+  await expect(drawer.getByRole('status')).toHaveText('Архив заметок экспортирован');
+  const savedArchive = fs.readFileSync(archive, 'utf8');
+  assert.equal(JSON.parse(savedArchive).version, 1);
+  assert.deepEqual(JSON.parse(savedArchive).notes.toSorted((a, b) => a.id.localeCompare(b.id)),
+    JSON.parse(JSON.stringify(await invoke('getNotes'))).toSorted((a, b) => a.id.localeCompare(b.id)));
+  await app.evaluate(({ dialog }) => { dialog.showSaveDialog = async () => ({ canceled: true }); });
+  await drawer.getByRole('button', { name: 'Экспорт всех заметок в JSON' }).click();
+  await expect(drawer.getByRole('button', { name: 'Экспорт всех заметок в JSON' })).toBeEnabled();
+  await expect(drawer.getByRole('status')).toHaveCount(0);
+  assert.equal(fs.readFileSync(archive, 'utf8'), savedArchive);
+  console.log('PASS native TXT and JSON exports include the latest draft and cancellation preserves the destination');
   await content.fill('Must never resurrect');
   await drawer.getByTitle('Удалить заметку', { exact: true }).click();
   await expect.poll(async () => (await invoke('getNotes')).some(n => n.id === a.id)).toBe(false);
@@ -48,8 +73,26 @@ try {
   await new Promise(resolve => setTimeout(resolve, 650));
   assert.equal((await invoke('getNotes')).some(n => n.id === a.id), false);
   assert((await invoke('getNotes')).some(n => n.id === b.id));
-  console.log('PASS deleted note is not recreated by pending autosave');
+  await assert.rejects(invoke('saveNote', { id: a.id, content: 'Stale editor in another window' }), /удалена/);
+  assert(!(await invoke('getNotes')).some(note => note.id === a.id));
+  console.log('PASS deleted note cannot be recreated by a delayed save from either editor');
   await drawer.getByRole('button', { name: 'Закрыть', exact: true }).click();
+
+  const normalTab = (await invoke('getSnapshot')).activeTabId;
+  const privateTab = await invoke('createTab', { url: 'http://127.0.0.1:1/private-note-fixture', isPrivate: true });
+  await assert.rejects(invoke('createNoteFromTab', privateTab.id, 'Private selection'), /обычной веб-вкладке/);
+  const state = await invoke('getVoodooViewState');
+  assert.deepEqual(state.currentTab, { isPrivate: true, url: '', title: '' });
+  assert(!('tabs' in state || 'history' in state || 'downloads' in state || 'notes' in state));
+  await shell.getByRole('button', { name: 'Быстрые заметки', exact: true }).first().click();
+  await drawer.getByRole('button', { name: 'Заметка', exact: true }).click();
+  const privateWindowNote = (await invoke('getNotes')).find(note => note.title === 'Новая заметка');
+  assert(privateWindowNote && !privateWindowNote.url && !privateWindowNote.tabTitle);
+  await drawer.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await invoke('activateTab', normalTab);
+  await invoke('closeTab', privateTab.id);
+  assert(!('notes' in await invoke('getSnapshot')));
+  console.log('PASS notes stay out of routine snapshots and private page addresses stay out of notes and Voodoo');
   await shell.evaluate(async () => {
     const notes = await window.browserApi.getNotes();
     for (let index = notes.length; index < 500; index++) {

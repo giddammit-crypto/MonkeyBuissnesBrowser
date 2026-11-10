@@ -135,7 +135,8 @@ try {
   await shell.keyboard.press(shortcutKey);
   await expect(panel).toBeVisible();
 
-  // Toggling hotkey closes the screenshot panel
+  // Toggling hotkey closes the screenshot panel after focus enters it.
+  await expect(panel.getByRole('heading')).toBeFocused();
   await shell.keyboard.press(shortcutKey);
   await expect(panel).toHaveCount(0);
 
