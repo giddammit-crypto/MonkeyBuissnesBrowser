@@ -116,6 +116,7 @@ function registerIpc(): void {
   ipcMain.handle('browser:activate-tab', (event, tabId: string) => requireShell(event).activateTab(tabId));
   ipcMain.handle('browser:open-page-externally', (event, tabId: string) => requireShell(event).openCurrentPageExternally(tabId));
   ipcMain.handle('browser:set-site-cookie-exception', (event, tabId: string, allow: boolean) => requireShell(event).setSiteCookieException(tabId, allow));
+  ipcMain.handle('browser:reset-site-media-permissions', (event, tabId: string) => requireShell(event).resetSiteMediaPermissions(tabId));
   ipcMain.handle('browser:set-site-notification-permission', (event, tabId: string, decision: 'allow' | 'deny' | 'ask') => requireShell(event).setSiteNotificationPermission(tabId, decision));
   ipcMain.handle('browser:set-site-adblock-enabled', (event, tabId: string, enabled: boolean) => requireShell(event).setSiteAdBlockEnabled(tabId, enabled));
   ipcMain.handle('browser:import-file', (event, kind: import('../shared/types').ImportFileKind) => requireShell(event).importBrowserFile(kind));

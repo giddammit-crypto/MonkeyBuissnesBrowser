@@ -43,6 +43,14 @@ function page() {
   return { contents: contents as unknown as Electron.WebContents, emitter, mainFrame };
 }
 
+it('refuses approval when the requesting main frame is unavailable', () => {
+  const { contents } = page();
+  Object.assign(contents, { mainFrame: undefined });
+  const guard = permissionRequestGuard(contents, 'https://site.test/page');
+  expect(guard.current()).toBe(false);
+  guard.dispose();
+});
+
 it('binds permission approval to the original document, including same-URL reloads', () => {
   const { contents, emitter, mainFrame } = page();
   const guard = permissionRequestGuard(contents, mainFrame.url);

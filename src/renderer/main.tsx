@@ -2250,6 +2250,15 @@ function App(): React.JSX.Element {
                   )}
               </div>
             )}
+            {currentTab && !currentTab.isInternal && /^https?:/.test(currentTab.url) && (
+              <div className="site-cookie-control">
+                <strong>Микрофон и камера</strong>
+                <small>Сбросить согласие для этого сайта и встроенных в него страниц. Все вкладки этого сайта в этой сессии перезагрузятся и остановят запись; несохранённые данные могут потеряться.</small>
+                <button onClick={() => run(window.browserApi.resetSiteMediaPermissions(currentTab.id).then(() => {
+                  setToast({ tone: "info", message: "Разрешения микрофона и камеры сброшены. При новом запросе браузер снова спросит согласие." });
+                }))}>Сбросить доступ и перезагрузить</button>
+              </div>
+            )}
             {currentOrigin && !isPrivate && (
               <div className="site-cookie-control site-notification-control">
                 <strong>Уведомления сайта</strong>

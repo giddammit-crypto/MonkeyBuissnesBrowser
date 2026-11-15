@@ -61,6 +61,7 @@ export interface BrowserApi {
   activateTab(tabId: string): Promise<void>;
   openCurrentPageExternally(tabId: string): Promise<void>;
   setSiteCookieException(tabId: string, allow: boolean): Promise<void>;
+  resetSiteMediaPermissions(tabId: string): Promise<void>;
   setSiteNotificationPermission(tabId: string, decision: NotificationPermissionDecision | 'ask'): Promise<void>;
   setSiteAdBlockEnabled(tabId: string, enabled: boolean): Promise<void>;
   importBrowserFile(kind: ImportFileKind): Promise<ImportFileReport | null>;
