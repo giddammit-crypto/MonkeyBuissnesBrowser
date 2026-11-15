@@ -32,6 +32,21 @@ describe('capture permission policy', () => {
     grants.allow('https://top.test', 'https://embed.test', ['video']);
     expect(grants.has('https://top.test', 'https://embed.test', ['audio', 'video'])).toBe(true);
   });
+  it('resets only the selected top-level site, all its frames, and invalidates pending decisions', () => {
+    const grants = new MediaPermissionGrants();
+    const privateGrants = new MediaPermissionGrants();
+    grants.allow('https://site.test', 'https://site.test', ['audio']);
+    grants.allow('https://site.test', 'https://embed.test', ['video']);
+    grants.allow('https://other.test', 'https://embed.test', ['audio']);
+    privateGrants.allow('https://site.test', 'https://site.test', ['audio']);
+    const revision = grants.revision('https://site.test');
+    grants.reset('https://site.test/path');
+    expect(grants.has('https://site.test', 'https://site.test', ['audio'])).toBe(false);
+    expect(grants.has('https://site.test', 'https://embed.test', ['video'])).toBe(false);
+    expect(grants.has('https://other.test', 'https://embed.test', ['audio'])).toBe(true);
+    expect(privateGrants.has('https://site.test', 'https://site.test', ['audio'])).toBe(true);
+    expect(grants.revision('https://site.test')).toBe(revision + 1);
+  });
   it('respects macOS denial and asks only for requested devices', async () => {
     const ask = vi.fn(async () => true);
     expect(await requestSystemCapture(['audio'], 'linux', ask)).toBe(true);

@@ -1,4 +1,4 @@
-import { microphoneErrorMessage, releaseVoiceCapture } from './voiceCapture';
+import { microphoneErrorMessage, releaseVoiceCapture, transcribeVoiceRecording } from './voiceCapture';
 import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '../shared/voodooContext';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -707,16 +707,17 @@ export default function VoodooChatBubble({
   const stopListening = useCallback(async () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       const mr = mediaRecorderRef.current;
-      mediaRecorderRef.current = null;
+      const generation = voiceCaptureGenerationRef.current;
+      const stream = mediaStreamRef.current;
 
       mr.onstop = async () => {
+        releaseVoiceCapture(null, stream);
+        if (generation !== voiceCaptureGenerationRef.current) return;
+        mediaRecorderRef.current = null;
         setIsListening(false);
         playVoiceChime('stop');
 
-        if (mediaStreamRef.current) {
-          mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-          mediaStreamRef.current = null;
-        }
+        if (mediaStreamRef.current === stream) mediaStreamRef.current = null;
 
         const audioBlob = new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' });
         audioChunksRef.current = [];
@@ -730,62 +731,63 @@ export default function VoodooChatBubble({
         setInterimTranscript('Расшифровка голоса...');
 
         try {
-          const reader = new FileReader();
-          reader.readAsDataURL(audioBlob);
-          reader.onloadend = async () => {
-            try {
-              const dataUrl = reader.result as string;
-              const base64 = dataUrl.split(',')[1] || '';
-              const res = await window.browserApi.transcribeAudio(base64, audioBlob.type);
+          const res = await transcribeVoiceRecording(audioBlob,
+            () => generation === voiceCaptureGenerationRef.current,
+            (base64, mimeType) => window.browserApi.transcribeAudio(base64, mimeType));
+          if (!res || generation !== voiceCaptureGenerationRef.current) return;
 
-              if (res.success && res.text) {
-                void handleSendMessage(res.text);
-              } else if (res.error === 'NO_STT_KEY') {
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: generateId('voodoo-stt-guide'),
-                    role: 'assistant',
-                    content: `🎙️ **Голос записан!**\n\nВ среде Electron на Linux встроенное облако Google Speech отключено Chromium. Чтобы расшифровывать голос в текст через Whisper AI:\n• Укажите бесплатный ключ **Groq** (\`gsk_...\`) в Настройках браузера (раздел «AI-Ассистент Вуду»).\n\n*Или выберите готовую команду из вариантов ниже:*`,
-                    suggestedReplies: [
-                      'Подбери мне 5 вариантов шапки зимней мужской на вайлдберис, создай html фаил с твоим подбором, описанием, фото и активными ссылками-кнопками на эти товары. И открой этот фаил в новой вкладке',
-                      'Какая погода в моём городе?',
-                      'Найди последние новости технологий',
-                      'Сохрани план задач на день в Заметки',
-                      'Проанализируй открытую страницу',
-                    ],
-                    timestamp: Date.now(),
-                  },
-                ]);
-              } else {
-                setVoiceError(res.error || 'Не удалось распознать речь');
-                setTimeout(() => setVoiceError(null), 4000);
-              }
-            } catch (err) {
-              console.error('Audio transcription error:', err);
-              setVoiceError('Ошибка при обработке голоса');
-              setTimeout(() => setVoiceError(null), 4000);
-            } finally {
-              setIsTranscribing(false);
-              setInterimTranscript('');
-            }
-          };
-        } catch (e) {
-          setIsTranscribing(false);
-          setInterimTranscript('');
-          console.error('Audio reader initialization error:', e);
+          if (res.success && res.text) {
+            void handleSendMessage(res.text);
+          } else if (res.error === 'NO_STT_KEY') {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: generateId('voodoo-stt-guide'),
+                role: 'assistant',
+                content: `🎙️ **Голос записан!**\n\nВ среде Electron на Linux встроенное облако Google Speech отключено Chromium. Чтобы расшифровывать голос в текст через Whisper AI:\n• Укажите бесплатный ключ **Groq** (\`gsk_...\`) в Настройках браузера (раздел «AI-Ассистент Вуду»).\n\n*Или выберите готовую команду из вариантов ниже:*`,
+                suggestedReplies: [
+                  'Подбери мне 5 вариантов шапки зимней мужской на вайлдберис, создай html фаил с твоим подбором, описанием, фото и активными ссылками-кнопками на эти товары. И открой этот фаил в новой вкладке',
+                  'Какая погода в моём городе?',
+                  'Найди последние новости технологий',
+                  'Сохрани план задач на день в Заметки',
+                  'Проанализируй открытую страницу',
+                ],
+                timestamp: Date.now(),
+              },
+            ]);
+          } else {
+            setVoiceError(res.error || 'Не удалось распознать речь');
+            setTimeout(() => { if (generation === voiceCaptureGenerationRef.current) setVoiceError(null); }, 4000);
+          }
+        } catch (err) {
+          if (generation !== voiceCaptureGenerationRef.current) return;
+          console.error('Audio transcription error:', err);
+          setVoiceError('Ошибка при обработке голоса');
+        } finally {
+          if (generation === voiceCaptureGenerationRef.current) {
+            setIsTranscribing(false);
+            setInterimTranscript('');
+          }
         }
       };
 
       try {
         mr.stop();
-      } catch {}
+      } catch (err) {
+        releaseVoiceCapture(mr, stream);
+        mediaRecorderRef.current = null;
+        mediaStreamRef.current = null;
+        setIsListening(false);
+        setVoiceError(microphoneErrorMessage(err));
+      }
       return;
     }
 
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
+        // onend consumes the final result once, after the last onresult event.
+        return;
       } catch {}
     }
     setIsListening(false);
@@ -799,6 +801,12 @@ export default function VoodooChatBubble({
   }, [handleSendMessage]);
 
   const startListening = useCallback(() => {
+    const generation = ++voiceCaptureGenerationRef.current;
+    setIsTranscribing(false);
+    latestTranscriptRef.current = '';
+    releaseVoiceCapture(mediaRecorderRef.current, mediaStreamRef.current);
+    mediaRecorderRef.current = null;
+    mediaStreamRef.current = null;
     const SpeechRecognitionConstructor = (window as unknown as { SpeechRecognition?: any; webkitSpeechRecognition?: any }).SpeechRecognition
       || (window as unknown as { SpeechRecognition?: any; webkitSpeechRecognition?: any }).webkitSpeechRecognition;
 
@@ -826,11 +834,13 @@ export default function VoodooChatBubble({
       setVoiceError(null);
 
       recognition.onstart = () => {
+        if (generation !== voiceCaptureGenerationRef.current) return;
         setIsListening(true);
         playVoiceChime('start');
       };
 
       recognition.onresult = (event: any) => {
+        if (generation !== voiceCaptureGenerationRef.current) return;
         let interim = '';
         let final = '';
 
@@ -852,9 +862,11 @@ export default function VoodooChatBubble({
       };
 
       recognition.onerror = (event: any) => {
+        if (generation !== voiceCaptureGenerationRef.current) return;
         console.warn('Voodoo voice recognition error:', event?.error);
         if (event?.error === 'network') {
           // Chromium lacks Google Cloud Speech keys in Electron; seamlessly fallback to MediaRecorder audio capture!
+          recognition.onend = null;
           try {
             recognition.abort();
           } catch {}
@@ -872,10 +884,11 @@ export default function VoodooChatBubble({
         } else if (event?.error !== 'aborted') {
           setVoiceError(`Ошибка распознавания: ${event?.error || 'сбой'}`);
         }
-        setTimeout(() => setVoiceError(null), 4000);
+        setTimeout(() => { if (generation === voiceCaptureGenerationRef.current) setVoiceError(null); }, 4000);
       };
 
       recognition.onend = () => {
+        if (generation !== voiceCaptureGenerationRef.current) return;
         // If MediaRecorder took over, do not finalize here
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
           return;
@@ -914,7 +927,7 @@ export default function VoodooChatBubble({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Escape') {
       e.preventDefault();
-      if (isListening) {
+      if (isListening || isTranscribing) {
         cancelListening();
       } else {
         void closeWindow();

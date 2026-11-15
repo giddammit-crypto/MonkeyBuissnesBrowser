@@ -28,6 +28,7 @@ export function captureLabel(kinds: readonly CaptureKind[]): string {
 
 /** Memory-only, independently instantiated for regular and private sessions. */
 export class MediaPermissionGrants {
+  private readonly revisions = new Map<string, number>();
   private readonly grants = new Map<string, Set<CaptureKind>>();
   private key(top: string, requester: string): string | undefined {
     const a = captureOrigin(top), b = captureOrigin(requester);
@@ -36,6 +37,17 @@ export class MediaPermissionGrants {
   has(top: string, requester: string, kinds: readonly CaptureKind[]): boolean {
     const key = this.key(top, requester);
     return Boolean(key && kinds.length && kinds.every(kind => this.grants.get(key)?.has(kind)));
+  }
+  revision(top: string): number {
+    return this.revisions.get(captureOrigin(top) ?? '') ?? 0;
+  }
+  reset(top: string): void {
+    const origin = captureOrigin(top);
+    if (!origin) return;
+    for (const key of this.grants.keys()) {
+      if (JSON.parse(key)[0] === origin) this.grants.delete(key);
+    }
+    this.revisions.set(origin, this.revision(origin) + 1);
   }
   allow(top: string, requester: string, kinds: readonly CaptureKind[]): void {
     const key = this.key(top, requester);

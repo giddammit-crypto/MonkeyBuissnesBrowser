@@ -27,3 +27,27 @@ export function microphoneErrorMessage(error: unknown): string {
       return 'Не удалось начать запись с микрофона. Проверьте настройки звука.';
   }
 }
+
+function readRecording(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(reader.error || new Error('Audio read failed'));
+    reader.onabort = () => reject(new Error('Audio read cancelled'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Cancellation prevents upload before it starts and discards an in-flight result. */
+export async function transcribeVoiceRecording<T>(
+  blob: Blob,
+  current: () => boolean,
+  transcribe: (base64: string, mimeType: string) => Promise<T>,
+  read: (blob: Blob) => Promise<string> = readRecording,
+): Promise<T | undefined> {
+  if (!current()) return undefined;
+  const base64 = await read(blob);
+  if (!current()) return undefined;
+  const result = await transcribe(base64, blob.type);
+  return current() ? result : undefined;
+}

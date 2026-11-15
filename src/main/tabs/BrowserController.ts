@@ -229,6 +229,7 @@ export class BrowserController {
   public static readonly controllers = new Set<BrowserController>();
   public static readonly transferringTabs = new Set<string>();
   private static defaultSessionConfigured = false;
+  private static readonly mediaPermissions = new WeakMap<Electron.Session, MediaPermissionGrants>();
   private static readonly configuredSessions = new WeakSet<Electron.Session>();
 
   public onDetachTab?: (
@@ -2414,6 +2415,28 @@ export class BrowserController {
     this.updateSettings({ thirdPartyCookieExceptions: allow ? [...current, site] : current.filter((item) => item !== site) });
   }
 
+  resetSiteMediaPermissions(tabId: string): void {
+    const tab = this.tabs.get(tabId);
+    const contents = tab?.view?.webContents;
+    if (!tab || tab.isInternal || !contents || contents.isDestroyed() || !captureOrigin(contents.getURL())) {
+      throw new Error('Управление микрофоном доступно для открытого HTTPS-сайта или localhost.');
+    }
+    const targetSession = contents.session;
+    const origin = captureOrigin(contents.getURL());
+    BrowserController.mediaPermissions.get(targetSession)?.reset(contents.getURL());
+    // Session consent is shared by same-origin tabs; stop their existing streams too.
+    for (const controller of BrowserController.controllers) {
+      if (controller.disposed) continue;
+      for (const entry of controller.tabs.values()) {
+        const page = entry.view?.webContents;
+        if (!page || page.isDestroyed() || page.session !== targetSession || captureOrigin(page.getURL()) !== origin) continue;
+        page.reload();
+        controller.memoryManager.updateTab(entry.id, { capturing: false });
+      }
+      controller.emitSnapshot();
+    }
+  }
+
   setSiteNotificationPermission(tabId: string, decision: NotificationPermissionDecision | 'ask'): void {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.isPrivate || tab.isInternal) throw new Error('Разрешения уведомлений доступны только для обычных сайтов.');
@@ -3312,7 +3335,8 @@ export class BrowserController {
     // Keep the advertised browser version in sync with the Chromium runtime.
     targetSession.setUserAgent(getChromeUserAgent());
     const allowedPermissions = new Set<string>();
-    const mediaGrants = new MediaPermissionGrants();
+    const mediaGrants = BrowserController.mediaPermissions.get(targetSession) ?? new MediaPermissionGrants();
+    BrowserController.mediaPermissions.set(targetSession, mediaGrants);
     const notificationPermissions = isPrivate ? new Map<string, NotificationPermissionDecision>() : this.notificationPermissions;
     const pendingNotificationPermissions = new Map<string, Promise<NotificationPermissionDecision>>();
     const permissionKey = (origin: string, permission: string) => `${origin}:${permission}`;
@@ -3370,6 +3394,7 @@ export class BrowserController {
         const origin = captureOrigin(reqOrigin);
         const topUrl = contents.getURL();
         if (!origin || !captureOrigin(topUrl) || !kinds.length || !this.window || !permissionContext.current()) { callback(false); return; }
+        const revision = mediaGrants.revision(topUrl);
         const alreadyAllowed = mediaGrants.has(topUrl, origin, kinds);
         const approve = alreadyAllowed ? Promise.resolve(true) : dialog.showMessageBox(this.window, {
           type: 'question', title: 'Разрешение сайта',
@@ -3378,9 +3403,9 @@ export class BrowserController {
           buttons: ['Запретить', 'Разрешить на эту сессию'], defaultId: 0, cancelId: 0, noLink: true,
         }).then(({ response }) => response === 1);
         void approve.then(async granted => {
-          if (!granted || !permissionContext.current()) { callback(false); return; }
+          if (!granted || !permissionContext.current() || mediaGrants.revision(topUrl) !== revision) { callback(false); return; }
           const systemGranted = await requestSystemCapture(kinds, process.platform, kind => systemPreferences.askForMediaAccess(kind));
-          const allowed = systemGranted && permissionContext.current();
+          const allowed = systemGranted && permissionContext.current() && mediaGrants.revision(topUrl) === revision;
           if (allowed) {
             mediaGrants.allow(topUrl, origin, kinds);
             const tab = [...this.tabs.values()].find(entry => entry.webContentsId === contents.id);

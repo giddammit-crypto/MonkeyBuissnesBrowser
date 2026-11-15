@@ -81,6 +81,36 @@ try {
     assert.equal(await count(), afterAllow + 1, 'camera must require separate consent');
     assert.equal((await capture(url, { audio: true })).ok, true, 'camera denial must preserve microphone consent');
     assert.equal(await count(), afterAllow + 1);
+    // Keep a live stream while resetting; reload must destroy the recording document.
+    await app.evaluate(({ webContents }, url) => {
+      const contents = webContents.getAllWebContents().find(entry => entry.getURL() === url);
+      return contents.executeJavaScript('(async () => { window.__liveMic = await navigator.mediaDevices.getUserMedia({audio:true}); return window.__liveMic.getAudioTracks()[0].readyState; })()');
+    }, url).then(state => assert.equal(state, 'live'));
+    const siblingUrl = `${origin}/sibling-${isPrivate}`;
+    const isolatedUrl = `${origin}/isolated-${isPrivate}`;
+    const sibling = await invoke('createTab', { url: siblingUrl, isPrivate });
+    const isolated = await invoke('createTab', { url: isolatedUrl, isPrivate: !isPrivate });
+    for (const extra of [sibling, isolated]) {
+      await expect.poll(async () => (await invoke('getSnapshot')).tabs.find(entry => entry.id === extra.id)?.isLoading).toBe(false);
+    }
+    await app.evaluate(({ webContents }, urls) => Promise.all(urls.map(url => webContents.getAllWebContents().find(entry => entry.getURL() === url).executeJavaScript('window.__resetSentinel = true'))), [siblingUrl, isolatedUrl]);
+    await answer(1);
+    assert.equal((await capture(isolatedUrl, { audio: true })).ok, true);
+    await answer(0);
+    await invoke('resetSiteMediaPermissions', tab.id);
+    await expect.poll(async () => (await invoke('getSnapshot')).tabs.find(entry => entry.id === tab.id)?.isLoading).toBe(false);
+    assert.equal(await app.evaluate(({ webContents }, url) => webContents.getAllWebContents().find(entry => entry.getURL() === url).executeJavaScript('typeof window.__liveMic'), url), 'undefined', 'reset reloads the document that owns the live recording');
+    await expect.poll(async () => (await invoke('getSnapshot')).tabs.find(entry => entry.id === sibling.id)?.isLoading).toBe(false);
+    assert.deepEqual(await app.evaluate(({ webContents }, urls) => Promise.all(urls.map(url => webContents.getAllWebContents().find(entry => entry.getURL() === url).executeJavaScript('Boolean(window.__resetSentinel)'))), [siblingUrl, isolatedUrl]), [false, true], 'reset reloads sibling tabs but preserves the other session');
+    const isolatedPromptCount = await count();
+    assert.equal((await capture(isolatedUrl, { audio: true })).ok, true);
+    assert.equal(await count(), isolatedPromptCount, 'other session keeps its microphone grant');
+    const beforeResetRequest = await count();
+    const afterReset = await capture(url, { audio: true });
+    assert.equal(afterReset.ok, false, 'reset must require consent again');
+    assert.equal(await count(), beforeResetRequest + 1);
+    await invoke('closeTab', sibling.id);
+    await invoke('closeTab', isolated.id);
     await invoke('closeTab', tab.id);
     console.log(`PASS ${isPrivate ? 'private' : 'normal'}: microphone deny/allow, live audio track, session reuse, camera isolation`);
   }
