@@ -6,6 +6,7 @@ import { exportNotesToFile } from '../services/NotesExportService';
 import { exportBookmarksHtml } from '../services/BookmarkExportService';
 import { createMediaCookieFile } from '../services/MediaCookieFile';
 import { permissionRequestGuard } from '../services/PermissionRequestGuard';
+import { captureOrigin, captureKinds, captureLabel, isTrustedCaptureUI, MediaPermissionGrants, requestSystemCapture } from '../services/MediaPermissions';
 import { inspectPageFonts } from '../services/PageFontInspector';
 import { siteFontMonitor } from '../services/SiteFontMonitor';
 import { buildFontSubstitutionCss, fontSubstitutionFor, relaxFontResponseHeaders } from '../../shared/fontCompat';
@@ -34,6 +35,7 @@ import {
   nativeImage,
   nativeTheme,
   session,
+  systemPreferences,
   shell,
   WebContentsView,
 } from 'electron';
@@ -497,8 +499,8 @@ export class BrowserController {
     if (!BrowserController.defaultSessionConfigured) {
       BrowserController.defaultSessionConfigured = true;
 
-      session.defaultSession.setPermissionCheckHandler((contents, permission, origin) => {
-        const isInternal = origin.startsWith('app://') || BrowserController.isAnyInternal(contents?.id);
+      session.defaultSession.setPermissionCheckHandler((contents, permission, origin, details) => {
+        const isInternal = isTrustedCaptureUI(details.securityOrigin || details.requestingUrl || origin, BrowserController.isAnyInternal(contents?.id));
         if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission)) {
           return isInternal;
         }
@@ -506,9 +508,9 @@ export class BrowserController {
       });
       session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
         const origin = details?.requestingUrl || (contents && !contents.isDestroyed() ? contents.getURL() : '') || '';
-        const isInternal = origin.startsWith('app://') || BrowserController.isAnyInternal(contents?.id);
+        const isInternal = isTrustedCaptureUI(origin, BrowserController.isAnyInternal(contents?.id));
         if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission) && isInternal) {
-          callback(true);
+          this.requestInternalCapture(contents, permission, callback, details);
           return;
         }
         if (permission === 'fullscreen' || permission === 'clipboard-sanitized-write') {
@@ -3288,6 +3290,21 @@ export class BrowserController {
     if (!this.privateSession) this.privateProxyReady = Promise.resolve();
   }
 
+  private requestInternalCapture(contents: Electron.WebContents | null, permission: string, callback: (allowed: boolean) => void, details: Electron.PermissionRequest): void {
+    if (!contents || contents.isDestroyed()) { callback(false); return; }
+    // DRM is not a camera/microphone request.
+    if (permission === 'mediaKeySystem') { callback(true); return; }
+    const kinds = captureKinds(permission, (details as Electron.MediaAccessPermissionRequest).mediaTypes);
+    if (!kinds.length) { callback(false); return; }
+    const guard = permissionRequestGuard(contents, details.requestingUrl || contents.getURL(), details.isMainFrame !== false);
+    if (!guard.current()) { guard.dispose(); callback(false); return; }
+    void requestSystemCapture(kinds, process.platform, kind => systemPreferences.askForMediaAccess(kind)).then(allowed => {
+      const current = guard.current();
+      guard.dispose();
+      callback(allowed && current);
+    });
+  }
+
   private configureSession(targetSession: Electron.Session, isPrivate = false): void {
     const blocker = isPrivate ? this.privateAdBlock : this.adBlock;
     blocker.engine.setEnabled(this.stores.settings.get().adBlockEnabled !== false);
@@ -3295,6 +3312,7 @@ export class BrowserController {
     // Keep the advertised browser version in sync with the Chromium runtime.
     targetSession.setUserAgent(getChromeUserAgent());
     const allowedPermissions = new Set<string>();
+    const mediaGrants = new MediaPermissionGrants();
     const notificationPermissions = isPrivate ? new Map<string, NotificationPermissionDecision>() : this.notificationPermissions;
     const pendingNotificationPermissions = new Map<string, Promise<NotificationPermissionDecision>>();
     const permissionKey = (origin: string, permission: string) => `${origin}:${permission}`;
@@ -3307,11 +3325,15 @@ export class BrowserController {
       googleSignInCompatibility: this.stores.settings.get().googleSignInCompatibility,
     }));
     targetSession.setPermissionCheckHandler((contents, permission, origin, details) => {
-      const isInternal = origin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId;
+      const isInternal = isTrustedCaptureUI(details.securityOrigin || details.requestingUrl || origin, BrowserController.isAnyInternal(contents?.id));
       if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission)) {
         if (isInternal) {
           return true;
         }
+      }
+      if (['media', 'audioCapture', 'speechRecognition'].includes(permission)) {
+        const kinds = permission === 'media' ? captureKinds(permission, details.mediaType ? [details.mediaType] : []) : captureKinds(permission);
+        return Boolean(contents && !contents.isDestroyed() && mediaGrants.has(contents.getURL(), details.securityOrigin || details.requestingUrl || origin, kinds));
       }
       if (permission === 'storage-access') {
         return storageEligible(details.requestingUrl || origin, contents) && Boolean(contents && allowedPermissions.has(storageKey(contents.getURL(), origin)));
@@ -3325,10 +3347,10 @@ export class BrowserController {
     targetSession.setPermissionRequestHandler((contents, permission, callback, details) => {
       if (permission === 'fullscreen' || permission === 'clipboard-sanitized-write') { callback(true); return; }
       const reqOrigin = details.requestingUrl || (contents && !contents.isDestroyed() ? contents.getURL() : '') || '';
-      const isInternal = reqOrigin.startsWith('app://') || contents?.id === this.voodooContentsId || contents?.id === this.shellContentsId;
+      const isInternal = isTrustedCaptureUI(reqOrigin, BrowserController.isAnyInternal(contents?.id));
       if (['media', 'mediaKeySystem', 'speechRecognition', 'audioCapture'].includes(permission)) {
         if (isInternal) {
-          callback(true);
+          this.requestInternalCapture(contents, permission, callback, details);
           return;
         }
       }
@@ -3343,6 +3365,31 @@ export class BrowserController {
         permissionContext.dispose();
         answer(granted && current);
       };
+      if (['media', 'audioCapture', 'speechRecognition'].includes(permission)) {
+        const kinds = captureKinds(permission, (details as Electron.MediaAccessPermissionRequest).mediaTypes);
+        const origin = captureOrigin(reqOrigin);
+        const topUrl = contents.getURL();
+        if (!origin || !captureOrigin(topUrl) || !kinds.length || !this.window || !permissionContext.current()) { callback(false); return; }
+        const alreadyAllowed = mediaGrants.has(topUrl, origin, kinds);
+        const approve = alreadyAllowed ? Promise.resolve(true) : dialog.showMessageBox(this.window, {
+          type: 'question', title: 'Разрешение сайта',
+          message: `${origin} запрашивает доступ к ${captureLabel(kinds)}.`,
+          detail: 'Разрешение действует до закрытия браузера. Микрофон и камера разрешаются отдельно.',
+          buttons: ['Запретить', 'Разрешить на эту сессию'], defaultId: 0, cancelId: 0, noLink: true,
+        }).then(({ response }) => response === 1);
+        void approve.then(async granted => {
+          if (!granted || !permissionContext.current()) { callback(false); return; }
+          const systemGranted = await requestSystemCapture(kinds, process.platform, kind => systemPreferences.askForMediaAccess(kind));
+          const allowed = systemGranted && permissionContext.current();
+          if (allowed) {
+            mediaGrants.allow(topUrl, origin, kinds);
+            const tab = [...this.tabs.values()].find(entry => entry.webContentsId === contents.id);
+            if (tab) this.memoryManager.updateTab(tab.id, { capturing: true });
+          }
+          callback(allowed);
+        }).catch(() => callback(false));
+        return;
+      }
       if (permission === 'storage-access') {
         if (!this.window || !storageEligible(details.requestingUrl, contents)) { callback(false); return; }
         const topOrigin = new URL(contents.getURL()).origin;
@@ -3356,7 +3403,7 @@ export class BrowserController {
       }
       let origin: string;
       try { origin = new URL(details.requestingUrl || contents.getURL()).origin; } catch { callback(false); return; }
-      if (!origin.startsWith('https://') || !['media', 'geolocation', 'notifications'].includes(permission) || !this.window || contents.isDestroyed()) { callback(false); return; }
+      if (!origin.startsWith('https://') || !['geolocation', 'notifications'].includes(permission) || !this.window || contents.isDestroyed()) { callback(false); return; }
       if (permission === 'notifications') {
         const storedDecision = notificationPermissions.get(origin) ?? (isPrivate ? undefined : this.stores.getNotificationPermission(origin));
         if (storedDecision) { callback(storedDecision === 'allow'); return; }
@@ -3393,15 +3440,11 @@ export class BrowserController {
         });
         return;
       }
-      const label = permission === 'media' ? 'камере или микрофону' : permission === 'geolocation' ? 'местоположению' : 'уведомлениям';
+      const label = permission === 'geolocation' ? 'местоположению' : 'уведомлениям';
       void dialog.showMessageBox(this.window, { type: 'question', title: 'Разрешение сайта', message: `${origin} запрашивает доступ к ${label}.`, buttons: ['Запретить', 'Разрешить на эту сессию'], defaultId: 0, cancelId: 0, noLink: true }).then(({ response }) => {
         const allowed = response === 1 && permissionContext.current();
         if (allowed) {
           allowedPermissions.add(permissionKey(origin, permission));
-          if (permission === 'media') {
-            const tab = [...this.tabs.values()].find((entry) => entry.webContentsId === contents.id);
-            if (tab) this.memoryManager.updateTab(tab.id, { capturing: true });
-          }
         }
         callback(allowed);
       }).catch(() => callback(false));

@@ -12,6 +12,7 @@ export function permissionRequestGuard(contents: Electron.WebContents, requestin
       else valid = false;
     }
     frameUrl = frame?.url;
+    if (!frame) valid = false;
     if (frame && new URL(frame.url).origin !== new URL(requestingUrl).origin) valid = false;
   } catch { valid = false; }
   const invalidate = () => { valid = false; };

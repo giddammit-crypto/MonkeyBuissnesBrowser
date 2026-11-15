@@ -1,3 +1,4 @@
+import { microphoneErrorMessage, releaseVoiceCapture } from './voiceCapture';
 import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '../shared/voodooContext';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -203,6 +204,7 @@ export default function VoodooChatBubble({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const voiceCaptureGenerationRef = useRef(0);
   const latestTranscriptRef = useRef<string>('');
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -626,6 +628,7 @@ export default function VoodooChatBubble({
   };
 
   const cancelListening = useCallback(() => {
+    voiceCaptureGenerationRef.current += 1;
     latestTranscriptRef.current = '';
     setInterimTranscript('');
     setIsTranscribing(false);
@@ -635,63 +638,69 @@ export default function VoodooChatBubble({
       } catch {}
       recognitionRef.current = null;
     }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {}
-      mediaRecorderRef.current = null;
-    }
-    if (mediaStreamRef.current) {
-      try {
-        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      } catch {}
-      mediaStreamRef.current = null;
-    }
+    releaseVoiceCapture(mediaRecorderRef.current, mediaStreamRef.current);
+    mediaRecorderRef.current = null;
+    mediaStreamRef.current = null;
     audioChunksRef.current = [];
     setIsListening(false);
     playVoiceChime('cancel');
   }, []);
 
   const startMediaRecorderFallback = useCallback(async () => {
+    const generation = ++voiceCaptureGenerationRef.current;
+    let stream: MediaStream | null = null;
+    let mr: MediaRecorder | null = null;
+    releaseVoiceCapture(mediaRecorderRef.current, mediaStreamRef.current);
+    mediaRecorderRef.current = null;
+    mediaStreamRef.current = null;
     try {
-      if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-        mediaStreamRef.current = null;
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Permission prompts can finish after cancellation, unmount or a newer request.
+      if (generation !== voiceCaptureGenerationRef.current) {
+        releaseVoiceCapture(null, stream);
+        return;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
-
       audioChunksRef.current = [];
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
-
-      const mr = new MediaRecorder(stream, { mimeType });
+      const mimeType = ['audio/webm;codecs=opus', 'audio/webm']
+        .find((type) => MediaRecorder.isTypeSupported(type));
+      mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorder = mr;
+      const capturedStream = stream;
       mr.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
+        if (generation === voiceCaptureGenerationRef.current && e.data?.size > 0) {
           audioChunksRef.current.push(e.data);
         }
       };
-
       mr.onstart = () => {
+        if (generation !== voiceCaptureGenerationRef.current) return;
+        setVoiceError(null);
         setIsListening(true);
         setInterimTranscript('Запись голоса... Говорите (нажмите на микрофон для отправки)');
         playVoiceChime('start');
       };
-
-      mr.onerror = (e) => {
-        console.warn('MediaRecorder voice capture error:', e);
+      mr.onerror = (event) => {
+        releaseVoiceCapture(recorder, capturedStream);
+        if (generation !== voiceCaptureGenerationRef.current) return;
+        mediaRecorderRef.current = null;
+        mediaStreamRef.current = null;
+        audioChunksRef.current = [];
         setIsListening(false);
+        setInterimTranscript('');
+        setVoiceError(microphoneErrorMessage((event as Event & { error?: DOMException }).error));
         playVoiceChime('cancel');
       };
-
       mediaRecorderRef.current = mr;
       mr.start(200);
     } catch (err) {
-      console.error('Failed to start MediaRecorder audio capture:', err);
+      releaseVoiceCapture(mr, stream);
+      if (generation !== voiceCaptureGenerationRef.current) return;
+      mediaRecorderRef.current = null;
+      mediaStreamRef.current = null;
+      audioChunksRef.current = [];
       setIsListening(false);
-      setVoiceError('Доступ к микрофону заблокирован');
-      setTimeout(() => setVoiceError(null), 4000);
+      setInterimTranscript('');
+      setVoiceError(microphoneErrorMessage(err));
     }
   }, []);
 
@@ -891,24 +900,14 @@ export default function VoodooChatBubble({
 
   useEffect(() => {
     return () => {
+      voiceCaptureGenerationRef.current += 1;
       if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch {}
+        try { recognitionRef.current.abort(); } catch {}
         recognitionRef.current = null;
       }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        try {
-          mediaRecorderRef.current.stop();
-        } catch {}
-        mediaRecorderRef.current = null;
-      }
-      if (mediaStreamRef.current) {
-        try {
-          mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-        } catch {}
-        mediaStreamRef.current = null;
-      }
+      releaseVoiceCapture(mediaRecorderRef.current, mediaStreamRef.current);
+      mediaRecorderRef.current = null;
+      mediaStreamRef.current = null;
     };
   }, []);
 
