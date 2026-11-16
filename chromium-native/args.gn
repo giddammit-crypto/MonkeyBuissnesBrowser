@@ -1,0 +1,12 @@
+# Development fork: full //chrome browser, NOT content_shell or CEF.
+is_debug = false
+is_component_build = false
+is_chrome_branded = false
+symbol_level = 0
+blink_symbol_level = 0
+v8_symbol_level = 0
+use_remoteexec = false
+# Google web login is distinct from restricted Chrome Sync/OAuth APIs.
+# No Google OAuth client ID/secret is embedded in this prototype.
+google_default_client_id = ""
+google_default_client_secret = ""
