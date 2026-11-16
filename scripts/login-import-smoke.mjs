@@ -71,7 +71,8 @@ try {
   globalThis.__originalMessageBox=dialog.showMessageBox;globalThis.__originalExternal=shell.openExternal;
   globalThis.__openedUrls=[];
   globalThis.__confirmBrowser=0;
-  dialog.showMessageBox=async()=>({response:globalThis.__confirmBrowser,checkboxChecked:false});
+  globalThis.__authDialogs=[];
+  dialog.showMessageBox=async(_window,options)=>{globalThis.__authDialogs.push(options);return {response:globalThis.__confirmBrowser,checkboxChecked:false};};
   shell.openExternal=async url=>{globalThis.__openedUrls.push(url);};
  });
  const ordinary=await invoke('createTab',{url:'https://accounts.google.com/ServiceLogin?service=youtube',isPrivate:false});
@@ -89,6 +90,29 @@ try {
  assert.equal((await snapshot()).tabs.find(t=>t.id===ordinary.id).googleAuthRejected, true);
  await app.evaluate(({webContents}) => webContents.getAllWebContents().find(c => c.getURL() === 'https://accounts.google.com/ServiceLogin?service=youtube').executeJavaScript("document.body.innerHTML = '<h1>Sign in</h1>'"));
  await expect(shell.locator('.auth-help-banner')).toHaveCount(0);
+ // A native OAuth popup has no tab banner: offer recovery at the initiating service.
+ const serviceUrl='https://service.example/login?state=do-not-forward';
+ const serviceTab=await invoke('createTab',{url:serviceUrl});
+ await expect.poll(async()=>(await snapshot()).tabs.find(t=>t.id===serviceTab.id)?.isLoading).toBe(false);
+ const popupUrl='https://accounts.google.com/ServiceLogin?popup=fixture';
+ await app.evaluate(({webContents},{serviceUrl,popupUrl})=>webContents.getAllWebContents().find(c=>c.getURL()===serviceUrl)
+   .executeJavaScript(`window.authPopup=window.open(${JSON.stringify(popupUrl)},'google-recovery','width=500,height=600'); true;`),{serviceUrl,popupUrl});
+ await expect.poll(()=>app.evaluate(({webContents},url)=>Boolean(webContents.getAllWebContents().find(c=>c.getURL()===url && !c.isLoading())),popupUrl)).toBe(true);
+ const beforePopup=await app.evaluate(()=>globalThis.__authDialogs.length);
+ const showPopupError=()=>app.evaluate(({webContents},url)=>webContents.getAllWebContents().find(c=>c.getURL()===url)
+   .executeJavaScript("document.body.innerHTML='<h1>This browser or app may not be secure.</h1>'"),popupUrl);
+ await showPopupError();
+ await expect.poll(()=>app.evaluate(()=>globalThis.__authDialogs.length)).toBe(beforePopup+1);
+ assert.deepEqual(await app.evaluate(()=>globalThis.__openedUrls),[],'popup recovery never opens externally without confirmation');
+ await showPopupError();
+ await app.evaluate(({webContents},url)=>webContents.getAllWebContents().find(c=>c.getURL()===url).reload(),popupUrl);
+ await expect.poll(()=>app.evaluate(({webContents},url)=>Boolean(webContents.getAllWebContents().find(c=>c.getURL()===url && !c.isLoading())),popupUrl)).toBe(true);
+ await app.evaluate(()=>{globalThis.__confirmBrowser=1;});
+ await showPopupError();
+ await expect.poll(()=>app.evaluate(()=>globalThis.__openedUrls)).toEqual(['https://service.example/']);
+ await app.evaluate(({webContents},url)=>webContents.getAllWebContents().find(c=>c.getURL()===url).close(),popupUrl);
+ await invoke('closeTab',serviceTab.id);
+ await app.evaluate(()=>{globalThis.__confirmBrowser=0;globalThis.__openedUrls=[];});
  const denied=await invoke('createTab',{url:'https://accounts.google.com/v3/signin/rejected?continue=https%3A%2F%2Fwww.youtube.com%2F',isPrivate:false});
  const banner = shell.getByRole('region', { name: 'Помощь со входом Google' });
  const open = banner.getByRole('button', { name: 'Открыть системный браузер', exact: true });
