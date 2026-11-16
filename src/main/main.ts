@@ -141,6 +141,11 @@ function registerIpc(): void {
     if (url.protocol !== 'https:') return [];
     return c.getPageAutofillCredentials(event.sender.id, url.origin);
   });
+  ipcMain.on('page:google-auth-rejected', (event, sourceUrl: unknown, rejected: unknown) => {
+    if (event.senderFrame !== event.sender.mainFrame || typeof sourceUrl !== 'string' || typeof rejected !== 'boolean') return;
+    if (event.senderFrame?.url !== sourceUrl) return;
+    BrowserController.findControllerForPage(event.sender.id)?.markGoogleAuthRejected(event.sender, sourceUrl, rejected);
+  });
   ipcMain.on('page:form-state', (event, dirty: unknown) => {
     const c = BrowserController.findControllerForPage(event.sender.id);
     if (event.senderFrame === event.sender.mainFrame && typeof dirty === 'boolean') c?.markFormState(event.sender.id, dirty);

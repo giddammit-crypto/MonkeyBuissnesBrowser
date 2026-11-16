@@ -2,6 +2,7 @@ import type { BrowserTheme } from './browserThemes';
 export type TabLifecycle = 'active' | 'background' | 'hibernated' | 'crashed';
 
 export interface TabSnapshot {
+  googleAuthRejected?: boolean;
   id: string;
   url: string;
   title: string;

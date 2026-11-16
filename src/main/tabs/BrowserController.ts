@@ -2390,10 +2390,21 @@ export class BrowserController {
     };
   }
 
+  markGoogleAuthRejected(contents: Electron.WebContents, sourceUrl: string, rejected: boolean): void {
+    if (contents.isDestroyed() || contents.getURL() !== sourceUrl) return;
+    let url: URL;
+    try { url = new URL(sourceUrl); } catch { return; }
+    if (url.origin !== 'https://accounts.google.com' || url.username || url.password) return;
+    const tab = [...this.tabs.values()].find(entry => entry.webContentsId === contents.id);
+    if (!tab || tab.googleAuthRejected === rejected) return;
+    tab.googleAuthRejected = rejected;
+    this.emitSnapshot();
+  }
+
   async openCurrentPageExternally(tabId: string): Promise<void> {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.isInternal || !this.window) return;
-    const url = getExternalPageUrl(tab.url);
+    const url = getExternalPageUrl(tab.url, tab.googleAuthRejected);
     if (!url) throw new Error('Этот адрес нельзя открыть во внешнем браузере.');
     const result = await dialog.showMessageBox(this.window, {
       type: 'question', title: 'Открыть системный браузер',
@@ -3992,6 +4003,7 @@ export class BrowserController {
     };
     contents.on('did-start-navigation', (details, _url, isInPlace, isMainFrame) => {
       if (!(details.isMainFrame ?? isMainFrame) || (details.isSameDocument ?? isInPlace)) return;
+      tab.googleAuthRejected = false;
       resetTabMediaAndReader();
       // Evidence and compatibility state belong to one document only.
       BrowserController.xmlDocuments.delete(contents.id);
