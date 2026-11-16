@@ -365,3 +365,16 @@ export function getExternalPageUrl(rawUrl: string, inlineRejected = false): stri
   const destination = continued || googleSignInServices.get(url.searchParams.get('service') || '') || 'https://www.google.com/';
   return `https://accounts.google.com/ServiceLogin?continue=${encodeURIComponent(destination)}`;
 }
+
+/** Restart third-party sign-in at its origin, never replay OAuth state or callback tokens. */
+export function getGooglePopupRecoveryUrl(rejectedUrl: string, openerUrl?: string): string | null {
+  if (!getGoogleAuthNotice(rejectedUrl, true)) return null;
+  if (openerUrl) {
+    try {
+      const opener = new URL(openerUrl);
+      if (opener.protocol === 'https:' && !opener.username && !opener.password &&
+          opener.origin !== 'https://accounts.google.com') return `${opener.origin}/`;
+    } catch { /* Fall back to the known Google service. */ }
+  }
+  return getExternalPageUrl(rejectedUrl, true);
+}

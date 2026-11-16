@@ -51,7 +51,7 @@ import { LocalExtensionManager } from '../../services/extensions/LocalExtensionM
 import { isSafeMediaUrl, isVideoPageUrl, mediaKindForMime, mediaKindForUrl, normalizeVideoUrl, videoSiteForUrl } from '../../shared/media';
 import { isSafeWebUrl, parseOmniboxInput } from '../../shared/omnibox';
 import { normalizeNewTabBackground } from '../../shared/background';
-import { canRequestStorageAccess, getExternalPageUrl, getSiteKey, normalizeCookieExceptions, normalizePermissionOrigin, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
+import { canRequestStorageAccess, getExternalPageUrl, getGoogleAuthNotice, getGooglePopupRecoveryUrl, getSiteKey, normalizeCookieExceptions, normalizePermissionOrigin, normalizeSiteExceptions, normalizeSiteKey, shouldStripThirdPartyCookies } from '../../shared/sitePolicy';
 import { getClientHintHeaders, getChromeUserAgent } from '../../shared/chromiumIdentity';
 import type {
   BookmarkEntry,
@@ -351,6 +351,7 @@ export class BrowserController {
   private readonly mediaCookieCleanup = new Map<string, () => void>();
   private closedTabs: Array<Pick<TabSnapshot, 'url' | 'workspaceId' | 'isPinned' | 'isMuted'>> = [];
   private readonly popupOpeners = new Map<string, string>();
+  private readonly googlePopupNotices = new WeakSet<Electron.WebContents>();
   private readonly popupWindows = new Set<Electron.BrowserWindow>();
   private readonly popupToTab = new Map<number, string>();
   private readonly findQueries = new Map<string, string>();
@@ -2396,9 +2397,39 @@ export class BrowserController {
     try { url = new URL(sourceUrl); } catch { return; }
     if (url.origin !== 'https://accounts.google.com' || url.username || url.password) return;
     const tab = [...this.tabs.values()].find(entry => entry.webContentsId === contents.id);
-    if (!tab || tab.googleAuthRejected === rejected) return;
+    if (!tab) {
+      if (getGoogleAuthNotice(sourceUrl, rejected)) void this.showGooglePopupRecovery(contents);
+      return;
+    }
+    if (tab.googleAuthRejected === rejected) return;
     tab.googleAuthRejected = rejected;
     this.emitSnapshot();
+  }
+
+  private async showGooglePopupRecovery(contents: Electron.WebContents): Promise<void> {
+    if (this.disposed || contents.isDestroyed() || this.googlePopupNotices.has(contents)) return;
+    const popup = [...this.popupWindows].find(entry => !entry.isDestroyed() && entry.webContents === contents);
+    if (!popup) return;
+    const openerId = this.popupToTab.get(popup.id);
+    const opener = openerId ? this.tabs.get(openerId) : undefined;
+    const sourceUrl = contents.getURL();
+    const openerContents = opener?.view?.webContents;
+    const openerUrl = openerContents && !openerContents.isDestroyed() ? openerContents.getURL() : opener?.url;
+    const target = getGooglePopupRecoveryUrl(sourceUrl, openerUrl);
+    if (!target) return;
+    this.googlePopupNotices.add(contents);
+    const guard = permissionRequestGuard(contents, sourceUrl);
+    try {
+      const { response } = await dialog.showMessageBox(popup, {
+        type: 'info', title: 'Google отклонил вход',
+        message: 'Google ограничил вход в этом окне браузера.',
+        detail: `Можно открыть ${new URL(target).hostname} в системном браузере и начать вход заново. Сессия и результат входа не переносятся в soulm8te.${opener?.isPrivate ? ' Адрес будет открыт вне приватной сессии и её прокси.' : ''}`,
+        buttons: ['Остаться здесь', 'Открыть сайт в системном браузере'],
+        defaultId: 0, cancelId: 0, noLink: true,
+      });
+      if (response === 1 && guard.current() && !this.disposed && !popup.isDestroyed()) await shell.openExternal(target);
+    } catch { /* Cancellation, destroyed popup or unavailable external browser. */ }
+    finally { guard.dispose(); }
   }
 
   async openCurrentPageExternally(tabId: string): Promise<void> {
@@ -3759,6 +3790,13 @@ export class BrowserController {
     popupWindow.on('closed', () => {
       this.popupWindows.delete(popupWindow);
       this.popupToTab.delete(popupWindow.id);
+    });
+
+    popupContents.on('did-start-navigation', (event, _url, inPlace, main) => {
+      if ((event.isMainFrame ?? main) && !(event.isSameDocument ?? inPlace)) this.googlePopupNotices.delete(popupContents);
+    });
+    popupContents.on('did-finish-load', () => {
+      if (!popupContents.isDestroyed() && getGoogleAuthNotice(popupContents.getURL())) void this.showGooglePopupRecovery(popupContents);
     });
 
     popupContents.on('page-title-updated', (_event, title) => {
