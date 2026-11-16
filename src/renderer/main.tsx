@@ -427,8 +427,8 @@ function App(): React.JSX.Element {
       (d) => d.state === "progressing" || d.state === "queued" || d.isPaused,
     ),
   );
-  const authNotice = getGoogleAuthNotice(currentTab?.url ?? "");
-  useEffect(() => setAuthNoticeDismissed(false), [currentTab?.id, currentTab?.url]);
+  const authNotice = getGoogleAuthNotice(currentTab?.url ?? "", currentTab?.googleAuthRejected);
+  useEffect(() => setAuthNoticeDismissed(false), [currentTab?.id, currentTab?.url, currentTab?.googleAuthRejected]);
   const currentSite = getSiteKey(currentTab?.url ?? "");
   const currentOrigin = normalizePermissionOrigin(currentTab?.url ?? "");
   const credentialOrigin = useMemo(() => {
@@ -2630,7 +2630,7 @@ function App(): React.JSX.Element {
                   className="auth-help-open"
                   onClick={() => run(window.browserApi.openCurrentPageExternally(currentTab.id))}
                 >
-                  <ExternalLink size={15} aria-hidden="true" /> Продолжить вход
+                  <ExternalLink size={15} aria-hidden="true" /> Открыть системный браузер
                 </button>
                 <button
                   type="button"

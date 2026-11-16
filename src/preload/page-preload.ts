@@ -1,6 +1,47 @@
 import { ipcRenderer } from 'electron';
 import type { ReaderArticle } from '../shared/types';
 
+/** Only a confirmed message on Google's own account origin activates recovery UI. */
+export function isInlineGoogleAuthRejection(rawUrl: string, text: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    if (url.origin !== 'https://accounts.google.com' || url.username || url.password) return false;
+  } catch { return false; }
+  const normalized = text.slice(0, 65536).replace(/\s+/g, ' ').toLowerCase();
+  return normalized.includes('this browser or app may not be secure') ||
+    normalized.includes('этот браузер или приложение могут быть небезопасными') ||
+    normalized.includes('возможно, этот браузер или приложение небезопасны');
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined' &&
+    window.top === window && window.location?.origin === 'https://accounts.google.com') {
+  const startGoogleAuthMonitor = () => {
+    if (!document.body) return;
+    let last: boolean | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = () => {
+      timer = undefined;
+      const rejected = isInlineGoogleAuthRejection(window.location.href, document.body?.innerText || '');
+      if (rejected === last) return;
+      last = rejected;
+      // Never transmit page text, credentials or form values.
+      ipcRenderer.send('page:google-auth-rejected', window.location.href, rejected);
+    };
+    const observer = new MutationObserver(() => {
+      if (!timer) timer = setTimeout(check, 250);
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
+    check();
+    window.addEventListener('pagehide', () => {
+      observer.disconnect();
+      if (timer) clearTimeout(timer);
+    }, { once: true });
+  };
+  window.addEventListener('pageshow', event => { if (event.persisted) startGoogleAuthMonitor(); });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startGoogleAuthMonitor, { once: true });
+  else startGoogleAuthMonitor();
+}
+
 /** A disabled/unavailable main-process policy must leave the site's DOM alone. */
 export function createYouTubeAdBlockPolicyGate(start: () => (() => void) | undefined) {
   let enabled = false;

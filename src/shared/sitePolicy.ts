@@ -330,12 +330,12 @@ function isRejectedGoogleSignIn(url: URL): boolean {
 }
 
 /** Identify Google's embedded-browser/OAuth restriction. */
-export function getGoogleAuthNotice(rawUrl: string): { title: string; message: string } | null {
+export function getGoogleAuthNotice(rawUrl: string, inlineRejected = false): { title: string; message: string } | null {
   const url = URL.parse(rawUrl);
-  if (!url || !isRejectedGoogleSignIn(url)) return null;
+  if (!url || (!isRejectedGoogleSignIn(url) && !(inlineRejected && url.origin === 'https://accounts.google.com' && !url.username && !url.password))) return null;
   return {
     title: 'Google отклонил вход',
-    message: 'Продолжите вход в системном браузере. Сессия останется в том браузере, в котором вы войдёте.',
+    message: 'Google может ограничивать вход во встроенных браузерах. Откройте вход в поддерживаемом системном браузере; его сессия не переносится в soulm8te.',
   };
 }
 
@@ -353,10 +353,10 @@ const googleSignInServices = new Map([
 ]);
 
 /** Start a fresh sign-in at a known Google service after rejection. */
-export function getExternalPageUrl(rawUrl: string): string | null {
+export function getExternalPageUrl(rawUrl: string, inlineRejected = false): string | null {
   const url = URL.parse(rawUrl);
   if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
-  if (!isRejectedGoogleSignIn(url)) return url.href;
+  if (!isRejectedGoogleSignIn(url) && !(inlineRejected && url.origin === 'https://accounts.google.com')) return url.href;
 
   const target = URL.parse(url.searchParams.get('continue') || '');
   const continued = target?.protocol === 'https:' && !target.port && !target.username && !target.password

@@ -80,11 +80,20 @@ try {
  await expect(shell.getByRole('textbox',{name:'Адресная строка',exact:true})).toHaveValue(/^(https:\/\/)?accounts\.google\.com\/ServiceLogin\?service=youtube$/);
  await expect(shell.locator('.auth-help-banner')).toHaveCount(0);
  assert.deepEqual(await app.evaluate(()=>globalThis.__openedUrls),[],'normal sign-in must stay inside the browser');
+ // Inline rejection can arrive after the page loads, without a /rejected URL.
+ await app.evaluate(({webContents}) => {
+   const page = webContents.getAllWebContents().find(c => c.getURL() === 'https://accounts.google.com/ServiceLogin?service=youtube');
+   return page.executeJavaScript(`document.body.innerHTML = '<h1>This browser or app may not be secure.</h1><p>Try using a different browser.</p>'`);
+ });
+ await expect(shell.locator('.auth-help-banner')).toBeVisible();
+ assert.equal((await snapshot()).tabs.find(t=>t.id===ordinary.id).googleAuthRejected, true);
+ await app.evaluate(({webContents}) => webContents.getAllWebContents().find(c => c.getURL() === 'https://accounts.google.com/ServiceLogin?service=youtube').executeJavaScript("document.body.innerHTML = '<h1>Sign in</h1>'"));
+ await expect(shell.locator('.auth-help-banner')).toHaveCount(0);
  const denied=await invoke('createTab',{url:'https://accounts.google.com/v3/signin/rejected?continue=https%3A%2F%2Fwww.youtube.com%2F',isPrivate:false});
  const banner = shell.getByRole('region', { name: 'Помощь со входом Google' });
- const open = banner.getByRole('button', { name: 'Продолжить вход', exact: true });
+ const open = banner.getByRole('button', { name: 'Открыть системный браузер', exact: true });
  await expect(banner).toBeVisible();
- await expect(banner).toContainText('в системном браузере');
+ await expect(banner).toContainText('системном браузере');
  for (const [width, theme] of [[360, 'light'], [920, 'dark'], [1280, 'graphite']]) {
   await invoke('updateSettings', { theme });
   await app.evaluate(({BaseWindow}, width)=>BaseWindow.getAllWindows()[0].setSize(width,640), width);
