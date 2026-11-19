@@ -115,6 +115,17 @@ try {
     await shell.waitForSelector('.task-manager-modal');
     await expect(shell.locator('.task-manager-title')).toHaveText('Диспетчер задач');
     await expect(shell.locator('.task-manager-table')).toBeVisible();
+    await expect(shell.locator('.task-manager-row').first()).toBeVisible();
+    await shell.getByRole('textbox', { name: 'Поиск процессов' }).fill('no-matching-process-9e5191');
+    await expect(shell.locator('.task-stat-value').first()).toHaveText(/^0 из [1-9]\d*$/);
+    await expect(shell.locator('.task-manager-empty-text')).toContainText('Нет процессов');
+    await shell.getByRole('button', { name: 'Очистить поиск' }).click();
+    const memorySort = shell.getByRole('button', { name: 'Память', exact: true });
+    await memorySort.focus();
+    await shell.keyboard.press('Enter');
+    await expect(shell.getByRole('columnheader', { name: 'Память' })).toHaveAttribute('aria-sort', 'descending');
+    await shell.keyboard.press('Space');
+    await expect(shell.getByRole('columnheader', { name: 'Память' })).toHaveAttribute('aria-sort', 'ascending');
 
     // Verify stats cards are rendered
     await expect(shell.locator('.task-stat-card').first()).toBeVisible();

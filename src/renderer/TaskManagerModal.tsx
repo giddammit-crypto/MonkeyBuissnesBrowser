@@ -114,10 +114,18 @@ export const TaskManagerModal: React.FC<TaskManagerModalProps> = ({
       }
     };
 
-    void fetchMetrics();
-    const interval = setInterval(fetchMetrics, 1000);
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const syncVisibility = () => {
+      clearInterval(interval);
+      if (document.hidden) return;
+      void fetchMetrics();
+      interval = setInterval(fetchMetrics, 1000);
+    };
+    document.addEventListener("visibilitychange", syncVisibility);
+    syncVisibility();
     return () => {
       isMounted = false;
+      document.removeEventListener("visibilitychange", syncVisibility);
       clearInterval(interval);
     };
   }, [onError]);
@@ -248,24 +256,20 @@ export const TaskManagerModal: React.FC<TaskManagerModalProps> = ({
     }
   };
 
-  // Stats calculations
-  const totalMemMB = useMemo(
-    () =>
-      filteredProcesses.reduce(
-        (sum, p) => sum + (p.memoryWorkingSetMB || 0),
-        0
-      ),
-    [filteredProcesses]
-  );
-
-  const avgCpu = useMemo(
-    () =>
-      filteredProcesses.length > 0
-        ? filteredProcesses.reduce((sum, p) => sum + (p.cpuPercent || 0), 0) /
-          filteredProcesses.length
-        : 0,
-    [filteredProcesses]
-  );
+  const { count, totalMemMB, avgCpu } = useMemo(() => {
+    const processes = metrics?.processes ?? [];
+    let memory = 0;
+    let cpu = 0;
+    for (const process of processes) {
+      memory += process.memoryWorkingSetMB;
+      cpu += process.cpuPercent;
+    }
+    return {
+      count: processes.length,
+      totalMemMB: memory,
+      avgCpu: processes.length ? cpu / processes.length : 0,
+    };
+  }, [metrics]);
 
   const totalMemDisplay =
     totalMemMB >= 1024
@@ -352,8 +356,8 @@ export const TaskManagerModal: React.FC<TaskManagerModalProps> = ({
 
           <div className="task-manager-stats">
             <div className="task-stat-card">
-              <span className="task-stat-label">Всего процессов</span>
-              <span className="task-stat-value">{filteredProcesses.length}</span>
+              <span className="task-stat-label">{searchQuery.trim() ? "Найдено" : "Всего процессов"}</span>
+              <span className="task-stat-value">{searchQuery.trim() ? `${filteredProcesses.length} из ${count}` : count}</span>
             </div>
             <div className="task-stat-card">
               <span className="task-stat-label">Суммарная память</span>
@@ -373,78 +377,83 @@ export const TaskManagerModal: React.FC<TaskManagerModalProps> = ({
               <tr>
                 <th
                   className={`col-task th-sortable ${sortField === "name" ? "th-sorted" : ""}`}
-                  onClick={() => handleSort("name")}
+                  scope="col"
+                  aria-sort={sortField === "name" ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                 >
-                  <div className="th-content">
+                  <button type="button" className="th-content" onClick={() => handleSort("name")}>
                     <span>Задача</span>
                     {sortField === "name" && (
-                      <span
+                      <span aria-hidden="true"
                         className={`sort-indicator ${sortDir === "desc" ? "desc" : ""}`}
                       >
                         ▲
                       </span>
                     )}
-                  </div>
+                  </button>
                 </th>
                 <th
                   className={`col-pid th-sortable ${sortField === "pid" ? "th-sorted" : ""}`}
-                  onClick={() => handleSort("pid")}
+                  scope="col"
+                  aria-sort={sortField === "pid" ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                 >
-                  <div className="th-content">
+                  <button type="button" className="th-content" onClick={() => handleSort("pid")}>
                     <span>PID</span>
                     {sortField === "pid" && (
-                      <span
+                      <span aria-hidden="true"
                         className={`sort-indicator ${sortDir === "desc" ? "desc" : ""}`}
                       >
                         ▲
                       </span>
                     )}
-                  </div>
+                  </button>
                 </th>
                 <th
                   className={`col-cpu th-sortable ${sortField === "cpu" ? "th-sorted" : ""}`}
-                  onClick={() => handleSort("cpu")}
+                  scope="col"
+                  aria-sort={sortField === "cpu" ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                 >
-                  <div className="th-content">
+                  <button type="button" className="th-content" onClick={() => handleSort("cpu")}>
                     <span>ЦП</span>
                     {sortField === "cpu" && (
-                      <span
+                      <span aria-hidden="true"
                         className={`sort-indicator ${sortDir === "desc" ? "desc" : ""}`}
                       >
                         ▲
                       </span>
                     )}
-                  </div>
+                  </button>
                 </th>
                 <th
                   className={`col-memory th-sortable ${sortField === "memory" ? "th-sorted" : ""}`}
-                  onClick={() => handleSort("memory")}
+                  scope="col"
+                  aria-sort={sortField === "memory" ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                 >
-                  <div className="th-content">
+                  <button type="button" className="th-content" onClick={() => handleSort("memory")}>
                     <span>Память</span>
                     {sortField === "memory" && (
-                      <span
+                      <span aria-hidden="true"
                         className={`sort-indicator ${sortDir === "desc" ? "desc" : ""}`}
                       >
                         ▲
                       </span>
                     )}
-                  </div>
+                  </button>
                 </th>
                 <th
                   className={`col-type th-sortable ${sortField === "type" ? "th-sorted" : ""}`}
-                  onClick={() => handleSort("type")}
+                  scope="col"
+                  aria-sort={sortField === "type" ? (sortDir === "asc" ? "ascending" : "descending") : undefined}
                 >
-                  <div className="th-content">
+                  <button type="button" className="th-content" onClick={() => handleSort("type")}>
                     <span>Тип</span>
                     {sortField === "type" && (
-                      <span
+                      <span aria-hidden="true"
                         className={`sort-indicator ${sortDir === "desc" ? "desc" : ""}`}
                       >
                         ▲
                       </span>
                     )}
-                  </div>
+                  </button>
                 </th>
               </tr>
             </thead>

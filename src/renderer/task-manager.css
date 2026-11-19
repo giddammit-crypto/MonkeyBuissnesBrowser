@@ -954,3 +954,39 @@
     text-shadow: 0 0 18px var(--tm-danger-glow), 0 0 4px #ffffff;
   }
 }
+
+.task-manager-table th button.th-content {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.task-manager-modal button:focus-visible {
+  outline: 2px solid var(--tm-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 600px) {
+  .task-manager-backdrop { padding: 8px; }
+  .task-manager-modal { width: 100%; }
+  .task-manager-header, .task-manager-toolbar, .task-manager-footer { padding: 10px; }
+  .task-manager-search-wrap { min-width: 0; max-width: none; flex-basis: 100%; }
+  .task-manager-stats { gap: 4px; }
+  .task-manager-footer { flex-wrap: wrap; gap: 8px; }
+  .task-manager-engine-badge, .task-manager-shortcut-hint { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-manager-backdrop, .task-manager-modal,
+  .task-manager-modal *, .task-manager-modal *::before, .task-manager-modal *::after {
+    animation: none;
+    transition: none;
+    scroll-behavior: auto;
+  }
+}
