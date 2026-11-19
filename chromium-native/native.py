@@ -86,8 +86,20 @@ def prepare(workspace):
     print('Source ready. Install build dependencies as documented, then run build.')
 
 
+def binary_sha256(binary):
+    digest = hashlib.sha256()
+    with binary.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def build(workspace, jobs):
-    require_resources(workspace)
+    # prepare() checked capacity before fetching. On an incremental build,
+    # disk usage already includes the checkout and previous build outputs.
+    report = doctor(workspace)
+    if report['platform'] != 'Linux' or report['machine'] not in ('x86_64', 'amd64'):
+        raise ValueError('This build configuration requires Linux x86_64.')
     src = workspace.resolve() / 'src'
     verify_source(src)
     changed = set(filter(None, output(['git', 'diff', '--name-only', 'HEAD'], src).splitlines()))
@@ -107,7 +119,7 @@ def build(workspace, jobs):
     if not binary.is_file():
         raise ValueError('Build produced no chrome binary.')
     evidence = {'upstream': PIN['commit'], 'version': PIN['version'],
-                'target': '//chrome', 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+                'target': '//chrome', 'binary_sha256': binary_sha256(binary),
                 'compile': 'passed', 'google_login': 'not_tested', 'migration': 'prototype_only'}
     (out / 'soulm8te-build.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print('Compiled prototype:', binary)
@@ -135,7 +147,7 @@ def launch(binary, mode, url, dry_run=False):
     profile = config / ('soulm8te-chromium-baseline' if mode == 'baseline' else 'soulm8te-chromium-preview')
     if mode == 'fork':
         evidence = json.loads((binary.parent / 'soulm8te-build.json').read_text())
-        if evidence.get('upstream') != PIN['commit'] or evidence.get('binary_sha256') != hashlib.sha256(binary.read_bytes()).hexdigest():
+        if evidence.get('upstream') != PIN['commit'] or evidence.get('binary_sha256') != binary_sha256(binary):
             raise ValueError('Fork build evidence does not match this binary.')
     if profile.is_symlink():
         raise ValueError('Dedicated preview profile must not be a symlink to another browser profile.')

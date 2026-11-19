@@ -30,6 +30,21 @@ class NativeTests(unittest.TestCase):
                 with self.assertRaises(ValueError): native.prepare(Path(d))
                 run.assert_not_called()
 
+    def test_incremental_build_reaches_revision_check_on_populated_disk(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(native.shutil, 'disk_usage') as usage:
+            usage.return_value.free = 59 * native.GIB
+            with patch.object(native, 'verify_source', side_effect=ValueError('revision check')) as verify:
+                with self.assertRaisesRegex(ValueError, 'revision check'):
+                    native.build(Path(d), jobs=1)
+                verify.assert_called_once_with(Path(d).resolve() / 'src')
+
+    def test_large_binary_digest_matches_standard_sha256(self):
+        with tempfile.TemporaryDirectory() as d:
+            binary = Path(d) / 'chrome'
+            data = bytes(range(256)) * 10001
+            binary.write_bytes(data)
+            self.assertEqual(native.binary_sha256(binary), native.hashlib.sha256(data).hexdigest())
+
     def test_existing_workspace_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as d, patch.object(native, 'require_resources'):
             p = Path(d) / 'important.txt'; p.write_text('keep me')
