@@ -1,0 +1,22 @@
+name: Chromium migration tooling
+on:
+  pull_request:
+    paths: ['chromium-native/**', '.github/workflows/chromium-native-checks.yml']
+  push:
+    paths: ['chromium-native/**', '.github/workflows/chromium-native-checks.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate-tooling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python3 -m unittest discover -s chromium-native/tests -v
+      - run: python3 chromium-native/verify_upstream.py
+      - name: State scope of this check
+        run: echo 'Tooling and patch applicability only. Chromium compilation and Google login are NOT tested by this job.'

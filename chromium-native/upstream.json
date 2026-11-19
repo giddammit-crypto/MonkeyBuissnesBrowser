@@ -1,0 +1,14 @@
+{
+  "version": "156.0.8078.79",
+  "commit": "a21ce95c24ce3964416f09ae1862f53f319eb4d0",
+  "repository": "https://chromium.googlesource.com/chromium/src.git",
+  "tag": "refs/tags/156.0.8078.79",
+  "source_sha256": {
+    "chrome/app/theme/chromium/BRANDING": "15ac20cb8744ebac0815961059231baefa71fd4ed3023cb2094aaf8a34ae423b",
+    "chrome/app/chromium_strings.grd": "2744123fbc7d9a99b5d08ae3669c605f77550501c5d4275311f25312c405af26"
+  },
+  "patched_sha256": {
+    "chrome/app/theme/chromium/BRANDING": "b1ac73c75888a258b92ec4afa6e79b77e8081e958892973b08000a06fa62170d",
+    "chrome/app/chromium_strings.grd": "22a87b1bf71c07b7fb74c44c83063965341c95f09c16d23265e6937a27391389"
+  }
+}
